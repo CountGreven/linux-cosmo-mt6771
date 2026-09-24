@@ -763,9 +763,13 @@ static int __init pstore_init(void)
  *
  * The backend is ready well before this: ramoops_init is a postcore_initcall, and drivers/of/platform.c
  * creates a platform device for a /reserved-memory child with compatible "ramoops" at
- * arch_initcall_sync, so the driver has bound by then. subsys_initcall is the first level after that,
- * and the console registers with CON_PRINTBUFFER, so registration replays everything printk has buffered
- * -- we get the log from the start of boot, not just from the moment of registration.
+ * arch_initcall_sync, so the driver has bound by then. This runs at that same level: within a level the
+ * order is link order, and drivers/ comes before fs/, so of_platform has already created the device and
+ * ramoops has already probed by the time we get here. subsys_initcall was tried first and was still too
+ * late -- the kernel dies inside subsys, between our marker in arch/ and pstore in fs/.
+ *
+ * The console registers with CON_PRINTBUFFER, so registration replays everything printk has buffered
+ * since boot rather than capturing only from this moment.
  *
  * Worth recording for reading the result: mainline lays the zones out as
  * dumps / console / ftrace / pmsg, while MediaTek's 4.4 reserves TWO console zones
@@ -773,7 +777,7 @@ static int __init pstore_init(void)
  * zone at exactly the offset the vendor kernel treats as its second one, which is why our records show up
  * as console-ramoops-2. Convenient rather than planned: that zone is never compressed.
  */
-subsys_initcall(pstore_init);
+arch_initcall_sync(pstore_init);
 
 static void __exit pstore_exit(void)
 {

@@ -5,6 +5,9 @@
 
 /dts-v1/;
 #include "mt6771.dtsi"
+/* The MT6358 PMIC, so regulators exist at all. LK reports its chip code as 0x5820, which the vendor
+ * kernel's mtk_pmic_info.h defines as PMIC6358_E2_CID_CODE. Otto Pflueger's tree includes it too. */
+#include "mt6358.dtsi"
 
 / {
 	model = "Planet Computers Cosmo Communicator";
@@ -240,4 +243,37 @@
 	 * when SCP is actually brought up, take the region from what LK injects rather than declaring one.
 	 */
 	/delete-property/ memory-region;
+};
+
+/*
+ * The display, described rather than left to be discovered.
+ *
+ * mt8183.dtsi brings the whole display pipeline with it, so mtk_drm bound and started driving the panel
+ * with no panel node, no endpoint graph and no supplies -- which is what put garbage on the screen and is
+ * a plausible place to wedge. This is Otto Pflueger's description, minus the backlight: his points at the
+ * MT6370 PMU on i2c, which we have not wired yet, and panel-simple treats backlight as optional. The
+ * screen will stay dark; we read the log through pstore, not the screen.
+ */
+&dsi0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	panel: panel@0 {
+		compatible = "planet,cosmocom-x800-datong-panel";
+		reg = <0>;
+		rotation = <270>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi_out>;
+			};
+		};
+	};
+};
+
+/* mt8183.dtsi already declares dsi0's ports and labels its output endpoint, so wire that one up rather
+ * than declaring a second. */
+&dsi_out {
+	remote-endpoint = <&panel_in>;
 };

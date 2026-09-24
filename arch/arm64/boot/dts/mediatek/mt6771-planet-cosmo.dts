@@ -32,6 +32,50 @@
 	chosen {
 		/* 921600 from vendor mt6771.dts:32 (console=ttyS0,921600n1) */
 		stdout-path = "serial0:921600";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * OPTIONAL, UNPROVEN: the buffer LK hands over, as a screen
+		 * console when the UART is silenced (printk.disable_uart=1).
+		 * Delete this node and the reservation below to drop it.
+		 *
+		 * WAITING: LK reports islcm_inited = 0, i.e. it may leave the
+		 * panel uninitialised, in which case this shows nothing. It is
+		 * only proven when something appears on the screen.
+		 *
+		 * Base/size: chosen/atag,videolfb-fb_base_l and -vramSize.
+		 * 0x17bb000 is 1080*1920*4*3, so LK sized it for a 1920-line
+		 * panel, three pages. Geometry is fb0 as the vendor kernel
+		 * reports it (1080x2160, stride 4352 = 1088*4, MTK_FB_ALIGNMENT
+		 * 32). STAND-IN: if LK draws with stride 4320 the picture is
+		 * sheared; adjust once seen.
+		 * Format: mtkfb_fbinfo_init() (mt6771/videox/mtkfb.c:2077-2081)
+		 * sets red at bit 0, blue at 16, alpha 24: a8b8g8r8, not
+		 * a8r8g8b8. Not read back from fb0 (ssh was unavailable), and
+		 * userspace may have changed it since.
+		 */
+		framebuffer@5e605000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0x5e605000 0 0x17bb000>;
+			width = <1080>;
+			height = <2160>;
+			stride = <4352>;
+			format = "a8b8g8r8";
+		};
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Protects the optional framebuffer above from the allocator. */
+		framebuffer-lk@5e605000 {
+			reg = <0 0x5e605000 0 0x17bb000>;
+			no-map;
+		};
 	};
 };
 

@@ -7,6 +7,8 @@ Asserts, on the compiled blob and not on the source:
   - a /memory node exists, with a base and a size;
   - every /reserved-memory child lies inside that memory range;
   - no two fixed reserved regions overlap;
+  - every firmware-owned region the device reports is reserved at exactly
+    its address and size, no-map where the live tree says no-map (FIRMWARE);
   - a ramoops (pstore) region exists and is not no-map: a no-map pstore
     cannot be read back, which is the whole reason it is there.
 
@@ -21,6 +23,25 @@ import subprocess
 import sys
 
 DEFAULT_DTB = "/storage/kernel/build/ci/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
+
+# Regions firmware owns, from the live device tree the bootloader hands the
+# vendor kernel (notes: probes/2026-09-24-1702-live.dts, reserved-memory
+# node, lines 5929-6079). (base, size, no-map, live-tree node).
+FIRMWARE = [
+    (0x54600000, 0x40000, True, "mblock-4-atf-reserved"),
+    (0x77ff0000, 0x10000, True, "mblock-9-SPM-reserved"),
+    (0x7ff00000, 0xc0000, True, "mblock-5-SSPM-reserved"),
+    (0x7ffc0000, 0x40000, False, "mblock-3-log_store"),
+    (0x7df70000, 0x1f90000, True, "mblock-7-framebuffer"),
+    (0x8a000000, 0x1600000, True, "mblock-13-ccci"),
+    (0x8c000000, 0x100000, True, "mblock-11-ccci"),
+    (0x66000000, 0x10000000, False, "mblock-12-ccci"),
+    (0x9cf00000, 0x600000, True, "mblock-10-SCP-reserved"),
+    (0x9d5f0000, 0x2a10000, True, "mblock-8-vpu_binary"),
+    (0xedb00000, 0x2440000, True, "mblock-6-tee-reserved"),
+    (0xbffff000, 0x1000, True, "mblock-1-dramc-rk0"),
+    (0x1bffff000, 0x1000, True, "mblock-2-dramc-rk1"),
+]
 
 failures = []
 notes = []
@@ -139,6 +160,7 @@ def main():
     # --- /reserved-memory -------------------------------------------------
     rm = root["kids"].get("reserved-memory")
     fixed = []  # (name, start, end)
+    nomap = {}  # (start, size) -> whether the node is no-map
     ramoops = []
     if rm is None:
         fail("no /reserved-memory node")
@@ -153,6 +175,7 @@ def main():
                     fail(f"{name}: zero-sized reg")
                     continue
                 fixed.append((name, base, base + size))
+                nomap[(base, size)] = "no-map" in n["props"]
                 if not inside(base, base + size):
                     fail(f"{name}: 0x{base:x}-0x{base + size - 1:x} lies outside /memory")
         else:
@@ -174,6 +197,14 @@ def main():
                     fail(f"{name}: alloc-ranges 0x{wb:x}-0x{wb + ws - 1:x} not inside /memory")
         if string(n, "compatible") == "ramoops":
             ramoops.append((name, n, reg))
+
+    for base, size, want_nomap, live in FIRMWARE:
+        if (base, size) not in nomap:
+            fail(f"firmware region 0x{base:x}+0x{size:x} ({live}) is not reserved "
+                 "at exactly that address and size")
+        elif nomap[(base, size)] != want_nomap:
+            fail(f"firmware region 0x{base:x} ({live}): live tree says "
+                 f"{'no-map' if want_nomap else 'mapped'}, dtb says the opposite")
 
     fixed.sort(key=lambda r: r[1])
     for (na, sa, ea), (nb, sb, eb) in zip(fixed, fixed[1:]):

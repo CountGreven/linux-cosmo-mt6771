@@ -761,12 +761,19 @@ static int __init pstore_init(void)
  * fs_initcall and no further -- which is before late_initcall, so the crash was never recorded and the
  * only evidence was the marker itself.
  *
- * The backend is ready well before this: ramoops_init is a postcore_initcall and its platform device
- * comes from the reserved-memory node at arch_initcall_sync, so by fs_initcall there is a backend to
- * register against. Moving the registration one level earlier buys us the console across the whole of
- * device_initcall, which is where the interesting failure lives.
+ * The backend is ready well before this: ramoops_init is a postcore_initcall, and drivers/of/platform.c
+ * creates a platform device for a /reserved-memory child with compatible "ramoops" at
+ * arch_initcall_sync, so the driver has bound by then. subsys_initcall is the first level after that,
+ * and the console registers with CON_PRINTBUFFER, so registration replays everything printk has buffered
+ * -- we get the log from the start of boot, not just from the moment of registration.
+ *
+ * Worth recording for reading the result: mainline lays the zones out as
+ * dumps / console / ftrace / pmsg, while MediaTek's 4.4 reserves TWO console zones
+ * (dump_mem_sz = size - console_size * 2 - ...). With this device's sizes that puts mainline's console
+ * zone at exactly the offset the vendor kernel treats as its second one, which is why our records show up
+ * as console-ramoops-2. Convenient rather than planned: that zone is never compressed.
  */
-fs_initcall(pstore_init);
+subsys_initcall(pstore_init);
 
 static void __exit pstore_exit(void)
 {

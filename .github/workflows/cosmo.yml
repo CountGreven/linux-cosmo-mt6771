@@ -100,6 +100,27 @@ jobs:
           git log --oneline "$base"..HEAD || true
           ./scripts/checkpatch.pl --git "$base"..HEAD --no-signoff --terse || exit 1
 
+  # LK loads the kernel blob into a fixed buffer; the vendor's is 11,610,550 bytes. The bring-up
+  # config is packed the way the device expects and held to that size.
+  image-size:
+    name: bring-up kernel blob fits the vendor's size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libssl-dev bc flex bison
+      - name: Build and pack
+        run: |
+          make allnoconfig KCONFIG_ALLCONFIG=ci/cosmo_defconfig
+          make -j"$(nproc)" Image mediatek/mt6771-planet-cosmo.dtb
+          python3 ci/mkbootimg-cosmo.py --image arch/arm64/boot/Image \
+            --dtb arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb --out boot-test.img
+      - name: Check the blob size
+        run: python3 ci/check-image-size.py boot-test.img
+
   build:
     name: kernel builds
     runs-on: ubuntu-latest

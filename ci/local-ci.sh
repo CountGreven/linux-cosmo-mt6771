@@ -98,6 +98,36 @@ ls -l "$out/build/arch/arm64/boot/Image"
 EOF
 fi
 
+# Builds and packs the bring-up kernel, then holds the blob to the vendor's size (LK loads it into a fixed
+# buffer). Slow, so it is not in the default pass: run `--job image-size` or --full.
+#   COSMO_IMAGE_CONFIG=defconfig  measures arm64 defconfig + ci/cosmo.config instead (the first attempt)
+if [ "$want_full" = 1 ] || [ "$only" = "image-size" ]; then
+    step image-size "$out/image-size.log" <<EOF
+set -e
+cd "$repo"
+b="$out/build-image"
+mkdir -p "\$b"
+if [ "${COSMO_IMAGE_CONFIG:-cosmo_defconfig}" = defconfig ]; then
+    make O="\$b" defconfig >/dev/null
+    ./scripts/kconfig/merge_config.sh -m -O "\$b" "\$b/.config" ci/cosmo.config >/dev/null
+    make O="\$b" olddefconfig >/dev/null
+else
+    # allnoconfig, so what ci/cosmo_defconfig does not name is off
+    make O="\$b" allnoconfig KCONFIG_ALLCONFIG="$repo/ci/cosmo_defconfig" >/dev/null
+    # a symbol dropped for an unmet dependency would not fail the build, only the boot
+    missing=0
+    for s in \$(grep -oE '^CONFIG_[A-Z0-9_a-z]+=[ym0-9]+' ci/cosmo_defconfig); do
+        grep -qx "\$s" "\$b/.config" || { echo "dropped by Kconfig: \$s"; missing=1; }
+    done
+    [ "\$missing" = 0 ]
+fi
+make O="\$b" -j$jobs Image mediatek/mt6771-planet-cosmo.dtb
+python3 ci/mkbootimg-cosmo.py --image "\$b/arch/arm64/boot/Image" \
+    --dtb "\$b/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb" --out "$out/boot-test.img"
+python3 ci/check-image-size.py "$out/boot-test.img"
+EOF
+fi
+
 step commits "$out/commits.log" <<EOF
 set -e
 cd "$repo"

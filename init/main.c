@@ -1349,8 +1349,23 @@ static inline void do_trace_initcall_level(const char *level)
 }
 #endif /* !TRACEPOINTS_ENABLED */
 
+/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+void cosmo_mark_len(const char *buf, size_t len);
+
 int __init_or_module do_one_initcall(initcall_t fn)
 {
+	/*
+	 * DEBUG (Cosmo bring-up): write this initcall's name into the pstore reservation before calling
+	 * it. The kernel hangs somewhere in the core initcalls with no console, and the marker that
+	 * survives the watchdog reset names the one that never returned. Goes silent once ramoops has
+	 * claimed the buffer (cosmo_mark_off), so it cannot overwrite a real log.
+	 */
+	{
+		char name[64];
+		int n = snprintf(name, sizeof(name), "IC %ps", fn);
+
+		cosmo_mark_len(name, n > 0 ? (size_t)n : 0);
+	}
 	int count = preempt_count();
 	char msgbuf[64];
 	int ret;

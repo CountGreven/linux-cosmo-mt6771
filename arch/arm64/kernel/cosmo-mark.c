@@ -35,10 +35,38 @@
 #define PERSISTENT_RAM_SIG	0x43474244
 #define COSMO_MARK_LEN		12
 
+/*
+ * Set by ramoops_probe before it touches the zones. From then on pstore owns the buffer and a marker
+ * would overwrite the log, so every marker becomes a no-op. This is what makes the initcall tracer
+ * below safe: it can name the initcall that hangs, and it goes quiet the instant a log could exist.
+ */
+bool cosmo_mark_off;
+
+void cosmo_mark_len(const char *buf_in, size_t len)
+{
+	phys_addr_t phys;
+
+	if (cosmo_mark_off)
+		return;
+	if (len > 64)
+		len = 64;
+	for (phys = COSMO_MARK_BASE; phys < COSMO_MARK_END; phys += COSMO_MARK_STRIDE) {
+		u32 *buf = (u32 *)phys_to_virt(phys);
+
+		memcpy(&buf[3], buf_in, len);
+		buf[1] = len;				/* start */
+		buf[2] = len;				/* size  */
+		buf[0] = PERSISTENT_RAM_SIG;
+		dcache_clean_inval_poc((unsigned long)buf, (unsigned long)buf + 12 + len);
+	}
+}
+
 void cosmo_mark(const char *tag)
 {
 	phys_addr_t phys;
 
+	if (cosmo_mark_off)
+		return;
 	for (phys = COSMO_MARK_BASE; phys < COSMO_MARK_END; phys += COSMO_MARK_STRIDE) {
 		u32 *buf = (u32 *)phys_to_virt(phys);
 

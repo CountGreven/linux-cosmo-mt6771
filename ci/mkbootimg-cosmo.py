@@ -4,7 +4,7 @@
     ci/mkbootimg-cosmo.py --image <Image> --dtb <dtb> --out boot-test.img [--ramdisk <file>]
 
 Every constant here was read off the working DEBIAN_KDE image rather than chosen: header v0, page size
-2048, kernel at 0x40080000, ramdisk at 0x55000000, tags at 0x54000000, and a kernel blob that is a gzipped
+2048, ramdisk at 0x55000000, tags at 0x54000000, and a kernel blob that is a gzipped
 Image with the device tree glued to the end (MediaTek's habit).
 
 A ramdisk is optional. Without one the kernel will panic when it cannot mount a root filesystem — which is
@@ -19,7 +19,15 @@ import sys
 from pathlib import Path
 
 PAGE = 2048
-KERNEL_ADDR = 0x40080000
+# 2 MiB aligned, and that alignment is the point rather than a detail.
+#
+# The vendor image loads at 0x40080000, and copying that was a mistake: its 4.4 kernel declares
+# text_offset 0x80000, so its base is the aligned 0x40000000. A modern arm64 kernel declares
+# text_offset 0, which makes the load address itself the base, and the boot protocol requires it to be
+# 2 MiB aligned. At 0x40080000 the image sat 512 KiB past a boundary and died in early page-table setup,
+# before any console, framebuffer or pstore existed — two silent boots with no evidence left behind.
+# ci/check-boot-protocol.py fails the build rather than the device now.
+KERNEL_ADDR = 0x40200000
 RAMDISK_ADDR = 0x55000000
 SECOND_ADDR = 0x40F00000
 TAGS_ADDR = 0x54000000

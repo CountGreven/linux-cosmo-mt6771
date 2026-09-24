@@ -160,6 +160,7 @@ make O="\$b" -j$jobs Image mediatek/mt6771-planet-cosmo.dtb
 python3 ci/mkbootimg-cosmo.py --image "\$b/arch/arm64/boot/Image" \
     --dtb "\$b/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb" --out "$out/boot-test.img"
 python3 ci/check-image-size.py "$out/boot-test.img"
+python3 ci/check-boot-protocol.py "$out/boot-test.img"
 EOF
 fi
 

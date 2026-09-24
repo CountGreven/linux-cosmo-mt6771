@@ -28,6 +28,10 @@
 
 #include "internal.h"
 
+/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+extern bool cosmo_mark_off;
+void cosmo_mark(const char *tag);
+
 /*
  * We defer making "oops" entries appear in pstore - see
  * whether the system is actually still running well enough
@@ -403,7 +407,19 @@ static void pstore_console_write(struct console *con, const char *s, unsigned c)
 
 	record.buf = (char *)s;
 	record.size = c;
+	/*
+	 * DEBUG (Cosmo bring-up): three-way split of the hang inside register_console. If this tag
+	 * survives, the replay reached us and the very first write into the zone never returned. If
+	 * COSMO-PR-CSL survives instead, register_console hung before ever calling this. The kill switch
+	 * is thrown after the first write returns, so from then on nothing can overwrite the log.
+	 */
+	if (!cosmo_mark_off)
+		cosmo_mark("COSMO-PW-ENT");
 	psinfo->write(&record);
+	if (!cosmo_mark_off) {
+		cosmo_mark("COSMO-PW-OK1");
+		cosmo_mark_off = true;
+	}
 }
 
 static struct console pstore_console = {
@@ -412,7 +428,6 @@ static struct console pstore_console = {
 };
 
 extern bool cosmo_mark_off;
-void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
 
 static void pstore_register_console(void)
 {
@@ -429,8 +444,12 @@ static void pstore_register_console(void)
 	 * CON_PRINTBUFFER replay overwrites this tag with the real log; if it hangs, this tag survives.
 	 */
 	cosmo_mark("COSMO-PR-CSL");
-	cosmo_mark_off = true;
 	register_console(&pstore_console);
+	/*
+	 * DEBUG: survives only if register_console returned without the replay ever reaching our write --
+	 * the kill switch in pstore_console_write silences this the moment a real log line lands.
+	 */
+	cosmo_mark("COSMO-PR-CSR");
 }
 
 static void pstore_unregister_console(void)

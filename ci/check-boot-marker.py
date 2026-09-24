@@ -92,11 +92,14 @@ def main() -> int:
     # into this buffer, and a marker written afterwards overwrites it. That cost three attempts.
     if PLATFORM_C.exists():
         plat = PLATFORM_C.read_text()
-        reg = plat.find("register_console(&pstore_console)")
-        late = [m.start() for m in re.finditer(r"\tcosmo_mark\(", plat) if reg != -1 and m.start() > reg]
-        if late:
-            print("fs/pstore/platform.c calls cosmo_mark after register_console(); CON_PRINTBUFFER "
-                  "replays the whole log there and a later marker erases it")
+        # The log is written by pstore_console_write. The kill switch must be thrown there, right after
+        # the first successful write, so every later marker anywhere is a no-op and cannot erase a log.
+        w = plat.find("static void pstore_console_write(")
+        first_write = plat.find("psinfo->write(&record);", w)
+        kill = plat.find("cosmo_mark_off = true;", first_write)
+        if w == -1 or first_write == -1 or kill == -1:
+            print("fs/pstore/platform.c: the kill switch (cosmo_mark_off = true) must follow the first "
+                  "psinfo->write in pstore_console_write, or a marker can erase the console log")
             return 1
     if RAM_C.exists():
         ram = RAM_C.read_text()

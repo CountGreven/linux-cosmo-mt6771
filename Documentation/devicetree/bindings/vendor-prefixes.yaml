@@ -1325,6 +1325,8 @@ patternProperties:
     description: Shenzhen PineRiver Designs Co., Ltd.
   "^pixcir,.*":
     description: PIXCIR MICROELECTRONICS Co., Ltd
+  "^planet,.*":
+    description: Planet Computers Ltd
   "^plantower,.*":
     description: Plantower Co., Ltd
   "^plathome,.*":

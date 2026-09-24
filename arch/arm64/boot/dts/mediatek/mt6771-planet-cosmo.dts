@@ -72,12 +72,171 @@
 		#size-cells = <2>;
 		ranges;
 
-		/* Protects the optional framebuffer above from the allocator. */
+		/*
+		 * The vendor pstore (V:298-301). Mainline ramoops takes the
+		 * place of the vendor's own pstore. Sizes are the vendor's:
+		 * console/pmsg from k71v1_64_bsp_defconfig:496-497, and the
+		 * 4096-byte record size is the vendor ram.c default (ram.c:41).
+		 * No no-map: it has to be mapped to be read back.
+		 */
+		ramoops@54410000 {
+			compatible = "ramoops";
+			reg = <0 0x54410000 0 0xe0000>;
+			record-size = <0x1000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x10000>;
+		};
+
+		/* Vendor ram_console (V:302-305) and minirdump (V:306-309). */
+		ram-console@54400000 {
+			reg = <0 0x54400000 0 0x10000>;
+		};
+
+		minirdump@544f0000 {
+			reg = <0 0x544f0000 0 0x10000>;
+		};
+
+		/*
+		 * Regions the firmware owns, at the addresses it chose for
+		 * this boot, from the live device tree the bootloader hands
+		 * the vendor kernel (notes: probes/2026-09-24-1702-live.dts,
+		 * reserved-memory node; line numbers below are that file's).
+		 * The vendor source only declares most of these dynamically.
+		 * Not reserving them lets the page allocator hand ATF, TEE or
+		 * modem memory to the kernel. All no-map except where noted.
+		 *
+		 * The addresses are as observed on one boot. If LK places them
+		 * differently on another boot these are wrong; see the notes.
+		 */
+
+		/* live:6068 mblock-4-atf-reserved */
+		atf@54600000 {
+			reg = <0 0x54600000 0 0x40000>;
+			no-map;
+		};
+
+		/* live:6074 mblock-9-SPM-reserved */
+		spm@77ff0000 {
+			reg = <0 0x77ff0000 0 0x10000>;
+			no-map;
+		};
+
+		/* live:5951 mblock-5-SSPM-reserved */
+		sspm@7ff00000 {
+			reg = <0 0x7ff00000 0 0xc0000>;
+			no-map;
+		};
+
+		/* live:5987 mblock-3-log_store; mapped (no no-map in the live tree) */
+		log-store@7ffc0000 {
+			reg = <0 0x7ffc0000 0 0x40000>;
+		};
+
+		/* live:5971 mblock-7-framebuffer */
+		framebuffer@7df70000 {
+			reg = <0 0x7df70000 0 0x1f90000>;
+			no-map;
+		};
+
+		/* live:6023 mblock-13-ccci */
+		ccci@8a000000 {
+			reg = <0 0x8a000000 0 0x1600000>;
+			no-map;
+		};
+
+		/* live:6006 mblock-11-ccci */
+		ccci@8c000000 {
+			reg = <0 0x8c000000 0 0x100000>;
+			no-map;
+		};
+
+		/* live:6012 mblock-12-ccci; mapped (no no-map in the live tree) */
+		ccci@66000000 {
+			reg = <0 0x66000000 0 0x10000000>;
+		};
+
+		/* live:6017 mblock-10-SCP-reserved */
+		/*
+		 * Labelled because mt8183.dtsi's scp@10500000 references
+		 * scp_mem_reserved by name; the SoC file will not compile without
+		 * it. Otto's tree puts this at 0x50000000, which looks inherited
+		 * from an MT8183 board — the live tree on this device says
+		 * 0x9cf00000, and the device wins.
+		 */
+		scp_mem_reserved: scp@9cf00000 {
+			reg = <0 0x9cf00000 0 0x600000>;
+			no-map;
+		};
+
+		/* live:6036 mblock-8-vpu_binary */
+		vpu@9d5f0000 {
+			reg = <0 0x9d5f0000 0 0x2a10000>;
+			no-map;
+		};
+
+		/* live:6042 mblock-6-tee-reserved */
+		tee@edb00000 {
+			reg = <0 0xedb00000 0 0x2440000>;
+			no-map;
+		};
+
+		/* live:6000 mblock-1-dramc-rk0 */
+		dramc-rk0@bffff000 {
+			reg = <0 0xbffff000 0 0x1000>;
+			no-map;
+		};
+
+		/* live:5965 mblock-2-dramc-rk1 */
+		dramc-rk1@1bffff000 {
+			reg = <1 0xbffff000 0 0x1000>;
+			no-map;
+		};
+
+		/*
+		 * The three pools below are placed by the kernel at boot from
+		 * size, alignment and alloc-ranges (as in the vendor), not at a
+		 * fixed address, and nothing consumes them until the SSPM, SCP
+		 * and connsys drivers exist.
+		 */
+
+		/*
+		 * V:312-323: 5M + 64K; the 1M + 64K variant needs
+		 * CONFIG_MTK_GMO_RAM_OPTIMIZE or CONFIG_MTK_MET_MEM_ALLOC,
+		 * set in neither k71v1_64_bsp defconfig.
+		 */
+		sspm-shared {
+			no-map;
+			size = <0 0x510000>;
+			alignment = <0 0x10000>;
+			alloc-ranges = <0 0x40000000 0 0x60000000>;
+		};
+
+		/* V:324-330: 20 MB */
+		scp-shared {
+			no-map;
+			size = <0 0x1400000>;
+			alignment = <0 0x1000000>;
+			alloc-ranges = <0 0x40000000 0 0x50000000>;
+		};
+
+		/* V:331-337 */
+		consys {
+			no-map;
+			size = <0 0x200000>;
+			alignment = <0 0x200000>;
+			alloc-ranges = <0 0x40000000 0 0x80000000>;
+		};
+		/*
+		 * Protects the optional framebuffer in /chosen above from the
+		 * allocator. Not one of the firmware regions: this is the
+		 * buffer LK hands over, kept alive on purpose.
+		 */
 		framebuffer-lk@5e605000 {
 			reg = <0 0x5e605000 0 0x17bb000>;
 			no-map;
 		};
 	};
+
 };
 
 &uart0 {

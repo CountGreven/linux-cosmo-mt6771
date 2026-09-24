@@ -1,384 +1,99 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MIT)
 /*
- * MediaTek MT6771 (Helio P60/P70) SoC, minimal: CPUs, GICv3, arch timer, UARTs.
+ * MediaTek MT6771 (Helio P60/P70).
  *
- * Structure follows mt8183.dtsi. Every address, interrupt and clock is taken
- * from the vendor tree and cited as V:<line>, where V is
- * cosmo-linux-kernel-4.4/arch/arm64/boot/dts/mediatek/mt6771.dts.
- * See cosmo-notes/01-dtsi.md for what was left out and why.
+ * MT6771 is MT8183 silicon with a different product name and a different mix of blocks. Measured against
+ * mainline's mt8183.dtsi, 85 of its 88 peripheral nodes sit at identical base addresses on MT6771; the
+ * three that do not are svs (0x1100bc00), usb (0x11201000) and t-phy (0x11f40000). Everything needed to
+ * reach a console — GIC at 0x0c000000, uart0 at 0x11002000, sys_timer, toprgu, topckgen, infracfg,
+ * apmixedsys — matches exactly, and the vendor tree's own UART compatible is mediatek,mt6577-uart, the
+ * same one mainline has matched on since 2012.
+ *
+ * So inherit rather than translate. An earlier version of this file described the SoC from scratch, ~400
+ * lines with every node citing a line of the vendor dts (see git history, and notes 01-dtsi). That
+ * translation was correct as far as it was checked — cpus, psci, timer and GIC all matched the vendor
+ * exactly — but it obtains by hand what mainline already expresses in bindings that were reviewed, and
+ * it differs from the only configuration known to have booted this device (Otto Pflüger's tree, which
+ * does the same include).
+ *
+ * What is genuinely Cosmo-specific, and was read off the running device rather than from any tree, lives
+ * in mt6771-planet-cosmo.dts: the memory size, the firmware-owned reservations, the framebuffer.
  */
 
-#include <dt-bindings/interrupt-controller/arm-gic.h>
-#include <dt-bindings/interrupt-controller/irq.h>
+#include "mt8183.dtsi"
 
 / {
 	compatible = "mediatek,mt6771";
-	interrupt-parent = <&sysirq>;	/* V:26 */
-	#address-cells = <2>;		/* V:27 */
-	#size-cells = <2>;		/* V:28 */
+};
 
-	cpus {				/* V:38 */
-		#address-cells = <1>;
-		#size-cells = <0>;
+/*
+ * cpuidle and cpufreq do not work here. Otto's tree carries the same deletions with the note "firmware
+ * issue or misconfiguration?", so this is a known landmine rather than something we discovered: the OPP
+ * tables and idle states mt8183.dtsi provides describe firmware behaviour this SoC's firmware does not
+ * implement the same way. Left as deletions, not corrections, because we have not established what the
+ * right values are.
+ */
+&cpu0 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		cpu-map {		/* V:122 */
-			cluster0 {
-				core0 {
-					cpu = <&cpu0>;
-				};
-				core1 {
-					cpu = <&cpu1>;
-				};
-				core2 {
-					cpu = <&cpu2>;
-				};
-				core3 {
-					cpu = <&cpu3>;
-				};
-			};
+&cpu1 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-			cluster1 {
-				core0 {
-					cpu = <&cpu4>;
-				};
-				core1 {
-					cpu = <&cpu5>;
-				};
-				core2 {
-					cpu = <&cpu6>;
-				};
-				core3 {
-					cpu = <&cpu7>;
-				};
-			};
-		};
+&cpu2 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		/* Cluster 0: Cortex-A53, V:42-80 */
-		cpu0: cpu@0 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a53";
-			reg = <0x000>;
-			enable-method = "psci";
-		};
+&cpu3 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		cpu1: cpu@1 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a53";
-			reg = <0x001>;
-			enable-method = "psci";
-		};
+&cpu4 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		cpu2: cpu@2 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a53";
-			reg = <0x002>;
-			enable-method = "psci";
-		};
+&cpu5 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		cpu3: cpu@3 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a53";
-			reg = <0x003>;
-			enable-method = "psci";
-		};
+&cpu6 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		/* Cluster 1: Cortex-A73, V:82-120 */
-		cpu4: cpu@100 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a73";
-			reg = <0x100>;
-			enable-method = "psci";
-		};
+&cpu7 {
+	/delete-property/ cpu-idle-states;
+	/delete-property/ operating-points-v2;
+	/delete-property/ mediatek,cci;
+};
 
-		cpu5: cpu@101 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a73";
-			reg = <0x101>;
-			enable-method = "psci";
-		};
+/*
+ * CCI frequency scaling goes with cpufreq. Its binding requires a proc-supply from the board's PMIC, and
+ * the Cosmo's MT6358 is not wired up yet, so dtbs_check rejects the node as it stands. Rather than invent
+ * a regulator we have not verified, drop the node: it scales the cache interconnect alongside the CPU
+ * frequencies that do not work here anyway. It comes back with the PMIC, together with cpufreq.
+ */
+/ {
+	/delete-node/ cci;
+};
 
-		cpu6: cpu@102 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a73";
-			reg = <0x102>;
-			enable-method = "psci";
-		};
-
-		cpu7: cpu@103 {
-			device_type = "cpu";
-			compatible = "arm,cortex-a73";
-			reg = <0x103>;
-			enable-method = "psci";
-		};
-	};
-
-	psci {				/* V:215-218 */
-		compatible = "arm,psci-1.0";
-		method = "smc";
-	};
-
-	/*
-	 * V:293-337. The vendor compatibles (mediatek,pstore, ram_console,
-	 * minirdump, reserve-memory-*, consys-reserve-memory) belong to vendor
-	 * drivers that do not exist here and are not carried over.
-	 *
-	 * Left out on purpose: zmc-default (k71v1_64_bsp.dts:12-17), a vendor
-	 * zone-movable CMA whose 0xffc00000 size and placement the vendor
-	 * allocator decides at boot and for which mainline has no binding; and
-	 * soter-shared-mem (V:338-345), which is only present under
-	 * CONFIG_MICROTRUST_TEE_SUPPORT, set in neither k71v1_64_bsp defconfig.
-	 */
-	reserved-memory {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges;
-
-		/*
-		 * The vendor pstore (V:298-301). Mainline ramoops takes the
-		 * place of the vendor's own pstore. Sizes are the vendor's:
-		 * console/pmsg from k71v1_64_bsp_defconfig:496-497, and the
-		 * 4096-byte record size is the vendor ram.c default (ram.c:41).
-		 * No no-map: it has to be mapped to be read back.
-		 */
-		ramoops@54410000 {
-			compatible = "ramoops";
-			reg = <0 0x54410000 0 0xe0000>;
-			record-size = <0x1000>;
-			console-size = <0x40000>;
-			pmsg-size = <0x10000>;
-		};
-
-		/* Vendor ram_console (V:302-305) and minirdump (V:306-309). */
-		ram-console@54400000 {
-			reg = <0 0x54400000 0 0x10000>;
-		};
-
-		minirdump@544f0000 {
-			reg = <0 0x544f0000 0 0x10000>;
-		};
-
-		/*
-		 * Regions the firmware owns, at the addresses it chose for
-		 * this boot, from the live device tree the bootloader hands
-		 * the vendor kernel (notes: probes/2026-09-24-1702-live.dts,
-		 * reserved-memory node; line numbers below are that file's).
-		 * The vendor source only declares most of these dynamically.
-		 * Not reserving them lets the page allocator hand ATF, TEE or
-		 * modem memory to the kernel. All no-map except where noted.
-		 *
-		 * The addresses are as observed on one boot. If LK places them
-		 * differently on another boot these are wrong; see the notes.
-		 */
-
-		/* live:6068 mblock-4-atf-reserved */
-		atf@54600000 {
-			reg = <0 0x54600000 0 0x40000>;
-			no-map;
-		};
-
-		/* live:6074 mblock-9-SPM-reserved */
-		spm@77ff0000 {
-			reg = <0 0x77ff0000 0 0x10000>;
-			no-map;
-		};
-
-		/* live:5951 mblock-5-SSPM-reserved */
-		sspm@7ff00000 {
-			reg = <0 0x7ff00000 0 0xc0000>;
-			no-map;
-		};
-
-		/* live:5987 mblock-3-log_store; mapped (no no-map in the live tree) */
-		log-store@7ffc0000 {
-			reg = <0 0x7ffc0000 0 0x40000>;
-		};
-
-		/* live:5971 mblock-7-framebuffer */
-		framebuffer@7df70000 {
-			reg = <0 0x7df70000 0 0x1f90000>;
-			no-map;
-		};
-
-		/* live:6023 mblock-13-ccci */
-		ccci@8a000000 {
-			reg = <0 0x8a000000 0 0x1600000>;
-			no-map;
-		};
-
-		/* live:6006 mblock-11-ccci */
-		ccci@8c000000 {
-			reg = <0 0x8c000000 0 0x100000>;
-			no-map;
-		};
-
-		/* live:6012 mblock-12-ccci; mapped (no no-map in the live tree) */
-		ccci@66000000 {
-			reg = <0 0x66000000 0 0x10000000>;
-		};
-
-		/* live:6017 mblock-10-SCP-reserved */
-		scp@9cf00000 {
-			reg = <0 0x9cf00000 0 0x600000>;
-			no-map;
-		};
-
-		/* live:6036 mblock-8-vpu_binary */
-		vpu@9d5f0000 {
-			reg = <0 0x9d5f0000 0 0x2a10000>;
-			no-map;
-		};
-
-		/* live:6042 mblock-6-tee-reserved */
-		tee@edb00000 {
-			reg = <0 0xedb00000 0 0x2440000>;
-			no-map;
-		};
-
-		/* live:6000 mblock-1-dramc-rk0 */
-		dramc-rk0@bffff000 {
-			reg = <0 0xbffff000 0 0x1000>;
-			no-map;
-		};
-
-		/* live:5965 mblock-2-dramc-rk1 */
-		dramc-rk1@1bffff000 {
-			reg = <1 0xbffff000 0 0x1000>;
-			no-map;
-		};
-
-		/*
-		 * The three pools below are placed by the kernel at boot from
-		 * size, alignment and alloc-ranges (as in the vendor), not at a
-		 * fixed address, and nothing consumes them until the SSPM, SCP
-		 * and connsys drivers exist.
-		 */
-
-		/*
-		 * V:312-323: 5M + 64K; the 1M + 64K variant needs
-		 * CONFIG_MTK_GMO_RAM_OPTIMIZE or CONFIG_MTK_MET_MEM_ALLOC,
-		 * set in neither k71v1_64_bsp defconfig.
-		 */
-		sspm-shared {
-			no-map;
-			size = <0 0x510000>;
-			alignment = <0 0x10000>;
-			alloc-ranges = <0 0x40000000 0 0x60000000>;
-		};
-
-		/* V:324-330: 20 MB */
-		scp-shared {
-			no-map;
-			size = <0 0x1400000>;
-			alignment = <0 0x1000000>;
-			alloc-ranges = <0 0x40000000 0 0x50000000>;
-		};
-
-		/* V:331-337 */
-		consys {
-			no-map;
-			size = <0 0x200000>;
-			alignment = <0 0x200000>;
-			alloc-ranges = <0 0x40000000 0 0x80000000>;
-		};
-	};
-
-	/* V:401-405 */
-	clk26m: oscillator {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <26000000>;
-		clock-output-names = "clk26m";
-	};
-
-	/*
-	 * STAND-IN, not hardware. Mainline has no MT6771 clock driver. The
-	 * vendor UARTs take their "bus" clock from the infracfg_ao gates
-	 * INFRACFG_AO_UART0_CG..UART2_CG (indices 21..23, vendor
-	 * include/dt-bindings/clock/mt6771-clk.h:193-195), provided by
-	 * infracfg_ao@10001000 (V:420-425). Until a driver for it exists this
-	 * always-on fixed clock takes their place. 8250_mtk only enables the
-	 * bus clock and never reads its rate, so the frequency below is a
-	 * placeholder required by the fixed-clock binding; it is NOT from the
-	 * vendor tree. Replace with <&infracfg_ao INFRACFG_AO_UARTn_CG>.
-	 */
-	infracfg_ao_uart_gates: infracfg-ao-uart-gates {
-		compatible = "fixed-clock";
-		#clock-cells = <0>;
-		clock-frequency = <26000000>;
-		clock-output-names = "infracfg_ao_uart_gates";
-	};
-
-	timer {				/* V:384-392 */
-		compatible = "arm,armv8-timer";
-		interrupt-parent = <&gic>;
-		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
-			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
-		clock-frequency = <13000000>;
-	};
-
-	soc {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		compatible = "simple-bus";
-		ranges;
-
-		/*
-		 * V:348-360. The vendor node also lists <0 0x0c530a80 0 0x50>
-		 * as a third reg entry; that is the sysirq window, not a GIC
-		 * region, and is left to the sysirq node below.
-		 */
-		gic: interrupt-controller@c000000 {
-			compatible = "arm,gic-v3";
-			#interrupt-cells = <3>;
-			interrupt-parent = <&gic>;
-			interrupt-controller;
-			reg = <0 0x0c000000 0 0x40000>,		/* GICD */
-			      <0 0x0c100000 0 0x200000>;	/* GICR */
-			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
-		};
-
-		/* V:362-369; the vendor node name says @0c530620, its reg says 0c530a80 */
-		sysirq: interrupt-controller@c530a80 {
-			compatible = "mediatek,mt6771-sysirq",
-				     "mediatek,mt6577-sysirq";
-			interrupt-controller;
-			#interrupt-cells = <3>;
-			interrupt-parent = <&gic>;
-			reg = <0 0x0c530a80 0 0x50>;
-		};
-
-		/*
-		 * UARTs, V:1593-1624. The vendor nodes also carry dmas/dma-names
-		 * pointing at the AP DMA (V:1573); left out with the DMA node,
-		 * the 8250 driver falls back to PIO.
-		 */
-		uart0: serial@11002000 {
-			compatible = "mediatek,mt6577-uart";
-			reg = <0 0x11002000 0 0x1000>;
-			interrupts = <GIC_SPI 91 IRQ_TYPE_LEVEL_LOW>;
-			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
-			clock-names = "baud", "bus";
-			status = "disabled";
-		};
-
-		uart1: serial@11003000 {
-			compatible = "mediatek,mt6577-uart";
-			reg = <0 0x11003000 0 0x1000>;
-			interrupts = <GIC_SPI 92 IRQ_TYPE_LEVEL_LOW>;
-			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
-			clock-names = "baud", "bus";
-			status = "disabled";
-		};
-
-		uart2: serial@11004000 {
-			compatible = "mediatek,mt6577-uart";
-			reg = <0 0x11004000 0 0x1000>;
-			interrupts = <GIC_SPI 93 IRQ_TYPE_LEVEL_LOW>;
-			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
-			clock-names = "baud", "bus";
-			status = "disabled";
-		};
+/* mt8183.dtsi gives /cpus no label, so reach it by path. */
+/ {
+	cpus {
+		/delete-node/ idle-states;
 	};
 };

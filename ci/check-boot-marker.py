@@ -21,7 +21,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 HEAD_S = REPO / "arch/arm64/kernel/head.S"
-DTSI = REPO / "arch/arm64/boot/dts/mediatek/mt6771.dtsi"
+# The reservation moved to the board file when the SoC file became an include of mt8183.dtsi, so look
+# in both rather than pinning one path.
+DT_FILES = (REPO / "arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dts",
+            REPO / "arch/arm64/boot/dts/mediatek/mt6771.dtsi")
 # fs/pstore/ram_core.c:46 in the vendor kernel: #define PERSISTENT_RAM_SIG (0x43474244) /* DBGC */
 PERSISTENT_RAM_SIG = 0x43474244
 
@@ -51,10 +54,17 @@ def main() -> int:
         return 1
 
     # The reservation the marker writes into, from our own device tree.
-    dtsi = DTSI.read_text()
-    m = re.search(r"ramoops@[0-9a-f]+\s*\{[^}]*?reg\s*=\s*<\s*0\s+(0x[0-9a-f]+)\s+0\s+(0x[0-9a-f]+)", dtsi, re.S)
+    m = None
+    for f in DT_FILES:
+        if not f.exists():
+            continue
+        m = re.search(r"ramoops@[0-9a-f]+\s*\{[^}]*?reg\s*=\s*<\s*0\s+(0x[0-9a-f]+)\s+0\s+(0x[0-9a-f]+)",
+                      f.read_text(), re.S)
+        if m:
+            print(f"reservation read from {f.name}")
+            break
     if not m:
-        print("no ramoops reg found in the dtsi")
+        print("no ramoops reg found in " + " or ".join(f.name for f in DT_FILES))
         return 1
     base, size = int(m.group(1), 16), int(m.group(2), 16)
 

@@ -67,6 +67,74 @@
 		};
 	};
 
+	/*
+	 * Targets for the vendor device-tree overlay. Not hardware.
+	 *
+	 * MediaTek's LK applies the overlay in the device's dtbo partition to whatever tree it finds in the
+	 * boot image, and it is not optional: when a fixup cannot be resolved it does not fall back, it
+	 * asserts, and the kernel never runs. Read out of expdb after a silent boot:
+	 *
+	 *   ERROR: ufdt_overlay_do_fixups():No node __symbols__ in main dtb.
+	 *   ufdt_apply_overlay() failed!
+	 *   panic (caller 0x5602c2d3): ASSERT at (app/mt_boot/fdt_op.c:212): 0
+	 *
+	 * The overlay names 61 symbols. Inheriting mt8183.dtsi supplies 18 of them; these
+	 * 43 are vendor board labels with no mainline equivalent. They exist so the overlay
+	 * resolves and LK proceeds, and they are deliberately empty and disabled so that whatever the overlay
+	 * writes into them binds to nothing. Pointing them at real nodes would let 280 fragments of downstream
+	 * properties into hardware we do describe.
+	 *
+	 * ci/check-dtbo-symbols.py reads the requirement out of the real dtbo partition, so this list cannot
+	 * drift from the device without the build failing.
+	 */
+	lk-dtbo-stubs {
+		status = "disabled";
+
+		accdet: accdet-stub { };
+		als: als-stub { };
+		apuart0: apuart0-stub { };
+		audgpio: audgpio-stub { };
+		aw9523_eint: aw9523-eint-stub { };
+		aw9523_key: aw9523-key-stub { };
+		aw9524_key: aw9524-key-stub { };
+		charger: charger-stub { };
+		chosen: chosen-stub { };
+		consys: consys-stub { };
+		cs_finger: cs-finger-stub { };
+		dsi_te: dsi-te-stub { };
+		finger: finger-stub { };
+		finger_key: finger-key-stub { };
+		fusb301a: fusb301a-stub { };
+		gpio: gpio-stub { };
+		gpio_usage_mapping: gpio-usage-mapping-stub { };
+		gyro: gyro-stub { };
+		hall: hall-stub { };
+		irq_nfc: irq-nfc-stub { };
+		irtx_pwm: irtx-pwm-stub { };
+		kd_camera_hw1: kd-camera-hw1-stub { };
+		keypad: keypad-stub { };
+		main_pmic: main-pmic-stub { };
+		md1_sim1_hot_plug_eint: md1-sim1-hot-plug-eint-stub { };
+		msdc1_ins: msdc1-ins-stub { };
+		mt6370_pmu: mt6370-pmu-stub { };
+		mt6370_typec: mt6370-typec-stub { };
+		mt_pmic_vcama1_ldo_reg: mt-pmic-vcama1-ldo-reg-stub { };
+		mt_pmic_vcama2_ldo_reg: mt-pmic-vcama2-ldo-reg-stub { };
+		mt_pmic_vcamd_ldo_reg: mt-pmic-vcamd-ldo-reg-stub { };
+		mt_pmic_vcamio_ldo_reg: mt-pmic-vcamio-ldo-reg-stub { };
+		mt_pmic_vldo28_ldo_reg: mt-pmic-vldo28-ldo-reg-stub { };
+		mt_pmic_vsim1_ldo_reg: mt-pmic-vsim1-ldo-reg-stub { };
+		mt_pmic_vsim2_ldo_reg: mt-pmic-vsim2-ldo-reg-stub { };
+		odm: odm-stub { };
+		pmic_clock_buffer_ctrl: pmic-clock-buffer-ctrl-stub { };
+		reserved_memory: reserved-memory-stub { };
+		sii9022: sii9022-stub { };
+		stm32_key: stm32-key-stub { };
+		subpmic_pmu_eint: subpmic-pmu-eint-stub { };
+		tcpc_pd: tcpc-pd-stub { };
+		touch: touch-stub { };
+	};
+
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;

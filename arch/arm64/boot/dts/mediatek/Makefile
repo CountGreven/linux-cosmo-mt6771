@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt2712-evb.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt6755-evb.dtb
+# MediaTek's LK applies an overlay from the device's dtbo partition to this dtb and asserts if it cannot
+# resolve the overlay's fixups, so the dtb has to carry a __symbols__ node. See ci/check-dtbo-symbols.py.
+DTC_FLAGS_mt6771-planet-cosmo := -@
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt6771-planet-cosmo.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt6779-evb.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt6795-evb.dtb

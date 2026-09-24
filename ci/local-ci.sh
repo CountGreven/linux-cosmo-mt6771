@@ -102,7 +102,7 @@ for c in \$(git rev-list "\$base"..HEAD); do
     files="\$(git show --name-only --format= "\$c")"
     kernel=0; ours=0
     echo "\$files" | grep -qE '^(arch|drivers|include|Documentation|sound|net|fs|kernel|mm|lib|scripts)/' && kernel=1
-    echo "\$files" | grep -qE '^(cosmo-notes|ci|\.github)/' && ours=1
+    echo "\$files" | grep -qE '^(ci|\.github)/' && ours=1
     if [ "\$kernel" = 1 ] && [ "\$ours" = 1 ]; then
         echo "mixed commit \$(git log -1 --format='%h %s' "\$c")"
         echo "\$files" | sed 's/^/    /'
@@ -116,16 +116,13 @@ EOF
 step notes "$out/notes.log" <<EOF
 set -e
 cd "$repo"
-# Notes are org so open questions are TODOs that can be listed and closed, and so posts can be
-# exported from them later. A stray .md here means the convention slipped.
-stray="\$(find cosmo-notes -name '*.md' 2>/dev/null)"
-if [ -n "\$stray" ]; then
-    echo "notes must be org-mode, found markdown:"
-    echo "\$stray"
+# Working notes live in a separate private repo (/storage/kernel/cosmo-notes). This tree carries code
+# and CI only, so nothing private travels with a rebase or rides along in a patch.
+if [ -e cosmo-notes ]; then
+    echo "cosmo-notes/ must not exist here: notes belong in the private notes repo"
     exit 1
 fi
-echo "open questions:"
-grep -rhE '^\*+ (TODO|NEXT|BLOCKED|WAITING)' cosmo-notes/*.org 2>/dev/null || echo "(none)"
+echo "no notes in the kernel tree"
 EOF
 
 printf '\n'

@@ -46,19 +46,16 @@ jobs:
           if-no-files-found: ignore
 
   notes:
-    name: notes are org with tracked questions
+    name: no private notes in the tree
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: No markdown in cosmo-notes, and list the open questions
+      - name: No private notes in the kernel tree
         run: |
-          stray="$(find cosmo-notes -name '*.md' 2>/dev/null)"
-          if [ -n "$stray" ]; then
-            echo "::error::notes must be org-mode: $stray"
+          if [ -e cosmo-notes ]; then
+            echo "::error::cosmo-notes/ belongs in the private notes repo, not here"
             exit 1
           fi
-          echo "### Open questions" >> "$GITHUB_STEP_SUMMARY"
-          grep -rhE '^\*+ (TODO|NEXT|BLOCKED|WAITING)' cosmo-notes/*.org >> "$GITHUB_STEP_SUMMARY" || true
 
   dtbs_check:
     name: device trees match their bindings

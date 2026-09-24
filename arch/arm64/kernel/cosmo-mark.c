@@ -6,6 +6,16 @@
  * off and write physical addresses directly. From __enable_mmu onwards that is no longer possible, so
  * these stages go through the linear map, which is why the first of them cannot run before paging_init.
  *
+ * All of these run BEFORE ramoops probes, and that is now deliberate. ramoops_probe saves the zone's old
+ * contents and then zaps it, so a marker written before probe is wiped by probe and cannot interfere with
+ * the console log that follows. Markers placed after it do interfere: a COSMO-PROBE2 at the end of probe,
+ * and a COSMO-CONSOLE inside pstore_register_console, each erased a log that was very likely working.
+ * Both are gone. The reading is now unambiguous:
+ *
+ *   kernel log text   pstore worked; read it, and take these markers out too.
+ *   a stage tag       ramoops never probed, so nothing zapped the zone.
+ *   nothing at all    probe ran and zapped, and no console output followed it.
+ *
  * The pstore reservation deliberately has no no-map property -- it has to be mapped for pstore to read it
  * back -- so it is part of the linear map and phys_to_virt applies.
  */

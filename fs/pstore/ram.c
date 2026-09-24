@@ -719,8 +719,6 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
-void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
-
 static int ramoops_probe(struct platform_device *pdev)
 {
 	/*
@@ -728,13 +726,6 @@ static int ramoops_probe(struct platform_device *pdev)
 	 * while the pstore zone still held that marker -- which it could not, had this function reached
 	 * persistent_ram_zap(). So either this is never called or it fails early. These two tags say which.
 	 */
-	/*
-	 * The ONLY marker allowed in this file, and only here: pstore_register() below registers the
-	 * console with CON_PRINTBUFFER, which replays the whole boot log into this same buffer. Any marker
-	 * after that point overwrites the log with twelve bytes -- which is what a COSMO-PROBE2 at the end
-	 * of this function did, on a run where the console had been working the whole time.
-	 */
-	cosmo_mark("COSMO-PROBE1");
 	struct device *dev = &pdev->dev;
 	struct ramoops_platform_data *pdata = dev->platform_data;
 	struct ramoops_platform_data pdata_local;

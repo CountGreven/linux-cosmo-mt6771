@@ -411,6 +411,8 @@ static struct console pstore_console = {
 	.index	= -1,
 };
 
+extern bool cosmo_mark_off;	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+
 static void pstore_register_console(void)
 {
 	/* Show which backend is going to get console writes. */
@@ -421,6 +423,12 @@ static void pstore_register_console(void)
 	 * calls may have changed settings (specifically CON_ENABLED).
 	 */
 	pstore_console.flags = CON_PRINTBUFFER | CON_ENABLED | CON_ANYTIME;
+	/*
+	 * DEBUG (Cosmo bring-up): the last marker, then the kill switch. If register_console works, its
+	 * CON_PRINTBUFFER replay overwrites this tag with the real log; if it hangs, this tag survives.
+	 */
+	cosmo_mark("COSMO-PR-CSL");
+	cosmo_mark_off = true;
 	register_console(&pstore_console);
 }
 

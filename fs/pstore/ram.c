@@ -723,8 +723,13 @@ extern bool cosmo_mark_off;	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-m
 
 static int ramoops_probe(struct platform_device *pdev)
 {
-	/* DEBUG: from here the zones are ours; no boot marker may touch them again. */
-	cosmo_mark_off = true;
+	/*
+	 * DEBUG (Cosmo bring-up): the initcall tracer says this function is called and never returns.
+	 * Each step below writes its own tag; the one that survives the watchdog is the step that hung.
+	 * Nothing here can hurt a log: the kill switch that silences every marker is thrown in
+	 * pstore_register_console immediately before register_console, and no log exists before that.
+	 */
+	cosmo_mark("COSMO-PR-ENT");
 	/*
 	 * DEBUG: the boot marker showed the kernel running well past the level where this should probe,
 	 * while the pstore zone still held that marker -- which it could not, had this function reached
@@ -799,16 +804,19 @@ static int ramoops_probe(struct platform_device *pdev)
 				&cxt->max_dump_cnt, 0, 0);
 	if (err)
 		goto fail_init;
+	cosmo_mark("COSMO-PR-DMP");
 
 	err = ramoops_init_prz("console", dev, cxt, &cxt->cprz, &paddr,
 			       cxt->console_size, 0);
 	if (err)
 		goto fail_init;
+	cosmo_mark("COSMO-PR-CON");
 
 	err = ramoops_init_prz("pmsg", dev, cxt, &cxt->mprz, &paddr,
 				cxt->pmsg_size, 0);
 	if (err)
 		goto fail_init;
+	cosmo_mark("COSMO-PR-PMS");
 
 	cxt->max_ftrace_cnt = (cxt->flags & RAMOOPS_FLAG_FTRACE_PER_CPU)
 				? nr_cpu_ids
@@ -855,6 +863,7 @@ static int ramoops_probe(struct platform_device *pdev)
 		}
 	}
 
+	cosmo_mark("COSMO-PR-REG");
 	err = pstore_register(&cxt->pstore);
 	if (err) {
 		pr_err("registering with pstore failed\n");

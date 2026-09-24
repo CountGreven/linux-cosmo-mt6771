@@ -23,6 +23,9 @@ REPO = Path(__file__).resolve().parent.parent
 HEAD_S = REPO / "arch/arm64/kernel/head.S"
 # The reservation moved to the board file when the SoC file became an include of mt8183.dtsi, so look
 # in both rather than pinning one path.
+C_MARK = REPO / "arch/arm64/kernel/cosmo-mark.c"
+SETUP_C = REPO / "arch/arm64/kernel/setup.c"
+C_SOURCES = "".join(f.read_text() for f in (C_MARK, SETUP_C) if f.exists())
 DT_FILES = (REPO / "arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dts",
             REPO / "arch/arm64/boot/dts/mediatek/mt6771.dtsi")
 # fs/pstore/ram_core.c:46 in the vendor kernel: #define PERSISTENT_RAM_SIG (0x43474244) /* DBGC */
@@ -43,11 +46,29 @@ def main() -> int:
         print(f"missing {HEAD_S}")
         return 1
     src = HEAD_S.read_text()
-    if "cosmo boot marker" not in src.lower():
+    if "cosmo_mark" not in src:
         print("head.S carries no boot marker")
         return 1
 
-    block = src[src.lower().index("cosmo boot marker"):][:1600]
+    # Every stage must write the same region, so one bad constant cannot send one stage somewhere else.
+    stages = re.findall(r"cosmo_mark\s+0x([0-9a-f]{4})\s*//\s*stage\s*(\d+)", src)
+    c_stages = re.findall(r'cosmo_mark\("COSMO-MARK-(\d+)"\)', C_SOURCES)
+    tags = [f"stage {n} (asm)" for _, n in stages] + [f"stage {n} (C)" for n in c_stages]
+    print("marker stages found: " + ", ".join(tags) if tags else "no stages found")
+    if not stages:
+        print("no asm marker stages")
+        return 1
+    asm_nums = sorted(int(n) for _, n in stages)
+    all_nums = sorted(asm_nums + [int(n) for n in c_stages])
+    if all_nums != list(range(1, len(all_nums) + 1)):
+        print(f"stages are not consecutive from 1: {all_nums}")
+        return 1
+    tails = {tail for tail, _ in stages}
+    if len(tails) != len(stages):
+        print("two asm stages write the same tag; they cannot be told apart")
+        return 1
+
+    block = src[src.index(".macro\tcosmo_mark"):][:1600]
     start, end, sig = movz_movk(block, "5"), movz_movk(block, "6"), movz_movk(block, "7")
     if None in (start, end, sig):
         print(f"could not read the marker constants: start={start} end={end} sig={sig}")
@@ -82,6 +103,17 @@ def main() -> int:
     if start >= end:
         print("marker range is empty")
         ok = False
+    if C_MARK.exists():
+        cbase = re.search(r"COSMO_MARK_BASE\s+0x([0-9a-fA-F]+)", C_MARK.read_text())
+        cend = re.search(r"COSMO_MARK_END\s+0x([0-9a-fA-F]+)", C_MARK.read_text())
+        if not (cbase and cend):
+            print("cosmo-mark.c does not define the region")
+            ok = False
+        elif (int(cbase.group(1), 16), int(cend.group(1), 16)) != (start, end):
+            print(f"cosmo-mark.c writes 0x{int(cbase.group(1), 16):08x}..0x{int(cend.group(1), 16):08x} "
+                  f"but head.S writes 0x{start:08x}..0x{end:08x}; the stages would not overwrite each "
+                  "other and the furthest-reached tag would be meaningless")
+            ok = False
     print("boot marker: ok" if ok else "boot marker: FAILED")
     return 0 if ok else 1
 

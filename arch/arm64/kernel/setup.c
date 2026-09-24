@@ -55,6 +55,9 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/mmu_context.h>
 
+/* Cosmo boot marker (DEBUG): arch/arm64/kernel/cosmo-mark.c */
+void cosmo_mark(const char *tag);
+
 static int num_standard_resources;
 static struct resource *standard_resources;
 
@@ -332,6 +335,9 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	arm64_memblock_init();
 
 	paging_init();
+
+	/* Cosmo boot marker stage 3 (DEBUG): first point where the linear map exists. */
+	cosmo_mark("COSMO-MARK-3");
 
 	acpi_table_upgrade();
 

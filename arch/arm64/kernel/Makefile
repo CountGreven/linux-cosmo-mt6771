@@ -87,3 +87,6 @@ endif
 
 # for cleaning
 subdir- += vdso vdso32
+
+# Cosmo boot markers (DEBUG, not for submission): see cosmo-mark.c and head.S.
+obj-y				+= cosmo-mark.o

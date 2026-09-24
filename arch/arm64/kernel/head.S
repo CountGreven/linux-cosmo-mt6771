@@ -82,48 +82,55 @@
 	 *  x20        primary_entry() .. __primary_switch()    CPU boot mode
 	 *  x21        primary_entry() .. start_kernel()        FDT pointer passed at boot in x0
 	 */
-SYM_CODE_START(primary_entry)
-	bl	record_mmu_state
-	bl	preserve_boot_args
-
-	/*
-	 * Cosmo boot marker (DEBUG, not for submission).
-	 *
-	 * The device has no usable serial console: the UART is only reachable with a cut USB-C cable we do
-	 * not have, and MediaTek's own bootloader log (/proc/pl_lk) keeps the current boot only, so a boot
-	 * that fails leaves nothing to read. Three attempts have been diagnosed purely by absence, which
-	 * cannot distinguish "LK never jumped" from "the kernel died in its first instructions".
-	 *
-	 * So write proof of life before anything can fail: a ramoops-formatted record sprayed every 4 KiB
-	 * across the pstore reservation, with the MMU and caches off, using only registers the boot
-	 * protocol has finished with. Gemian's pstore finds it after a power cycle and shows it as
-	 * console-ramoops. Spraying avoids having to know where MediaTek's zone boundaries fall; the
-	 * console zone is the one pstore never compresses, so at least one copy is always readable.
-	 *
-	 * Header is struct persistent_ram_buffer { sig, start, size } and PERSISTENT_RAM_SIG is 0x43474244
-	 * ('DBGC'), both from the vendor kernel's fs/pstore/ram_core.c that has to read this back.
-	 */
+/*
+ * Cosmo boot markers (DEBUG, not for submission).
+ *
+ * The device has no usable serial console: the UART needs a cut USB-C cable we do not have, and
+ * MediaTek's bootloader log in expdb only records boots that fail inside the bootloader. So the kernel
+ * reports its own progress by writing a ramoops-formatted record into the pstore reservation, which
+ * Gemian shows in /sys/fs/pstore after a reset. Each stage overwrites the previous one, so the tag left
+ * behind names the furthest point reached.
+ *
+ * Stage 1 proved the kernel executes at all (COSMO-MARKER, 2026-09-24). These stages bisect forward.
+ * Both are written with the MMU and caches off, so the stores go straight to DRAM; past __enable_mmu a
+ * physical address is no longer reachable and the later stages are C, using the linear map.
+ *
+ * Header is struct persistent_ram_buffer { sig, start, size } with PERSISTENT_RAM_SIG 0x43474244
+ * ('DBGC'), from the vendor kernel's fs/pstore/ram_core.c that reads it back. Sprayed every 4 KiB across
+ * the reservation so it lands in the console zone without having to know where MediaTek puts it.
+ *
+ * Only registers the boot protocol has finished with are used, and the stores happen after
+ * preserve_boot_args, so the FDT pointer in x0 and the boot status in x20/x21 are safe.
+ */
+	.macro	cosmo_mark, tail
 	movz	x5, #0x5441, lsl #16		// 0x54410000, start of the pstore reservation
-	movz	x6, #0x544f, lsl #16		// 0x544f0000, one past its end
+	movz	x6, #0x544f, lsl #16		// one past its end
 	movz	w7, #0x4244
 	movk	w7, #0x4347, lsl #16		// PERSISTENT_RAM_SIG
-	mov	w8, #12				// bytes of payload; start == size == 12
+	mov	w8, #12				// payload length; start == size == 12
 	movz	w9, #0x4f43
 	movk	w9, #0x4d53, lsl #16		// "COSM"
 	movz	w10, #0x2d4f
 	movk	w10, #0x414d, lsl #16		// "O-MA"
 	movz	w11, #0x4b52
-	movk	w11, #0x5245, lsl #16		// "RKER"
-0:	str	w7, [x5]
-	str	w8, [x5, #4]
-	str	w8, [x5, #8]
-	str	w9, [x5, #12]
+	movk	w11, #\tail, lsl #16		// "RK-<n>"
+8880\@:	str	w9, [x5, #12]
 	str	w10, [x5, #16]
 	str	w11, [x5, #20]
+	str	w8, [x5, #4]
+	str	w8, [x5, #8]
+	str	w7, [x5]			// signature last: a torn write is not mistaken for valid
 	add	x5, x5, #0x1000
 	cmp	x5, x6
-	b.lo	0b
+	b.lo	8880\@b
 	dsb	sy
+	.endm
+
+SYM_CODE_START(primary_entry)
+	bl	record_mmu_state
+	bl	preserve_boot_args
+
+	cosmo_mark 0x312d			// stage 1: primary_entry, first instructions
 
 	adrp	x1, early_init_stack
 	mov	sp, x1
@@ -545,6 +552,7 @@ SYM_FUNC_START_LOCAL(__no_granule_support)
 SYM_FUNC_END(__no_granule_support)
 
 SYM_FUNC_START_LOCAL(__primary_switch)
+	cosmo_mark 0x322d			// stage 2: about to enable the MMU
 	adrp	x1, reserved_pg_dir
 	adrp	x2, __pi_init_idmap_pg_dir
 	bl	__enable_mmu

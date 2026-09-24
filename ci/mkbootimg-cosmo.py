@@ -55,7 +55,20 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # install, and an experimental kernel with half its drivers unproven has no business writing to
            # it. A read-only mount still proves the boot and still lets userspace talk to us through
            # pstore.
-           "root=/dev/mmcblk0p43 rootwait ro")
+           "root=/dev/mmcblk0p43 rootwait ro "
+           # Bring ramoops up as early as the driver allows, via its own module parameters.
+           #
+           # Configured through the device tree, ramoops cannot probe until
+           # of_platform_default_populate_init creates its platform device at arch_initcall_sync -- and we
+           # keep dying before that, which leaves the console dead exactly where we need it. Given these
+           # parameters, ramoops_init registers a dummy platform device itself at postcore_initcall, four
+           # levels earlier, and the console comes up with it.
+           #
+           # Values match the reservation in the board dts and MediaTek's own geometry, which the vendor
+           # kernel reads back: 0xe0000 total at 0x54410000, a 0x40000 console zone, 0x10000 pmsg.
+           "ramoops.mem_address=0x54410000 ramoops.mem_size=0xe0000 "
+           "ramoops.console_size=0x40000 ramoops.record_size=0x1000 "
+           "ramoops.pmsg_size=0x10000 ramoops.ftrace_size=0")
 
 
 def pad(data: bytes, page: int = PAGE) -> bytes:

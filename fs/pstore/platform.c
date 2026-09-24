@@ -411,6 +411,8 @@ static struct console pstore_console = {
 	.index	= -1,
 };
 
+void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up) */
+
 static void pstore_register_console(void)
 {
 	/* Show which backend is going to get console writes. */
@@ -517,6 +519,7 @@ int pstore_register(struct pstore_info *psi)
 	}
 	if (psi->flags & PSTORE_FLAGS_CONSOLE)
 		pstore_register_console();
+	cosmo_mark("COSMO-PSTORE");	/* DEBUG: console registered; real log should follow */
 	if (psi->flags & PSTORE_FLAGS_FTRACE)
 		pstore_register_ftrace();
 	if (psi->flags & PSTORE_FLAGS_PMSG)

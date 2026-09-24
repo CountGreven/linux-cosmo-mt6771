@@ -719,8 +719,16 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
+void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+
 static int ramoops_probe(struct platform_device *pdev)
 {
+	/*
+	 * DEBUG: the boot marker showed the kernel running well past the level where this should probe,
+	 * while the pstore zone still held that marker -- which it could not, had this function reached
+	 * persistent_ram_zap(). So either this is never called or it fails early. These two tags say which.
+	 */
+	cosmo_mark("COSMO-PROBE-I");
 	struct device *dev = &pdev->dev;
 	struct ramoops_platform_data *pdata = dev->platform_data;
 	struct ramoops_platform_data pdata_local;
@@ -870,6 +878,7 @@ static int ramoops_probe(struct platform_device *pdev)
 		cxt->size, (unsigned long long)cxt->phys_addr,
 		cxt->ecc_info.ecc_size);
 
+	cosmo_mark("COSMO-PROBE-O");	/* DEBUG: probe completed */
 	return 0;
 
 fail_buf:

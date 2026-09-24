@@ -81,10 +81,22 @@ if ! make O="$out/build" -j$jobs CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2
     exit 1
 fi
 cat "$out/dtbs_check.stderr"
-if grep -E "mt6771|cosmo" "$out/dtbs_check.stderr"; then
-    echo "dtbs_check has complaints about our device trees"
+# Complaints about nodes that exist only for the bootloader are expected; ci/dtbs_check.allow says which
+# and why. They are printed either way, so they cannot quietly become invisible.
+grep -E "mt6771|cosmo" "$out/dtbs_check.stderr" | sort -u > "$out/dtbs_check.complaints" || true
+cp "$out/dtbs_check.complaints" "$out/dtbs_check.unexpected"
+grep -vE '^[[:space:]]*(#|\$)' "$repo/ci/dtbs_check.allow" | while IFS= read -r pat; do
+    grep -vE "\$pat" "$out/dtbs_check.unexpected" > "$out/dtbs_check.tmp" || true
+    mv "$out/dtbs_check.tmp" "$out/dtbs_check.unexpected"
+done
+if [ -s "$out/dtbs_check.complaints" ]; then
+    echo "dtbs_check complaints (all):"; sed 's/^/  /' "$out/dtbs_check.complaints"
+fi
+if [ -s "$out/dtbs_check.unexpected" ]; then
+    echo "unexpected dtbs_check complaints:"; sed 's/^/  /' "$out/dtbs_check.unexpected"
     exit 1
 fi
+echo "dtbs_check: only the complaints ci/dtbs_check.allow accounts for"
 echo "dtbs_check had nothing to say about our device trees"
 EOF
 

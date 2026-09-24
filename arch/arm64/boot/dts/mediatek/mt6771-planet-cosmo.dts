@@ -242,6 +242,21 @@
 			no-map;
 		};
 
+		/*
+		 * live:5942 reserve-memory-sspm_share. LK looks this up by literal path,
+		 * "/reserved-memory/reserve-memory-sspm_share", and writes "okay" into its status property --
+		 * which is why the live tree shows status = <0x6f6b6179>, "okay" as a u32. Without the node LK
+		 * logs "SSPM: no reserved mem found, skip" and shortly afterwards asserts. Values are the
+		 * device's, not invented: a dynamic reservation rather than a fixed one.
+		 */
+		reserve-memory-sspm_share {
+			compatible = "mediatek,reserve-memory-sspm_share";
+			size = <0 0x510000>;
+			alloc-ranges = <0 0x40000000 0 0x60000000>;
+			alignment = <0 0x10000>;
+			no-map;
+		};
+
 		/* live:6042 mblock-6-tee-reserved */
 		tee@edb00000 {
 			reg = <0 0xedb00000 0 0x2440000>;
@@ -309,4 +324,14 @@
 
 &uart0 {
 	status = "okay";
+};
+
+/*
+ * LK finds the SCP node by the vendor compatible "mediatek,scp" and reads its sram size from reg[0].
+ * Without it: "[SCP] platform_fdt_scp: getting node from dtb fails". mt8183.dtsi's node already carries
+ * the right reg -- sram at 0x10500000 size 0x80000, identical to the vendor tree (live:7006) -- so all
+ * it needs is the name the bootloader looks for. The node stays disabled; LK only reads it.
+ */
+&scp {
+	compatible = "mediatek,mt8183-scp", "mediatek,scp";
 };

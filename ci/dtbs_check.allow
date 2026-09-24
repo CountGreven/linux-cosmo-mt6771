@@ -1,0 +1,14 @@
+# Known dtbs_check complaints that are expected, with the reason each one is here.
+#
+# These are nodes we carry only to satisfy MediaTek's LK, which walks the device tree looking for
+# downstream node names and asserts when it does not find them. They describe a bootloader's
+# expectations rather than hardware, mainline has no schema for them, and they must be removed before
+# anything is submitted upstream. Everything NOT listed here still fails the job.
+#
+# One regex per line; blank lines and comments ignored.
+
+# LK looks this node up by literal path and writes "okay" into its status property.
+reserve-memory-sspm_share: failed to match any schema
+# LK finds the SCP node by the vendor compatible "mediatek,scp"; mainline's binding allows one compatible.
+scp@10500000 .*compatible.*is too long
+/soc/scp@10500000: failed to match any schema with compatible: \['mediatek,mt8183-scp', 'mediatek,scp'\]

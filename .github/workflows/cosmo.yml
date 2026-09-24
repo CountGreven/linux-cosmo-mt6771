@@ -73,14 +73,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu device-tree-compiler libssl-dev bc flex bison python3-pip yamllint
           pip3 install --break-system-packages dtschema
-      # The notes flagged this as never run: mediatek,mt6771-sysirq has no schema entry and
-      # planet,cosmo needs a vendor prefix. Informational until those are fixed upstream-style.
+      # Only complaints naming mt6771 or cosmo fail the job; the rest of the tree's dtbs_check
+      # noise is upstream's business. Same check as `ci/local-ci.sh --job dtbs_check`.
       - name: dtbs_check
-        continue-on-error: true
         run: |
           make defconfig
-          make -j"$(nproc)" DT_SCHEMA_FILES=mediatek dtbs_check 2>&1 | tee dtbs_check.log
-          grep -E "mt6771|cosmo" dtbs_check.log >> "$GITHUB_STEP_SUMMARY" || true
+          make DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml" dt_binding_check
+          make -j"$(nproc)" CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2>&1 | tee dtbs_check.log
+          if grep -E "mt6771|cosmo" dtbs_check.log; then
+            echo "::error::dtbs_check has complaints about our device trees"
+            exit 1
+          fi
 
   checkpatch:
     name: patches are upstream-shaped

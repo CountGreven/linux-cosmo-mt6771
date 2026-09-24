@@ -62,6 +62,32 @@ fi
 echo "dtc had nothing to say about our device trees"
 EOF
 
+# Schema validation of OUR device tree against the bindings, plus the two binding files this branch
+# edits. Needs dtschema (dt-validate); COSMO_DT_VENV points at a venv holding it. A missing validator
+# fails the job: a check that cannot run must not read as a check that passed.
+# Only complaints naming mt6771 or cosmo count; the rest of the tree's dtbs_check noise is upstream's.
+step dtbs_check "$out/dtbs_check.log" <<EOF
+set -e
+cd "$repo"
+export PATH="${COSMO_DT_VENV:-$out/venv}/bin:\$PATH"
+command -v dt-validate >/dev/null || { echo "dt-validate not found: pip install dtschema yamllint (venv: ${COSMO_DT_VENV:-$out/venv})"; exit 1; }
+make O="$out/build" defconfig >/dev/null
+make O="$out/build" DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml" dt_binding_check
+# CHECK_DTBS=y with a dtb target validates that dtb alone, not every dtb in the tree
+rm -f "$out/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
+if ! make O="$out/build" -j$jobs CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2> "$out/dtbs_check.stderr"; then
+    cat "$out/dtbs_check.stderr"
+    echo "the build itself failed, so nothing was checked"
+    exit 1
+fi
+cat "$out/dtbs_check.stderr"
+if grep -E "mt6771|cosmo" "$out/dtbs_check.stderr"; then
+    echo "dtbs_check has complaints about our device trees"
+    exit 1
+fi
+echo "dtbs_check had nothing to say about our device trees"
+EOF
+
 # Reads the dtb the dtbs job built, so `--job memory` alone needs a prior `--job dtbs`.
 step memory "$out/memory.log" <<EOF
 set -e

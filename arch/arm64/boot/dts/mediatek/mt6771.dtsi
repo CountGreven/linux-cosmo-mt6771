@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * MediaTek MT6771 (Helio P60/P70) SoC, minimal: CPUs, GICv3, arch timer, UARTs.
+ *
+ * Structure follows mt8183.dtsi. Every address, interrupt and clock is taken
+ * from the vendor tree and cited as V:<line>, where V is
+ * cosmo-linux-kernel-4.4/arch/arm64/boot/dts/mediatek/mt6771.dts.
+ * See cosmo-notes/01-dtsi.md for what was left out and why.
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	compatible = "mediatek,mt6771";
+	interrupt-parent = <&sysirq>;	/* V:26 */
+	#address-cells = <2>;		/* V:27 */
+	#size-cells = <2>;		/* V:28 */
+
+	cpus {				/* V:38 */
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu-map {		/* V:122 */
+			cluster0 {
+				core0 {
+					cpu = <&cpu0>;
+				};
+				core1 {
+					cpu = <&cpu1>;
+				};
+				core2 {
+					cpu = <&cpu2>;
+				};
+				core3 {
+					cpu = <&cpu3>;
+				};
+			};
+
+			cluster1 {
+				core0 {
+					cpu = <&cpu4>;
+				};
+				core1 {
+					cpu = <&cpu5>;
+				};
+				core2 {
+					cpu = <&cpu6>;
+				};
+				core3 {
+					cpu = <&cpu7>;
+				};
+			};
+		};
+
+		/* Cluster 0: Cortex-A53, V:42-80 */
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0x000>;
+			enable-method = "psci";
+		};
+
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0x001>;
+			enable-method = "psci";
+		};
+
+		cpu2: cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0x002>;
+			enable-method = "psci";
+		};
+
+		cpu3: cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0x003>;
+			enable-method = "psci";
+		};
+
+		/* Cluster 1: Cortex-A73, V:82-120 */
+		cpu4: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x100>;
+			enable-method = "psci";
+		};
+
+		cpu5: cpu@101 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x101>;
+			enable-method = "psci";
+		};
+
+		cpu6: cpu@102 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x102>;
+			enable-method = "psci";
+		};
+
+		cpu7: cpu@103 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x103>;
+			enable-method = "psci";
+		};
+	};
+
+	psci {				/* V:215-218 */
+		compatible = "arm,psci-1.0";
+		method = "smc";
+	};
+
+	/* V:401-405 */
+	clk26m: oscillator {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "clk26m";
+	};
+
+	/*
+	 * STAND-IN, not hardware. Mainline has no MT6771 clock driver. The
+	 * vendor UARTs take their "bus" clock from the infracfg_ao gates
+	 * INFRACFG_AO_UART0_CG..UART2_CG (indices 21..23, vendor
+	 * include/dt-bindings/clock/mt6771-clk.h:193-195), provided by
+	 * infracfg_ao@10001000 (V:420-425). Until a driver for it exists this
+	 * always-on fixed clock takes their place. 8250_mtk only enables the
+	 * bus clock and never reads its rate, so the frequency below is a
+	 * placeholder required by the fixed-clock binding; it is NOT from the
+	 * vendor tree. Replace with <&infracfg_ao INFRACFG_AO_UARTn_CG>.
+	 */
+	infracfg_ao_uart_gates: infracfg-ao-uart-gates {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "infracfg_ao_uart_gates";
+	};
+
+	timer {				/* V:384-392 */
+		compatible = "arm,armv8-timer";
+		interrupt-parent = <&gic>;
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
+		clock-frequency = <13000000>;
+	};
+
+	soc {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		compatible = "simple-bus";
+		ranges;
+
+		/*
+		 * V:348-360. The vendor node also lists <0 0x0c530a80 0 0x50>
+		 * as a third reg entry; that is the sysirq window, not a GIC
+		 * region, and is left to the sysirq node below.
+		 */
+		gic: interrupt-controller@c000000 {
+			compatible = "arm,gic-v3";
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			interrupt-controller;
+			reg = <0 0x0c000000 0 0x40000>,		/* GICD */
+			      <0 0x0c100000 0 0x200000>;	/* GICR */
+			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		/* V:362-369; the vendor node name says @0c530620, its reg says 0c530a80 */
+		sysirq: interrupt-controller@c530a80 {
+			compatible = "mediatek,mt6771-sysirq",
+				     "mediatek,mt6577-sysirq";
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			interrupt-parent = <&gic>;
+			reg = <0 0x0c530a80 0 0x50>;
+		};
+
+		/*
+		 * UARTs, V:1593-1624. The vendor nodes also carry dmas/dma-names
+		 * pointing at the AP DMA (V:1573); left out with the DMA node,
+		 * the 8250 driver falls back to PIO.
+		 */
+		uart0: serial@11002000 {
+			compatible = "mediatek,mt6577-uart";
+			reg = <0 0x11002000 0 0x1000>;
+			interrupts = <GIC_SPI 91 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
+			clock-names = "baud", "bus";
+			status = "disabled";
+		};
+
+		uart1: serial@11003000 {
+			compatible = "mediatek,mt6577-uart";
+			reg = <0 0x11003000 0 0x1000>;
+			interrupts = <GIC_SPI 92 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
+			clock-names = "baud", "bus";
+			status = "disabled";
+		};
+
+		uart2: serial@11004000 {
+			compatible = "mediatek,mt6577-uart";
+			reg = <0 0x11004000 0 0x1000>;
+			interrupts = <GIC_SPI 93 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&clk26m>, <&infracfg_ao_uart_gates>;
+			clock-names = "baud", "bus";
+			status = "disabled";
+		};
+	};
+};

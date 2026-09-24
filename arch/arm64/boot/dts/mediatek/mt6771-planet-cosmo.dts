@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Planet Computers Cosmo Communicator (board k71v1_64_bsp) on MediaTek MT6771.
+ */
+
+/dts-v1/;
+#include "mt6771.dtsi"
+
+/ {
+	model = "Planet Computers Cosmo Communicator";
+	chassis-type = "handset";
+	compatible = "planet,cosmo", "mediatek,mt6771";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	/*
+	 * TODO: no memory node yet: the vendor size is not trustworthy, see
+	 * cosmo-notes/01-dtsi.md.
+	 */
+
+	chosen {
+		/* 921600 from vendor mt6771.dts:32 (console=ttyS0,921600n1) */
+		stdout-path = "serial0:921600";
+	};
+};
+
+&uart0 {
+	status = "okay";
+};

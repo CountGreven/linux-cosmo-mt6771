@@ -22,6 +22,16 @@ from pathlib import Path
 
 ARM64_MAGIC = b"ARM\x64"
 ALIGN = 2 * 1024 * 1024
+# MediaTek LK's own requirement, from its source (app/mt_boot/mt_boot.c, 64-bit path):
+#
+#     if (g_boot_hdr->kernel_addr & 0x7FFFF) {
+#         dprintf(CRITICAL, "64 bit kernel can't boot at ...");
+#         while (1) ;
+#     }
+#
+# It spins forever rather than reporting anything we can see, so a violation looks exactly like a kernel
+# that died silently. That is worth failing a build over.
+LK_ALIGN = 0x80000
 
 
 def kernel_blob(img: bytes) -> bytes:
@@ -42,6 +52,10 @@ def check(path: Path) -> int:
     text_offset, _image_size, flags = struct.unpack_from("<QQQ", raw, 8)
     base = load - text_offset
     print(f"load 0x{load:08x}  text_offset 0x{text_offset:x}  -> base 0x{base:08x}  flags 0x{flags:x}")
+    if load % LK_ALIGN:
+        print(f"{path}: load 0x{load:08x} is not 0x{LK_ALIGN:x}-aligned. MediaTek LK refuses this and "
+              f"spins in while(1) with no output you can see.")
+        return 1
     if base % ALIGN:
         print(f"{path}: base 0x{base:08x} is not 2 MiB aligned "
               f"(0x{base % ALIGN:x} past the boundary). The kernel will die before it can say so.")

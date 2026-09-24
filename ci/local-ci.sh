@@ -72,7 +72,7 @@ cd "$repo"
 export PATH="${COSMO_DT_VENV:-$out/venv}/bin:\$PATH"
 command -v dt-validate >/dev/null || { echo "dt-validate not found: pip install dtschema yamllint (venv: ${COSMO_DT_VENV:-$out/venv})"; exit 1; }
 make O="$out/build" defconfig >/dev/null
-make O="$out/build" DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml" dt_binding_check
+make O="$out/build" DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml arm/mediatek.yaml" dt_binding_check
 # CHECK_DTBS=y with a dtb target validates that dtb alone, not every dtb in the tree
 rm -f "$out/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
 if ! make O="$out/build" -j$jobs CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2> "$out/dtbs_check.stderr"; then

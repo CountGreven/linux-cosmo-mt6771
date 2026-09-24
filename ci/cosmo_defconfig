@@ -1,0 +1,66 @@
+# Lean config for bringing up the Cosmo (MT6771). Not for daily use.
+#
+# It is applied to allnoconfig, not to arm64 defconfig, so every symbol not named here is off:
+#
+#   make allnoconfig KCONFIG_ALLCONFIG=ci/cosmo_defconfig
+#
+# The reason is size. LK loads the kernel blob into a fixed buffer and the vendor's is 11,610,550
+# bytes; arm64 defconfig plus our fragment gave 15,672,311 (ci/check-image-size.py holds the line).
+# Anything added here has to earn its bytes. ci/local-ci.sh --job image-size fails if a symbol below is
+# silently dropped for an unmet dependency.
+
+# --- the CPU and the SoC: arm64, PSCI, generic timer, GICv3 -----------------------------------------
+CONFIG_ARM64=y
+CONFIG_ARCH_MEDIATEK=y
+CONFIG_SMP=y
+CONFIG_NR_CPUS=8
+CONFIG_ARM_GIC_V3=y
+CONFIG_ARM_ARCH_TIMER=y
+CONFIG_ARM_PSCI_FW=y
+
+# --- consoles: the UART LK silences, the framebuffer we can actually see, pstore across a reset -----
+CONFIG_TTY=y
+CONFIG_PRINTK=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_MT6577=y
+CONFIG_SERIAL_OF_PLATFORM=y
+CONFIG_SERIAL_EARLYCON=y
+
+# simple-framebuffer over LK's buffer, drawn by fbdev. Not DRM_SIMPLEDRM: FB_SIMPLE depends on
+# !DRM_SIMPLEDRM, and DRM would drag in the whole graphics stack for a boot console.
+CONFIG_FB=y
+CONFIG_FB_SIMPLE=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FONTS=y
+CONFIG_FONT_TER16x32=y
+
+# console-ramoops and pmsg-ramoops read back after a reboot; compression so a panic dump fits.
+# (pstore is sourced inside the misc-filesystems menu, which allnoconfig leaves off; that is the only
+# thing MISC_FILESYSTEMS buys here, no filesystem in it is enabled.)
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_PSTORE=y
+CONFIG_PSTORE_COMPRESS=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+CONFIG_PSTORE_RAM=y
+
+# --- just enough userspace to see a device node: an initramfs, /dev, /proc, /sys, tmpfs -------------
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_TMPFS=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+
+# --- bring-up ergonomics ---------------------------------------------------------------------------
+# Symbols in an oops, no automatic reboot: a panic should stay on the screen and in pstore.
+CONFIG_KALLSYMS=y
+CONFIG_PANIC_TIMEOUT=0
+# Size over speed: the blob limit is the thing under test.
+CONFIG_CC_OPTIMIZE_FOR_SIZE=y

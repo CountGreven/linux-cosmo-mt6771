@@ -117,6 +117,82 @@
 		method = "smc";
 	};
 
+	/*
+	 * V:293-337. The vendor compatibles (mediatek,pstore, ram_console,
+	 * minirdump, reserve-memory-*, consys-reserve-memory) belong to vendor
+	 * drivers that do not exist here and are not carried over.
+	 *
+	 * Left out on purpose: zmc-default (k71v1_64_bsp.dts:12-17), a vendor
+	 * zone-movable CMA whose 0xffc00000 size and placement the vendor
+	 * allocator decides at boot and for which mainline has no binding; and
+	 * soter-shared-mem (V:338-345), which is only present under
+	 * CONFIG_MICROTRUST_TEE_SUPPORT, set in neither k71v1_64_bsp defconfig.
+	 */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * The vendor pstore (V:298-301). Mainline ramoops takes the
+		 * place of the vendor's own pstore. Sizes are the vendor's:
+		 * console/pmsg from k71v1_64_bsp_defconfig:496-497, and the
+		 * 4096-byte record size is the vendor ram.c default (ram.c:41).
+		 * No no-map: it has to be mapped to be read back.
+		 */
+		ramoops@54410000 {
+			compatible = "ramoops";
+			reg = <0 0x54410000 0 0xe0000>;
+			record-size = <0x1000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x10000>;
+		};
+
+		/* Vendor ram_console (V:302-305) and minirdump (V:306-309). */
+		ram-console@54400000 {
+			reg = <0 0x54400000 0 0x10000>;
+		};
+
+		minirdump@544f0000 {
+			reg = <0 0x544f0000 0 0x10000>;
+		};
+
+		/*
+		 * The three pools below are placed by the kernel at boot from
+		 * size, alignment and alloc-ranges (as in the vendor), not at a
+		 * fixed address, and nothing consumes them until the SSPM, SCP
+		 * and connsys drivers exist.
+		 */
+
+		/*
+		 * V:312-323: 5M + 64K; the 1M + 64K variant needs
+		 * CONFIG_MTK_GMO_RAM_OPTIMIZE or CONFIG_MTK_MET_MEM_ALLOC,
+		 * set in neither k71v1_64_bsp defconfig.
+		 */
+		sspm-shared {
+			no-map;
+			size = <0 0x510000>;
+			alignment = <0 0x10000>;
+			alloc-ranges = <0 0x40000000 0 0x60000000>;
+		};
+
+		/* V:324-330: 20 MB */
+		scp-shared {
+			no-map;
+			size = <0 0x1400000>;
+			alignment = <0 0x1000000>;
+			alloc-ranges = <0 0x40000000 0 0x50000000>;
+		};
+
+		/* V:331-337 */
+		consys {
+			no-map;
+			size = <0 0x200000>;
+			alignment = <0 0x200000>;
+			alloc-ranges = <0 0x40000000 0 0x80000000>;
+		};
+	};
+
 	/* V:401-405 */
 	clk26m: oscillator {
 		compatible = "fixed-clock";

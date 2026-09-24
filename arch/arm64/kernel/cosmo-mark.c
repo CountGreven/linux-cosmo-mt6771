@@ -71,3 +71,12 @@ static int __init cosmo_mark_##level(void)				\
 level##_initcall(cosmo_mark_##level)
 
 COSMO_MARK_STAGE(early, 4);	/* start_kernel's setup completed */
+/*
+ * Stages 5 and 6 bisect the gap between early_initcall and ramoops.
+ *
+ * With ramoops.mem_address on the cmdline, ramoops_init registers its own platform device at
+ * postcore_initcall. The levels are pure(1), core(2), postcore(3), so both of these still run before it
+ * and are still wiped by the zap when probe happens -- they cannot overwrite a log.
+ */
+COSMO_MARK_STAGE(pure, 5);
+COSMO_MARK_STAGE(core, 6);

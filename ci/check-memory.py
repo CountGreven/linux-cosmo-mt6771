@@ -10,9 +10,9 @@ Asserts, on the compiled blob and not on the source:
   - a ramoops (pstore) region exists and is not no-map: a no-map pstore
     cannot be read back, which is the whole reason it is there.
 
-A /memory size of zero is the mainline idiom for "the bootloader fills this
-in" (see qcom/sdm845.dtsi). The base is then still checked, but the upper
-bound cannot be, and the check says so instead of pretending.
+A /memory size of zero is a failure: the kernel skips a zero-size entry, so
+it would boot with no RAM unless the bootloader patches the node, and with no
+size the upper bound of the reserved regions cannot be checked either.
 
 Only dtc is needed (dtc -I dtb -O dts); no python libraries.
 """
@@ -127,24 +127,14 @@ def main():
             ranges += p
     if not ranges:
         fail("no /memory node with a base and size")
-    unbounded = bool(ranges) and all(s == 0 for _, s in ranges)
-    lowest = min((b for b, _ in ranges), default=0)
-    if unbounded:
-        notes.append(f"/memory size is 0: bootloader-supplied, base 0x{lowest:x} checked, "
-                     "upper bound NOT checked")
+    for b, s in ranges:
+        if s == 0:
+            fail(f"/memory at 0x{b:x} has size 0: the kernel ignores it, "
+                 "and the upper bound of the reserved regions cannot be checked")
+    ranges = [(b, s) for b, s in ranges if s]
 
     def inside(start, end):
-        for b, s in ranges:
-            if s == 0:
-                if start >= b:
-                    return True
-            elif start >= b and end <= b + s:
-                return True
-        return False
-
-    def overlaps_memory(start, end):
-        return any(s == 0 and end > b or s and start < b + s and end > b
-                   for b, s in ranges)
+        return any(start >= b and end <= b + s for b, s in ranges)
 
     # --- /reserved-memory -------------------------------------------------
     rm = root["kids"].get("reserved-memory")
@@ -163,7 +153,7 @@ def main():
                     fail(f"{name}: zero-sized reg")
                     continue
                 fixed.append((name, base, base + size))
-                if ranges and not inside(base, base + size):
+                if not inside(base, base + size):
                     fail(f"{name}: 0x{base:x}-0x{base + size - 1:x} lies outside /memory")
         else:
             # dynamic pool: size (+ alignment, alloc-ranges) resolved by the kernel
@@ -180,8 +170,8 @@ def main():
             for wb, ws in windows or []:
                 if ws < size:
                     fail(f"{name}: alloc-ranges 0x{wb:x}+0x{ws:x} smaller than size 0x{size:x}")
-                elif ranges and not overlaps_memory(wb, wb + ws):
-                    fail(f"{name}: alloc-ranges 0x{wb:x}+0x{ws:x} miss /memory entirely")
+                elif not inside(wb, wb + ws):
+                    fail(f"{name}: alloc-ranges 0x{wb:x}-0x{wb + ws - 1:x} not inside /memory")
         if string(n, "compatible") == "ramoops":
             ramoops.append((name, n, reg))
 

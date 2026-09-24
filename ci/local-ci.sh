@@ -66,7 +66,7 @@ EOF
 step memory "$out/memory.log" <<EOF
 set -e
 cd "$repo"
-./ci/check-memory.py "$out/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
+python3 ci/check-memory.py "$out/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
 EOF
 
 step checkpatch "$out/checkpatch.log" <<EOF

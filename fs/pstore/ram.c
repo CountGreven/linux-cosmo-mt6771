@@ -998,9 +998,10 @@ static int __init ramoops_init(void)
  * reserved by memblock long before, and with ramoops.mem_address on the cmdline ramoops_register_dummy
  * creates its own platform device rather than waiting for of_platform at arch_initcall_sync.
  *
- * Within a level the order is link order, and arch/ comes before fs/, so the stage-6 marker still runs
- * first and is still wiped by the zap here. A log and a marker cannot coexist, which keeps the result
- * readable.
+ * Within a level the order is link order: the top-level Kbuild links init/, usr/, arch/, kernel/,
+ * certs/, mm/, fs/ and only then drivers/. So the stage-6 marker in arch/ runs first and is wiped by the
+ * zap here -- and this runs BEFORE every driver's core_initcall, so the log should cover all of those.
+ * A log and a marker cannot coexist, which keeps the result readable.
  */
 core_initcall(ramoops_init);
 

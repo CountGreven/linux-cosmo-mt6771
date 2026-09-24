@@ -763,10 +763,11 @@ static int __init pstore_init(void)
  *
  * The backend is ready well before this: ramoops_init is a postcore_initcall, and drivers/of/platform.c
  * creates a platform device for a /reserved-memory child with compatible "ramoops" at
- * arch_initcall_sync, so the driver has bound by then. This runs at that same level: within a level the
- * order is link order, and drivers/ comes before fs/, so of_platform has already created the device and
- * ramoops has already probed by the time we get here. subsys_initcall was tried first and was still too
- * late -- the kernel dies inside subsys, between our marker in arch/ and pstore in fs/.
+ * arch_initcall_sync. This runs at that same level. CORRECTED: within a level the order is link order,
+ * and the top-level Kbuild links fs/ BEFORE drivers/, so this actually runs before of_platform has
+ * created the device. That does not matter for the console: it is registered by pstore_register(),
+ * called from inside ramoops_probe, not by this function. subsys_initcall was tried first and was
+ * still too late -- the kernel dies inside subsys, between our marker in arch/ and pstore in fs/.
  *
  * The console registers with CON_PRINTBUFFER, so registration replays everything printk has buffered
  * since boot rather than capturing only from this moment.

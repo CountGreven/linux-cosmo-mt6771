@@ -18,14 +18,15 @@
 	memory@40000000 {
 		device_type = "memory";
 		/*
-		 * The base is the vendor's (V:226). Its size, 0x1e605000, is not
-		 * used: it ends exactly at the framebuffer base 0x5e605000
-		 * (k71v1_64_bsp.dts:25), a bring-up value, and nothing in the
-		 * vendor tree gives the real RAM size. We expect the bootloader
-		 * to fill in the size; if it does not, there is no RAM at all.
-		 * STAND-IN: size 0 becomes the real size once known.
+		 * 6 GiB from 0x40000000. Two independent sources: the device
+		 * owner, and Otto Pflueger's mt6771-planet-cosmocom.dts:29
+		 * (reg = <0 0x40000000 1 0x80000000>). The vendor's own size,
+		 * 0x1e605000 (V:226), is a bring-up value that stops at the
+		 * framebuffer base and is not used. The base is the vendor's.
+		 * Not proven: that the range is contiguous, with no hole the
+		 * firmware owns; only a boot settles that.
 		 */
-		reg = <0 0x40000000 0 0>;
+		reg = <0 0x40000000 1 0x80000000>;
 	};
 
 	chosen {

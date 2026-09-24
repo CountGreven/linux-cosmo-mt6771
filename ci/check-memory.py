@@ -8,7 +8,7 @@ Asserts, on the compiled blob and not on the source:
   - every /reserved-memory child lies inside that memory range;
   - no two fixed reserved regions overlap;
   - every firmware-owned region the device reports is reserved at exactly
-    its address and size, no-map where the live tree says no-map (FIRMWARE);
+  - no region LK reserves for itself is declared here as well (LK_OWNED);
   - when a simple-framebuffer node exists, its memory lies inside exactly one
     reserved region, overlaps no other, is inside /memory, and holds
     stride * height bytes (an absent node is fine: it is optional);
@@ -27,10 +27,21 @@ import sys
 
 DEFAULT_DTB = "/storage/kernel/build/ci/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
 
-# Regions firmware owns, from the live device tree the bootloader hands the
-# vendor kernel (notes: probes/2026-09-24-1702-live.dts, reserved-memory
-# node, lines 5929-6079). (base, size, no-map, live-tree node).
-FIRMWARE = [
+# Regions LK reserves for itself, read from its own mblock_reserve list in expdb.
+#
+# These appear in the live device tree of the running vendor kernel, which is how we first found them --
+# and transcribing them into our source was a mistake in reasoning. The live tree is what the kernel
+# receives AFTER the bootloader has injected its reservations, not what the vendor's source declares.
+# Declaring them again collides with the originals and LK refuses the whole tree:
+#
+#   DTS node:atf@54600000 reserved start: 0x54600000 size: 0x40000
+#   reserved_memory_conflict_check:1168 failed i:3 0:1:1:1
+#   reserved_memory_conflict_check fatal error keep while (1)
+#
+# followed by a spin until the watchdog. So the check is the other way round: these must be ABSENT from
+# our device tree. They still reach the kernel -- from the bootloader, exactly as the vendor kernel gets
+# them. (base, size, no-map, live-tree node).
+LK_OWNED = [
     (0x54600000, 0x40000, True, "mblock-4-atf-reserved"),
     (0x77ff0000, 0x10000, True, "mblock-9-SPM-reserved"),
     (0x7ff00000, 0xc0000, True, "mblock-5-SSPM-reserved"),
@@ -201,13 +212,11 @@ def main():
         if string(n, "compatible") == "ramoops":
             ramoops.append((name, n, reg))
 
-    for base, size, want_nomap, live in FIRMWARE:
-        if (base, size) not in nomap:
-            fail(f"firmware region 0x{base:x}+0x{size:x} ({live}) is not reserved "
-                 "at exactly that address and size")
-        elif nomap[(base, size)] != want_nomap:
-            fail(f"firmware region 0x{base:x} ({live}): live tree says "
-                 f"{'no-map' if want_nomap else 'mapped'}, dtb says the opposite")
+    for base, size, _want_nomap, live in LK_OWNED:
+        if (base, size) in nomap:
+            fail(f"0x{base:x}+0x{size:x} ({live}) is reserved here, but LK reserves it itself. "
+                 "Declaring it again fails reserved_memory_conflict_check and LK spins until the "
+                 "watchdog. Let the bootloader provide it.")
 
     fixed.sort(key=lambda r: r[1])
     for (na, sa, ea), (nb, sb, eb) in zip(fixed, fixed[1:]):

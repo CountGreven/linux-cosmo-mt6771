@@ -129,6 +129,27 @@
 		ranges;
 
 		/*
+		 * Only what LK does NOT reserve itself.
+		 *
+		 * The firmware regions this file used to declare -- atf, spm, sspm, tee, log_store, framebuffer,
+		 * three ccci, scp, vpu, the dramc ranks -- were transcribed from the live device tree of the
+		 * running vendor kernel. That was a mistake in reasoning: the live tree is what the kernel
+		 * receives AFTER LK has injected its own reservations, not what the vendor's source declares.
+		 * Declaring them again collides with the originals, and LK refuses the tree outright:
+		 *
+		 *   DTS node:atf@54600000 reserved start: 0x54600000 size: 0x40000
+		 *   reserved_memory_conflict_check:1168 failed i:3 0:1:1:1
+		 *   reserved_memory_conflict_check fatal error keep while (1)
+		 *
+		 * atf@54600000 is byte-identical to LK's own atf-reserved. The three nodes that passed the check
+		 * -- ramoops, ram-console, minirdump -- are precisely the ones LK does not inject.
+		 *
+		 * So the firmware regions still reach the kernel; they arrive from the bootloader, which is how
+		 * the vendor kernel gets them too. Dynamic reservations (no fixed reg) are fine: they cannot
+		 * collide, and LK looks reserve-memory-sspm_share up by name.
+		 */
+
+		/*
 		 * The vendor pstore (V:298-301). Mainline ramoops takes the
 		 * place of the vendor's own pstore. Sizes are the vendor's:
 		 * console/pmsg from k71v1_64_bsp_defconfig:496-497, and the
@@ -165,71 +186,7 @@
 		 * differently on another boot these are wrong; see the notes.
 		 */
 
-		/* live:6068 mblock-4-atf-reserved */
-		atf@54600000 {
-			reg = <0 0x54600000 0 0x40000>;
-			no-map;
-		};
-
-		/* live:6074 mblock-9-SPM-reserved */
-		spm@77ff0000 {
-			reg = <0 0x77ff0000 0 0x10000>;
-			no-map;
-		};
-
-		/* live:5951 mblock-5-SSPM-reserved */
-		sspm@7ff00000 {
-			reg = <0 0x7ff00000 0 0xc0000>;
-			no-map;
-		};
-
-		/* live:5987 mblock-3-log_store; mapped (no no-map in the live tree) */
-		log-store@7ffc0000 {
-			reg = <0 0x7ffc0000 0 0x40000>;
-		};
-
-		/* live:5971 mblock-7-framebuffer */
-		framebuffer@7df70000 {
-			reg = <0 0x7df70000 0 0x1f90000>;
-			no-map;
-		};
-
-		/* live:6023 mblock-13-ccci */
-		ccci@8a000000 {
-			reg = <0 0x8a000000 0 0x1600000>;
-			no-map;
-		};
-
-		/* live:6006 mblock-11-ccci */
-		ccci@8c000000 {
-			reg = <0 0x8c000000 0 0x100000>;
-			no-map;
-		};
-
-		/* live:6012 mblock-12-ccci; mapped (no no-map in the live tree) */
-		ccci@66000000 {
-			reg = <0 0x66000000 0 0x10000000>;
-		};
-
 		/* live:6017 mblock-10-SCP-reserved */
-		/*
-		 * Labelled because mt8183.dtsi's scp@10500000 references
-		 * scp_mem_reserved by name; the SoC file will not compile without
-		 * it. Otto's tree puts this at 0x50000000, which looks inherited
-		 * from an MT8183 board — the live tree on this device says
-		 * 0x9cf00000, and the device wins.
-		 */
-		scp_mem_reserved: scp@9cf00000 {
-			reg = <0 0x9cf00000 0 0x600000>;
-			no-map;
-		};
-
-		/* live:6036 mblock-8-vpu_binary */
-		vpu@9d5f0000 {
-			reg = <0 0x9d5f0000 0 0x2a10000>;
-			no-map;
-		};
-
 		/*
 		 * live:5942 reserve-memory-sspm_share. LK looks this up by literal path,
 		 * "/reserved-memory/reserve-memory-sspm_share", and writes "okay" into its status property --
@@ -245,50 +202,12 @@
 			no-map;
 		};
 
-		/* live:6042 mblock-6-tee-reserved */
-		tee@edb00000 {
-			reg = <0 0xedb00000 0 0x2440000>;
-			no-map;
-		};
-
-		/* live:6000 mblock-1-dramc-rk0 */
-		dramc-rk0@bffff000 {
-			reg = <0 0xbffff000 0 0x1000>;
-			no-map;
-		};
-
-		/* live:5965 mblock-2-dramc-rk1 */
-		dramc-rk1@1bffff000 {
-			reg = <1 0xbffff000 0 0x1000>;
-			no-map;
-		};
-
 		/*
 		 * The three pools below are placed by the kernel at boot from
 		 * size, alignment and alloc-ranges (as in the vendor), not at a
 		 * fixed address, and nothing consumes them until the SSPM, SCP
 		 * and connsys drivers exist.
 		 */
-
-		/*
-		 * V:312-323: 5M + 64K; the 1M + 64K variant needs
-		 * CONFIG_MTK_GMO_RAM_OPTIMIZE or CONFIG_MTK_MET_MEM_ALLOC,
-		 * set in neither k71v1_64_bsp defconfig.
-		 */
-		sspm-shared {
-			no-map;
-			size = <0 0x510000>;
-			alignment = <0 0x10000>;
-			alloc-ranges = <0 0x40000000 0 0x60000000>;
-		};
-
-		/* V:324-330: 20 MB */
-		scp-shared {
-			no-map;
-			size = <0 0x1400000>;
-			alignment = <0 0x1000000>;
-			alloc-ranges = <0 0x40000000 0 0x50000000>;
-		};
 
 		/* V:331-337 */
 		consys {
@@ -313,4 +232,12 @@
  */
 &scp {
 	compatible = "mediatek,mt8183-scp", "mediatek,scp";
+
+	/*
+	 * LK reserves the SCP firmware region itself -- SCP-reserved at 0x9cf00000 in its own
+	 * mblock_reserve list -- and rejects the whole device tree if we declare it a second time. So drop
+	 * mt8183.dtsi's reference rather than duplicate LK's region. The node is disabled here in any case;
+	 * when SCP is actually brought up, take the region from what LK injects rather than declaring one.
+	 */
+	/delete-property/ memory-region;
 };

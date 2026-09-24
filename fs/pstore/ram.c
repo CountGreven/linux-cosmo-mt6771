@@ -990,7 +990,19 @@ static int __init ramoops_init(void)
 
 	return ret;
 }
-postcore_initcall(ramoops_init);
+/*
+ * DEBUG (Cosmo bring-up): core_initcall rather than postcore_initcall.
+ *
+ * The boot marker reaches core_initcall and no further, so the kernel dies between there and ramoops at
+ * postcore -- one level too early for the console to exist. Nothing here needs postcore: the memory is
+ * reserved by memblock long before, and with ramoops.mem_address on the cmdline ramoops_register_dummy
+ * creates its own platform device rather than waiting for of_platform at arch_initcall_sync.
+ *
+ * Within a level the order is link order, and arch/ comes before fs/, so the stage-6 marker still runs
+ * first and is still wiped by the zap here. A log and a marker cannot coexist, which keeps the result
+ * readable.
+ */
+core_initcall(ramoops_init);
 
 static void __exit ramoops_exit(void)
 {

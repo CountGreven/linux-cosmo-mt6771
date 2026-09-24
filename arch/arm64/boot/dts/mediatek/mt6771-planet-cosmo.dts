@@ -37,34 +37,22 @@
 		ranges;
 
 		/*
-		 * OPTIONAL, UNPROVEN: the buffer LK hands over, as a screen
-		 * console when the UART is silenced (printk.disable_uart=1).
-		 * Delete this node and the reservation below to drop it.
+		 * NO simple-framebuffer here, and the reason is worth keeping.
 		 *
-		 * WAITING: LK reports islcm_inited = 0, i.e. it may leave the
-		 * panel uninitialised, in which case this shows nothing. It is
-		 * only proven when something appears on the screen.
+		 * We derived a handover framebuffer at 0x5e605000 from chosen/atag,videolfb-fb_base_l and
+		 * reserved it. LK rejected the whole device tree for it:
 		 *
-		 * Base/size: chosen/atag,videolfb-fb_base_l and -vramSize.
-		 * 0x17bb000 is 1080*1920*4*3, so LK sized it for a 1920-line
-		 * panel, three pages. Geometry is fb0 as the vendor kernel
-		 * reports it (1080x2160, stride 4352 = 1088*4, MTK_FB_ALIGNMENT
-		 * 32). STAND-IN: if LK draws with stride 4320 the picture is
-		 * sheared; adjust once seen.
-		 * Format: mtkfb_fbinfo_init() (mt6771/videox/mtkfb.c:2077-2081)
-		 * sets red at bit 0, blue at 16, alpha 24: a8b8g8r8, not
-		 * a8r8g8b8. Confirmed on the running device:
-		 * FBIOGET_VSCREENINFO gives 1080x2160, 32bpp, red 0, green 8,
-		 * blue 16, alpha 24, and fb0/stride is 4352.
+		 *   reserved_memory_conflict_check fatal error keep while (1)
+		 *
+		 * then spun until the watchdog. Its own log says why: free memory resumes at 0x5e900000, and
+		 * 0x56900000-0x5e900000 is LK's scratch_addr_mb -- the buffer it decompresses the kernel into.
+		 * 0x5e605000 is inside it. That address is LK's workspace, not a framebuffer it hands over.
+		 *
+		 * The live device tree's real display reservation is mblock-7-framebuffer at 0x7df70000, which
+		 * is reserved below and is the address Otto Pflueger's tree uses -- commented out there too.
+		 * If a screen console is wanted later, that is where to start, and its geometry needs proving
+		 * against a boot rather than against an atag.
 		 */
-		framebuffer@5e605000 {
-			compatible = "simple-framebuffer";
-			reg = <0 0x5e605000 0 0x17bb000>;
-			width = <1080>;
-			height = <2160>;
-			stride = <4352>;
-			format = "a8b8g8r8";
-		};
 	};
 
 	/*
@@ -308,15 +296,6 @@
 			size = <0 0x200000>;
 			alignment = <0 0x200000>;
 			alloc-ranges = <0 0x40000000 0 0x80000000>;
-		};
-		/*
-		 * Protects the optional framebuffer in /chosen above from the
-		 * allocator. Not one of the firmware regions: this is the
-		 * buffer LK hands over, kept alive on purpose.
-		 */
-		framebuffer-lk@5e605000 {
-			reg = <0 0x5e605000 0 0x17bb000>;
-			no-map;
 		};
 	};
 

@@ -43,7 +43,19 @@ TAGS_ADDR = 0x54000000
 # one attempt's evidence was lost. Rebooting itself after five seconds gets us a warm reset and keeps the
 # buffer, without depending on how the device was restarted.
 CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
-           "console=tty0 panic=5")
+           "console=tty0 panic=5 "
+           # The real Debian root, mounted READ-ONLY.
+           #
+           # Gemian roots from /dev/mmcblk0p43, plain ext4 -- the root=/dev/dm-0 that LK puts on the
+           # cmdline is an Android leftover its initrd ignores. MMC_MTK, MMC_BLOCK and EXT4_FS are all
+           # built in, so this kernel can mount it without an initramfs, and our cmdline is appended
+           # after LK's so this root= is the one that wins.
+           #
+           # ro, deliberately and until there is a reason to change it: this is Fredrik's working Debian
+           # install, and an experimental kernel with half its drivers unproven has no business writing to
+           # it. A read-only mount still proves the boot and still lets userspace talk to us through
+           # pstore.
+           "root=/dev/mmcblk0p43 rootwait ro")
 
 
 def pad(data: bytes, page: int = PAGE) -> bytes:

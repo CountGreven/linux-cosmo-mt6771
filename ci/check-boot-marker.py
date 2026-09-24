@@ -90,10 +90,14 @@ def main() -> int:
 
     # No marker may run after the console is registered: pstore_register() replays the whole boot log
     # into this buffer, and a marker written afterwards overwrites it. That cost three attempts.
-    if PLATFORM_C.exists() and "cosmo_mark(" in PLATFORM_C.read_text():
-        print("fs/pstore/platform.c calls cosmo_mark; pstore_register registers the console there and "
-              "any marker after it erases the replayed log")
-        return 1
+    if PLATFORM_C.exists():
+        plat = PLATFORM_C.read_text()
+        reg = plat.find("register_console(&pstore_console)")
+        late = [m.start() for m in re.finditer(r"\tcosmo_mark\(", plat) if reg != -1 and m.start() > reg]
+        if late:
+            print("fs/pstore/platform.c calls cosmo_mark after register_console(); CON_PRINTBUFFER "
+                  "replays the whole log there and a later marker erases it")
+            return 1
     if RAM_C.exists():
         ram = RAM_C.read_text()
         reg = ram.find("pstore_register(&cxt->pstore)")

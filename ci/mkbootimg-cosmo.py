@@ -33,13 +33,17 @@ SECOND_ADDR = 0x40F00000
 TAGS_ADDR = 0x54000000
 # The stored cmdline of the working image. LK appends its own arguments (console=, androidboot.*,
 # printk.disable_uart=1) at boot, so what we put here is a request, not the final word.
+# No earlycon and no keep_bootcon: both write to the UART that LK tells the kernel to use as a console,
+# and mainline -- unlike MediaTek's patched printk -- honours that literally. An unclocked UART that never
+# reports TX-ready blocks printk forever.
+#
 # panic=5 rather than panic=0, and the reason matters for the workflow: the console log lives in the
 # ramoops buffer in DRAM, which survives a reset but not a power-down. With panic=0 a crashed kernel sits
 # there until someone holds the power button, and a full power-off takes the log with it -- which is how
 # one attempt's evidence was lost. Rebooting itself after five seconds gets us a warm reset and keeps the
 # buffer, without depending on how the device was restarted.
-CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=0 "
-           "console=tty0 earlycon keep_bootcon panic=5")
+CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
+           "console=tty0 panic=5")
 
 
 def pad(data: bytes, page: int = PAGE) -> bytes:

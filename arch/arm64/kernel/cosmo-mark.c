@@ -45,10 +45,22 @@ void cosmo_mark(const char *tag)
 	}
 }
 
-/* Stage 4: initcalls run, so the kernel got through the whole of start_kernel's setup. */
-static int __init cosmo_mark_initcall(void)
-{
-	cosmo_mark("COSMO-MARK-4");
-	return 0;
-}
-early_initcall(cosmo_mark_initcall);
+/*
+ * Stages 4 to 7 walk the initcall levels. They deliberately stop before device_initcall, which is where
+ * ramoops itself probes: from that point pstore owns this buffer, and a marker written afterwards would
+ * overwrite the real console log we are trying to reach. So if a run leaves stage 7 behind, the kernel
+ * died between fs_initcall and pstore coming up; if it leaves actual kernel log text instead, pstore
+ * worked and these markers have done their job and should come out.
+ */
+#define COSMO_MARK_STAGE(level, n)					\
+static int __init cosmo_mark_##level(void)				\
+{									\
+	cosmo_mark("COSMO-MARK-" #n);					\
+	return 0;							\
+}									\
+level##_initcall(cosmo_mark_##level)
+
+COSMO_MARK_STAGE(early, 4);	/* start_kernel's setup completed */
+COSMO_MARK_STAGE(core, 5);
+COSMO_MARK_STAGE(subsys, 6);
+COSMO_MARK_STAGE(fs, 7);	/* the last level before ramoops probes */

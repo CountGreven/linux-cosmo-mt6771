@@ -4,7 +4,7 @@
 # GitHub Actions is the intended home; this exists so the work is gated while that account is locked,
 # and afterwards as the fast local pass before pushing.
 #
-#   ci/local-ci.sh              # dtbs + checkpatch  (fast: the usual gate)
+#   ci/local-ci.sh              # dtbs + memory + checkpatch  (fast: the usual gate)
 #   ci/local-ci.sh --full       # also build Image
 #   ci/local-ci.sh --job dtbs   # one job
 #
@@ -60,6 +60,13 @@ if grep -E "mediatek/(mt6771|.*cosmo)[^ ]*\.(dts|dtsi)" "$out/dtc.stderr"; then
     exit 1
 fi
 echo "dtc had nothing to say about our device trees"
+EOF
+
+# Reads the dtb the dtbs job built, so `--job memory` alone needs a prior `--job dtbs`.
+step memory "$out/memory.log" <<EOF
+set -e
+cd "$repo"
+./ci/check-memory.py "$out/build/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
 EOF
 
 step checkpatch "$out/checkpatch.log" <<EOF

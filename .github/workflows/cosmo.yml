@@ -38,6 +38,11 @@ jobs:
             exit 1
           fi
 
+      # The memory map is what stands between us and a first boot: /memory, non-overlapping
+      # reserved regions, and a pstore that can be read back.
+      - name: Check the memory map
+        run: ./ci/check-memory.py arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

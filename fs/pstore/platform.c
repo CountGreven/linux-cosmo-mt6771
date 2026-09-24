@@ -753,7 +753,20 @@ static int __init pstore_init(void)
 
 	return ret;
 }
-late_initcall(pstore_init);
+/*
+ * DEBUG (Cosmo bring-up, not for submission): fs_initcall rather than late_initcall.
+ *
+ * pstore_init is what registers the console and the dump handler, so nothing printk says is captured
+ * before it runs. On this device the kernel dies during device_initcall -- our boot marker reaches
+ * fs_initcall and no further -- which is before late_initcall, so the crash was never recorded and the
+ * only evidence was the marker itself.
+ *
+ * The backend is ready well before this: ramoops_init is a postcore_initcall and its platform device
+ * comes from the reserved-memory node at arch_initcall_sync, so by fs_initcall there is a backend to
+ * register against. Moving the registration one level earlier buys us the console across the whole of
+ * device_initcall, which is where the interesting failure lives.
+ */
+fs_initcall(pstore_init);
 
 static void __exit pstore_exit(void)
 {

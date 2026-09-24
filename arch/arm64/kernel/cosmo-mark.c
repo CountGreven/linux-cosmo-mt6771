@@ -62,5 +62,4 @@ level##_initcall(cosmo_mark_##level)
 
 COSMO_MARK_STAGE(early, 4);	/* start_kernel's setup completed */
 COSMO_MARK_STAGE(core, 5);
-COSMO_MARK_STAGE(subsys, 6);
-COSMO_MARK_STAGE(fs, 7);	/* the last level before ramoops probes */
+COSMO_MARK_STAGE(subsys, 6);	/* last stage: fs_initcall now belongs to pstore_init */

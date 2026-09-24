@@ -411,7 +411,8 @@ static struct console pstore_console = {
 	.index	= -1,
 };
 
-extern bool cosmo_mark_off;	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+extern bool cosmo_mark_off;
+void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
 
 static void pstore_register_console(void)
 {

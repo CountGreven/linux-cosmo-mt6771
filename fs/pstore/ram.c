@@ -719,7 +719,8 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
-extern bool cosmo_mark_off;	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
+extern bool cosmo_mark_off;
+void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
 
 static int ramoops_probe(struct platform_device *pdev)
 {

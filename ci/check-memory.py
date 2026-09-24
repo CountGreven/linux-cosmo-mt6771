@@ -9,6 +9,9 @@ Asserts, on the compiled blob and not on the source:
   - no two fixed reserved regions overlap;
   - every firmware-owned region the device reports is reserved at exactly
     its address and size, no-map where the live tree says no-map (FIRMWARE);
+  - when a simple-framebuffer node exists, its memory lies inside exactly one
+    reserved region, overlaps no other, is inside /memory, and holds
+    stride * height bytes (an absent node is fine: it is optional);
   - a ramoops (pstore) region exists and is not no-map: a no-map pstore
     cannot be read back, which is the whole reason it is there.
 
@@ -210,6 +213,42 @@ def main():
     for (na, sa, ea), (nb, sb, eb) in zip(fixed, fixed[1:]):
         if sb < ea:
             fail(f"{na} (0x{sa:x}-0x{ea - 1:x}) overlaps {nb} (0x{sb:x}-0x{eb - 1:x})")
+
+    # --- simple-framebuffer (optional) ------------------------------------
+    def walk(node, path):
+        yield path, node
+        for kid, k in node["kids"].items():
+            yield from walk(k, f"{path.rstrip('/')}/{kid}")
+
+    for path, n in walk(root, "/"):
+        if string(n, "compatible") != "simple-framebuffer":
+            continue
+        reg = pairs(cells(n, "reg"), ac, sc)
+        if not reg:
+            fail(f"{path}: simple-framebuffer has no usable reg")
+            continue
+        fb, fbsize = reg[0]
+        fbend = fb + fbsize
+        stride = (cells(n, "stride") or [0])[0]
+        height = (cells(n, "height") or [0])[0]
+        if not stride * height:
+            fail(f"{path}: needs a stride and a height")
+        elif stride * height > fbsize:
+            fail(f"{path}: stride*height 0x{stride * height:x} exceeds its "
+                 f"memory 0x{fbsize:x}")
+        if not inside(fb, fbend):
+            fail(f"{path}: 0x{fb:x}-0x{fbend - 1:x} lies outside /memory")
+        holders = [nm for nm, s, e in fixed if s <= fb and fbend <= e]
+        if not holders:
+            fail(f"{path}: 0x{fb:x}-0x{fbend - 1:x} is not inside a reserved "
+                 "region: the page allocator would hand it out")
+        for nm, s, e in fixed:
+            if s < fbend and fb < e and nm not in holders:
+                fail(f"{path}: overlaps reserved region {nm} "
+                     f"(0x{s:x}-0x{e - 1:x}) without being inside it")
+        if len(holders) > 1:
+            fail(f"{path}: inside more than one reserved region: {holders}")
+        print(f"framebuffer: {path} 0x{fb:x}-0x{fbend - 1:x} in {holders}")
 
     # --- ramoops ----------------------------------------------------------
     if not ramoops:

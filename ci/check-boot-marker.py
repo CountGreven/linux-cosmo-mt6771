@@ -25,7 +25,9 @@ HEAD_S = REPO / "arch/arm64/kernel/head.S"
 # in both rather than pinning one path.
 C_MARK = REPO / "arch/arm64/kernel/cosmo-mark.c"
 SETUP_C = REPO / "arch/arm64/kernel/setup.c"
-C_SOURCES = "".join(f.read_text() for f in (C_MARK, SETUP_C) if f.exists())
+RAM_C = REPO / "fs/pstore/ram.c"
+PLATFORM_C = REPO / "fs/pstore/platform.c"
+C_SOURCES = "".join(f.read_text() for f in (C_MARK, SETUP_C, RAM_C, PLATFORM_C) if f.exists())
 DT_FILES = (REPO / "arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dts",
             REPO / "arch/arm64/boot/dts/mediatek/mt6771.dtsi")
 # fs/pstore/ram_core.c:46 in the vendor kernel: #define PERSISTENT_RAM_SIG (0x43474244) /* DBGC */
@@ -69,6 +71,22 @@ def main() -> int:
     if len(tails) != len(stages):
         print("two asm stages write the same tag; they cannot be told apart")
         return 1
+
+    # Every tag is memcpy'd at exactly COSMO_MARK_LEN (12) bytes, so a longer one is silently truncated.
+    # COSMO-PROBE-I and COSMO-PROBE-O both became "COSMO-PROBE-" and could not be told apart, which cost
+    # an attempt. Tags must be exactly 12 characters and distinct.
+    all_tags = re.findall(r'cosmo_mark\("([^"]+)"\)', C_SOURCES)
+    all_tags += [f"COSMO-MARK-{n}" for n in re.findall(r'COSMO_MARK_STAGE\(\w+,\s*(\d+)\)', C_SOURCES)]
+    bad = [tag for tag in all_tags if len(tag) != 12]
+    if bad:
+        for tag in bad:
+            print(f"tag {tag!r} is {len(tag)} characters; it is copied at 12 and would be truncated")
+        return 1
+    if len(set(all_tags)) != len(all_tags):
+        dupes = sorted({tag for tag in all_tags if all_tags.count(tag) > 1})
+        print(f"duplicate tags, which cannot be told apart: {dupes}")
+        return 1
+    print(f"tags: {', '.join(sorted(set(all_tags)))}")
 
     block = src[src.index(".macro\tcosmo_mark"):][:1600]
     start, end, sig = movz_movk(block, "5"), movz_movk(block, "6"), movz_movk(block, "7")

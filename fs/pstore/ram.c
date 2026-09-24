@@ -728,7 +728,7 @@ static int ramoops_probe(struct platform_device *pdev)
 	 * while the pstore zone still held that marker -- which it could not, had this function reached
 	 * persistent_ram_zap(). So either this is never called or it fails early. These two tags say which.
 	 */
-	cosmo_mark("COSMO-PROBE-I");
+	cosmo_mark("COSMO-PROBE1");
 	struct device *dev = &pdev->dev;
 	struct ramoops_platform_data *pdata = dev->platform_data;
 	struct ramoops_platform_data pdata_local;
@@ -878,7 +878,7 @@ static int ramoops_probe(struct platform_device *pdev)
 		cxt->size, (unsigned long long)cxt->phys_addr,
 		cxt->ecc_info.ecc_size);
 
-	cosmo_mark("COSMO-PROBE-O");	/* DEBUG: probe completed */
+	cosmo_mark("COSMO-PROBE2");	/* DEBUG: probe completed */
 	return 0;
 
 fail_buf:

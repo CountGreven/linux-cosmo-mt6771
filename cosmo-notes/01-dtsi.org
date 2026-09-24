@@ -1,0 +1,92 @@
+#+TITLE: 01 — minimal mt6771.dtsi
+#+TODO: TODO NEXT BLOCKED WAITING(w) | DONE CANCELLED VERIFIED
+
+* DONE mt6771.dtsi: CPUs, GIC, timer, UART                             :blog:
+:PROPERTIES:
+:TASK:     t_6f332db5
+:MODEL:    sonnet
+:TOKENS:   79937
+:SECONDS:  190
+:DATE:     [2026-09-24]
+:END:
+
+=./ci/local-ci.sh --job dtbs= passes. Nothing has been booted: /compiles/ is all that is verified.
+
+Test-first record: with =mt6771-planet-cosmo.dts= in place and no dtsi, the job failed with
+=fatal error: mt6771.dtsi: No such file or directory=. After the dtsi was written it passed, and =dtc=
+printed nothing about our files.
+
+** What is in it
+
+=arch/arm64/boot/dts/mediatek/mt6771.dtsi=, shaped after =mt8183.dtsi=. Each node carries its =V:<line>=.
+
+- 8 CPUs, PSCI enable-method, =cpu-map= (V:38-152). Cluster 0 = cpu@0-3 Cortex-A53, cluster 1 =
+  cpu@100-103 Cortex-A73 — vendor numbering (A53 first), same as MT8183.
+- =psci= smc, v1.0 (V:215).
+- GICv3, distributor + redistributor, maintenance PPI 9 (V:348-360), and sysirq (V:362).
+- Arch timer, PPIs 13/14/11/10, =clock-frequency = <13000000>= (V:384-392).
+- =clk26m= (V:401).
+- =uart0..uart2= at 0x11002000/3000/4000, SPI 91/92/93 (V:1593-1624), disabled here; the board enables
+  =uart0=.
+
+Board file: =&uart0= enabled, =stdout-path = "serial0:921600"= (V:32 has =console=ttyS0,921600n1=).
+
+** Judgement calls, for the record                                     :blog:
+
+- The vendor GIC lists a third =reg= entry =0c530a80/0x50=. That is the sysirq window, not a GIC region,
+  so it went to the sysirq node — which is what mainline does.
+- The vendor sysirq node is *named* =@0c530620= but its =reg= is =0c530a80= (V:362 vs 368). The node is
+  named after its reg, the truth.
+- Vendor =clock-frequency = <2340000000>= on every CPU (V:47) is not a standard CPU property and is
+  implausible for the A53s. Not carried over.
+
+** STAND-IN: infracfg_ao_uart_gates
+
+A =fixed-clock= standing in for the vendor =infracfg_ao= UART gates (=INFRACFG_AO_UART0_CG..UART2_CG= =
+21..23, =include/dt-bindings/clock/mt6771-clk.h:193-195=; controller at V:420). Mainline has no MT6771
+clock driver. Its 26 MHz is a placeholder that does *not* come from the vendor tree; =8250_mtk.c= only
+enables the bus clock and never reads its rate, so it is inert.
+
+*** TODO Replace the stand-in with a real infracfg_ao clock controller
+Needs =<&infracfg_ao INFRACFG_AO_UARTn_CG>=, which needs an MT6771 clock driver — a later milestone.
+
+* Open questions
+
+** TODO Memory node: the vendor size is not trustworthy
+Vendor has =reg = <0 0x40000000 0 0x1e605000>= (V:226). The size ends exactly at the framebuffer base
+0x5e605000 (=k71v1_64_bsp.dts:25=), so it looks like a bring-up/FPGA value rather than the Cosmo's RAM.
+The base is certain; the size is not. No memory node is written, so the bootloader must supply one —
+unverified, and a boot-blocker if it does not.
+
+** TODO Reserved memory: firmware-owned regions are missing
+Vendor reserves pstore/ram_console/minirdump at 0x54400000-0x544fffff (V:298-309) and no-map sspm/scp/
+consys pools placed at boot (V:312-337). None are in the dtsi, so a kernel ignoring them may overwrite
+firmware-owned RAM.
+
+Blocks the no-UART debugging plan: pstore /is/ how a boot log gets read back.
+
+** TODO Run dtbs_check and fix what it flags
+Never run. Two things will fail: =mediatek,mt6771-sysirq= is not in =mediatek,mt6577-sysirq.yaml=, and
+=planet,cosmo= needs a registered vendor prefix. Both must be resolved before any upstream submission.
+
+** WAITING Is uart0 the port reachable on the hardware?
+V:1593 is the vendor's console (=uart = <&apuart0>=, V:1545), but whether that port is wired to anything
+physically reachable on the Cosmo is unknown until someone looks.
+
+** WAITING Arch timer clock-frequency may be masking firmware
+Kept the vendor =13000000=. The property overrides CNTFRQ; whether firmware sets CNTFRQ correctly here is
+unknown, so this is either redundant or hiding a problem.
+
+** TODO Console format: 921600n1 is not a valid data-bits value
+Vendor says =921600n1= (V:32). Only the baud was kept and the driver defaults the rest. Whether the
+console is 8n1 on this hardware is unverified.
+
+** DONE Cross-check against mt6771-ref told us little
+Otto's =mt6771.dtsi= just includes =mt8183.dtsi= and deletes idle/OPP properties. It confirms the CPU reg
+values (0-3, 100-103) and nothing else — no independent check on GIC, timer or UART addresses.
+
+* Deliberately out of scope, still needed later
+
+AP DMA (V:1573) and the UART =dmas= (UARTs run PIO) · PMU (V:220, =arm,armv8-pmuv3= at PPI 7) ·
+cpu-idle-states (V:154-212) · pinctrl — the board overlay sets UART0 pinctrl on GPIO 95/96
+(=k71v1_64_bsp.dts:809-853=) · reserved-memory · everything else.

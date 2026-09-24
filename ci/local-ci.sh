@@ -91,6 +91,43 @@ ls -l "$out/build/arch/arm64/boot/Image"
 EOF
 fi
 
+step commits "$out/commits.log" <<EOF
+set -e
+cd "$repo"
+base="\$(git merge-base HEAD origin/master 2>/dev/null || git rev-parse HEAD~1)"
+# A commit is either kernel or ours, never both: cosmo-notes/ and .github/ must never ride along in a
+# patch sent upstream, and a mixed commit makes cherry-picking for submission a manual edit.
+bad=0
+for c in \$(git rev-list "\$base"..HEAD); do
+    files="\$(git show --name-only --format= "\$c")"
+    kernel=0; ours=0
+    echo "\$files" | grep -qE '^(arch|drivers|include|Documentation|sound|net|fs|kernel|mm|lib|scripts)/' && kernel=1
+    echo "\$files" | grep -qE '^(cosmo-notes|ci|\.github)/' && ours=1
+    if [ "\$kernel" = 1 ] && [ "\$ours" = 1 ]; then
+        echo "mixed commit \$(git log -1 --format='%h %s' "\$c")"
+        echo "\$files" | sed 's/^/    /'
+        bad=1
+    fi
+done
+[ "\$bad" = 0 ] && echo "no commit mixes kernel changes with notes/CI"
+exit \$bad
+EOF
+
+step notes "$out/notes.log" <<EOF
+set -e
+cd "$repo"
+# Notes are org so open questions are TODOs that can be listed and closed, and so posts can be
+# exported from them later. A stray .md here means the convention slipped.
+stray="\$(find cosmo-notes -name '*.md' 2>/dev/null)"
+if [ -n "\$stray" ]; then
+    echo "notes must be org-mode, found markdown:"
+    echo "\$stray"
+    exit 1
+fi
+echo "open questions:"
+grep -rhE '^\*+ (TODO|NEXT|BLOCKED|WAITING)' cosmo-notes/*.org 2>/dev/null || echo "(none)"
+EOF
+
 printf '\n'
 if [ "$failed" = 0 ]; then
     echo "local-ci: all checks passed"

@@ -45,6 +45,41 @@ jobs:
           path: arch/arm64/boot/dts/mediatek/*.dtb
           if-no-files-found: ignore
 
+  notes:
+    name: notes are org with tracked questions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No markdown in cosmo-notes, and list the open questions
+        run: |
+          stray="$(find cosmo-notes -name '*.md' 2>/dev/null)"
+          if [ -n "$stray" ]; then
+            echo "::error::notes must be org-mode: $stray"
+            exit 1
+          fi
+          echo "### Open questions" >> "$GITHUB_STEP_SUMMARY"
+          grep -rhE '^\*+ (TODO|NEXT|BLOCKED|WAITING)' cosmo-notes/*.org >> "$GITHUB_STEP_SUMMARY" || true
+
+  dtbs_check:
+    name: device trees match their bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu device-tree-compiler libssl-dev bc flex bison python3-pip yamllint
+          pip3 install --break-system-packages dtschema
+      # The notes flagged this as never run: mediatek,mt6771-sysirq has no schema entry and
+      # planet,cosmo needs a vendor prefix. Informational until those are fixed upstream-style.
+      - name: dtbs_check
+        continue-on-error: true
+        run: |
+          make defconfig
+          make -j"$(nproc)" DT_SCHEMA_FILES=mediatek dtbs_check 2>&1 | tee dtbs_check.log
+          grep -E "mt6771|cosmo" dtbs_check.log >> "$GITHUB_STEP_SUMMARY" || true
+
   checkpatch:
     name: patches are upstream-shaped
     runs-on: ubuntu-latest

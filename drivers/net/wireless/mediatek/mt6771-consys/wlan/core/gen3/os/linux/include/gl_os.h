@@ -95,7 +95,7 @@
 
 #if CONFIG_ANDROID
 #ifdef CONFIG_WAKELOCK
-#include <linux/wakelock.h>
+#include <mtk_plat_shim.h>
 #else
 #include <linux/device.h>
 #endif /*CONFIG_WAKELOCK*/

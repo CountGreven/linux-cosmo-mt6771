@@ -2305,15 +2305,14 @@ static INT_32 wlanProbe(PVOID pvData)
 		/* TODO the change schedule API shall be provided by OS glue layer */
 		/* Switch the Wi-Fi task priority to higher priority and change the scheduling method */
 		if (prGlueInfo->prAdapter->rWifiVar.ucThreadPriority > 0) {
-			struct sched_param param = {.sched_priority = prGlueInfo->prAdapter->rWifiVar.ucThreadPriority
-			};
-			sched_setscheduler(prGlueInfo->main_thread,
-					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
+			/*
+			 * sched_setscheduler() is not exported since 5.9; driver threads that want
+			 * realtime get the lowest FIFO priority through sched_set_fifo_low().
+			 */
+			sched_set_fifo_low(prGlueInfo->main_thread);
 #if CFG_SUPPORT_MULTITHREAD
-			sched_setscheduler(prGlueInfo->hif_thread,
-					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
-			sched_setscheduler(prGlueInfo->rx_thread,
-					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
+			sched_set_fifo_low(prGlueInfo->hif_thread);
+			sched_set_fifo_low(prGlueInfo->rx_thread);
 #endif
 			DBGLOG(INIT, INFO,
 			       "Set pri = %d, sched = %d\n",

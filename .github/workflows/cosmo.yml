@@ -90,7 +90,7 @@ jobs:
       - name: dtbs_check
         run: |
           make defconfig
-          make DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml" dt_binding_check
+          make DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml display/panel/novatek,nt36672.yaml" dt_binding_check
           make -j"$(nproc)" CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2>&1 | tee dtbs_check.log
           if grep -E "mt6771|cosmo" dtbs_check.log; then
             echo "::error::dtbs_check has complaints about our device trees"

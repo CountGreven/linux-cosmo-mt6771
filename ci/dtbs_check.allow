@@ -12,8 +12,3 @@ reserve-memory-sspm_share: failed to match any schema
 # LK finds the SCP node by the vendor compatible "mediatek,scp"; mainline's binding allows one compatible.
 scp@10500000 .*compatible.*is too long
 /soc/scp@10500000: failed to match any schema with compatible: \['mediatek,mt8183-scp', 'mediatek,scp'\]
-
-# The Cosmo's panel. Otto Pflueger added the panel-simple entry but never upstreamed a binding, so the
-# compatible has no schema. Needs a dt-bindings patch before submission -- this is a real gap, not just a
-# bootloader accommodation like the entries above.
-panel@0: failed to match any schema with compatible: \['planet,cosmocom-x800-datong-panel'\]

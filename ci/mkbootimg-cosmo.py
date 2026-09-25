@@ -48,6 +48,10 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # the USB controller: every CC state, attach and role change goes to the console/kern.log.
            "console=tty0 fbcon=rotate:1 panic=5 "
            "dyndbg=\"module tcpm +p; module tcpci +p; module tcpci_mt6370 +p; module mtu3 +p; module xhci_mtk +p\" "
+           # The Type-C connector sits under the tcpc under the MT6370 on i2c11 and links to the USB
+           # controller both ways; fw_devlink reported the cycle as fixed and still left
+           # 11017000.i2c "deferred probe pending: (reason unknown)", so the MT6370 never probed.
+           "fw_devlink=permissive "
            # The real Debian root, mounted READ-ONLY.
            #
            # Gemian roots from /dev/mmcblk0p43, plain ext4 -- the root=/dev/dm-0 that LK puts on the

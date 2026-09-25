@@ -264,6 +264,8 @@
  * and cannot be wrong for the wiring.
  */
 &i2c11 {
+	/* On: the MT6370 lives here, and its OTG boost is the only 5 V for USB host mode. */
+	status = "okay";
 	/*
 	 * STAND-IN for the panel branch's status = "okay": here the bus stays "disabled", as mt8183.dtsi has
 	 * it, so nothing on it probes before root mounts. Enabled per flash. Everything else in this block

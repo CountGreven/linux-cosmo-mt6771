@@ -7,6 +7,7 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/iio/adc/mediatek,mt6370_adc.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/power/mt8183-power.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/usb/pd.h>
 #include "mt6771.dtsi"
@@ -223,6 +224,7 @@
 
 		/* V:331-337 */
 		consys {
+			compatible = "mediatek,consys-reserve-memory";
 			no-map;
 			size = <0 0x200000>;
 			alignment = <0 0x200000>;
@@ -877,5 +879,39 @@
 				};
 			};
 		};
+	};
+};
+
+/*
+ * CONSYS (wifi/BT/GPS block) and its wifi interface, for the vendor gen3 stack ported under
+ * drivers/net/wireless/mediatek/mt6771-consys (17-consys-port). Registers, interrupts and the second
+ * to fourth reg ranges (RGU, infracfg, SPM) are the vendor's (live.dts consys@18070000, wifi@180f0000).
+ * The vendor's "conn" clock is its power-domain wrapper; here the CONN domain is attached by the
+ * platform bus. The wifi node's "wifi-dma" clock has no mainline provider yet: STAND-IN, omitted.
+ * Bring-up state: the stack is loaded from Debian as modules; nothing here is verified on hardware.
+ */
+&{/soc} {
+	consys: consys@18070000 {
+		compatible = "mediatek,mt6771-consys";
+		reg = <0 0x18070000 0 0x1000>,
+		      <0 0x10007000 0 0x100>,
+		      <0 0x10001000 0 0x1000>,
+		      <0 0x10006000 0 0x1000>;
+		interrupts = <GIC_SPI 289 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 291 IRQ_TYPE_LEVEL_HIGH>;
+		power-domains = <&spm MT8183_POWER_DOMAIN_CONN>;
+		status = "okay";
+	};
+
+	wifi: wifi@180f0000 {
+		compatible = "mediatek,wifi";
+		reg = <0 0x180f0000 0 0x1100>,
+		      <0 0x10212180 0 0x6c>,
+		      <0 0x10001000 0 0x1000>,
+		      <0 0x180e0000 0 0x70>;
+		interrupts = <GIC_SPI 290 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
+		hardware-values = <0x788 0xa5800 0xa5800>;
+		status = "okay";
 	};
 };

@@ -786,13 +786,18 @@ INT32 osal_test_and_set_bit(UINT32 bitOffset, P_OSAL_BIT_OP_VAR pData)
   *
 */
 
+static void osal_timer_trampoline(struct timer_list *t)
+{
+	P_OSAL_TIMER pTimer = container_of(t, OSAL_TIMER, timer);
+
+	pTimer->timeoutHandler((ULONG)pTimer->timeroutHandlerData);
+}
+
 INT32 osal_timer_create(P_OSAL_TIMER pTimer)
 {
 	struct timer_list *timer = &pTimer->timer;
 
-	init_timer(timer);
-	timer->function = pTimer->timeoutHandler;
-	timer->data = (ULONG)pTimer->timeroutHandlerData;
+	timer_setup(timer, osal_timer_trampoline, 0);
 	return 0;
 }
 
@@ -810,7 +815,7 @@ INT32 osal_timer_stop(P_OSAL_TIMER pTimer)
 {
 	struct timer_list *timer = &pTimer->timer;
 
-	del_timer(timer);
+	timer_delete(timer);
 	return 0;
 }
 
@@ -818,7 +823,7 @@ INT32 osal_timer_stop_sync(P_OSAL_TIMER pTimer)
 {
 	struct timer_list *timer = &pTimer->timer;
 
-	del_timer_sync(timer);
+	timer_delete_sync(timer);
 	return 0;
 }
 

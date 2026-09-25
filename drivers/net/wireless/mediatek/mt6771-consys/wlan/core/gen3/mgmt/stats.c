@@ -140,7 +140,7 @@ VOID StatsEnvRxTime2Host(IN P_ADAPTER_T prAdapter, struct sk_buff *prSkb)
 	UINT_64 u8IntTime = 0;
 	UINT_64 u8RxTime = 0;
 	UINT_32 u4Delay = 0;
-	struct timeval tval;
+	struct __kernel_old_timeval tval;
 	struct rtc_time tm;
 
 	if ((g_ucTxRxFlag & BIT(1)) == 0)
@@ -162,7 +162,7 @@ VOID StatsEnvRxTime2Host(IN P_ADAPTER_T prAdapter, struct sk_buff *prSkb)
 	u8IntTime = GLUE_RX_GET_PKT_INT_TIME(prSkb);
 	u4Delay = ((UINT_32)(sched_clock() - u8IntTime))/NSEC_PER_USEC;
 	u8RxTime = GLUE_RX_GET_PKT_RX_TIME(prSkb);
-	do_gettimeofday(&tval);
+	mtk_gettimeofday(&tval);
 	rtc_time_to_tm(tval.tv_sec, &tm);
 
 	switch (ucIpProto) {

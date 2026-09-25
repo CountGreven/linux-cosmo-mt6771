@@ -891,7 +891,7 @@ int mtk_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev, struct cf
 	 * Beacaus driver disconnected is done, but cfg80211 is disconnecting.
 	 * Reject this request.Supplicant will issue the connecting request again.
 	 */
-	if (wdev->current_bss &&
+	if (wdev->connected &&
 		kalGetMediaStateIndicated(prGlueInfo) == PARAM_MEDIA_STATE_DISCONNECTED) {
 		DBGLOG(REQ, WARN, "Reject this connecting request\n");
 		return -EALREADY;

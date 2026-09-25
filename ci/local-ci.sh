@@ -178,6 +178,29 @@ python3 ci/check-boot-marker.py
 EOF
 fi
 
+# The MT6771 CONSYS wifi port (drivers/net/wireless/mediatek/mt6771-consys) is off by default, so the
+# jobs above never compile it. This one turns it on (=m: a built-in would have to link, and stage 1 only
+# promises that it COMPILES), builds the directory and its modules with W=0, and fails on any compiler
+# error or on a module that did not come out. Nothing here says the radio works.
+if [ "$want_full" = 1 ] || [ "$only" = "consys" ]; then
+    step consys "$out/consys.log" <<EOF
+set -e
+cd "$repo"
+b="$out/build-consys"
+mkdir -p "\$b"
+make O="\$b" defconfig >/dev/null
+./scripts/kconfig/merge_config.sh -m -O "\$b" "\$b/.config" ci/cosmo.config ci/consys.config >/dev/null
+make O="\$b" olddefconfig >/dev/null
+grep -qx 'CONFIG_MT6771_CONSYS=m' "\$b/.config" || { echo "CONFIG_MT6771_CONSYS=m was dropped by Kconfig"; exit 1; }
+make O="\$b" -j$jobs W=0 KCFLAGS=-Wno-error drivers/net/wireless/mediatek/mt6771-consys/ modules
+for ko in wmt_drv wlan_drv_gen3; do
+    f="\$(find "\$b/drivers/net/wireless/mediatek/mt6771-consys" -name "\$ko.ko" | head -1)"
+    [ -n "\$f" ] || { echo "\$ko.ko was not built"; exit 1; }
+    ls -l "\$f"
+done
+EOF
+fi
+
 step commits "$out/commits.log" <<EOF
 set -e
 cd "$repo"

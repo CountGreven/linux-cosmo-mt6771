@@ -42,3 +42,18 @@ config MTK_COMBO_WIFI
 	bool
 	depends on MT6771_CONSYS
 	default y
+
+config MACH_MT6771
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MTK_BTIF
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MTK_EMI
+	bool
+	depends on MT6771_CONSYS
+	default y

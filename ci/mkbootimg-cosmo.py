@@ -56,7 +56,10 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # install, and an experimental kernel with half its drivers unproven has no business writing to
            # it. A read-only mount still proves the boot and still lets userspace talk to us through
            # pstore.
-           "root=/dev/mmcblk0p43 rootwait ro "
+           # rw since 2026-09-25: the kernel reaches systemd, and a read-only root cannot keep a log.
+           # Debian's rsyslog writes /var/log/kern.log and journald /var/log/journal; that is how the
+           # vendor's boot logs were recovered, and it is the only channel mainline has until it has network.
+           "root=/dev/mmcblk0p43 rootwait rw "
            # LK's own arguments carry init=/init (its Android initrd). The last init= wins, and the Debian
            # root has no /init, so name systemd explicitly.
            "init=/sbin/init "

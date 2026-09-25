@@ -1005,19 +1005,14 @@ static int __init ramoops_init(void)
 	return ret;
 }
 /*
- * DEBUG (Cosmo bring-up): core_initcall rather than postcore_initcall.
+ * DEBUG (Cosmo bring-up): back at postcore_initcall, as upstream.
  *
- * The boot marker reaches core_initcall and no further, so the kernel dies between there and ramoops at
- * postcore -- one level too early for the console to exist. Nothing here needs postcore: the memory is
- * reserved by memblock long before, and with ramoops.mem_address on the cmdline ramoops_register_dummy
- * creates its own platform device rather than waiting for of_platform at arch_initcall_sync.
- *
- * Within a level the order is link order: the top-level Kbuild links init/, usr/, arch/, kernel/,
- * certs/, mm/, fs/ and only then drivers/. So the stage-6 marker in arch/ runs first and is wiped by the
- * zap here -- and this runs BEFORE every driver's core_initcall, so the log should cover all of those.
- * A log and a marker cannot coexist, which keeps the result readable.
+ * At core_initcall the console replay in register_console wrote exactly one record and stalled
+ * (COSMO-PW-OK1 was the only thing left in the zone). Single-variable test: register one level later,
+ * where the vendor kernel also brings ramoops up, and see whether the replay completes. The kill switch
+ * in pstore_console_write stays, so a completed replay cannot be overwritten by a marker.
  */
-core_initcall(ramoops_init);
+postcore_initcall(ramoops_init);
 
 static void __exit ramoops_exit(void)
 {

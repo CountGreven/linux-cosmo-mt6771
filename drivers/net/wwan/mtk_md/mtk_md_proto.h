@@ -185,4 +185,35 @@ struct mtk_md_rt_feature {
 int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const void *data,
 		     u32 data_len);
 
+/*
+ * The runtime data lives in the AP/MD1 non-cacheable share memory: the AP's TLVs in the first 2 KiB of
+ * a 4 KiB region at 58 KiB, the modem's answer in the second. The modem addresses that memory through
+ * its own window at 0x40000000.
+ */
+#define MTK_MD_SMEM_RUNTIME_OFFSET	(58 * 1024)
+#define MTK_MD_SMEM_RUNTIME_AP_SIZE	0x800
+#define MTK_MD_SMEM_RUNTIME_MD_SIZE	0x800
+
+u32 mtk_md_smem_md_view(u64 ap_phys);
+
+/* The AP's answer to HS1 (ap_query_md_feature_v2_1), behind a CCCI header in CCIF SRAM. */
+struct mtk_md_ap_query {
+	__le32 head;
+	u8 feature_set[MTK_MD_FEATURE_COUNT];
+	__le32 share_memory_support;
+	__le32 ap_rt_addr;
+	__le32 ap_rt_size;
+	__le32 md_rt_addr;
+	__le32 md_rt_size;
+	__le32 noncached_mpu_start;
+	__le32 noncached_mpu_size;
+	__le32 cached_mpu_start;
+	__le32 cached_mpu_size;
+	__le32 reserved[12];
+	__le32 tail;
+} __packed;
+
+void mtk_md_ap_query_fill(struct mtk_md_ap_query *q, u32 ap_rt_addr, u32 noncached_start,
+			  u32 noncached_size, u32 cached_start, u32 cached_size);
+
 #endif /* __MTK_MD_PROTO_H__ */

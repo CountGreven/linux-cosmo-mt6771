@@ -154,7 +154,7 @@ static void cosmo_blob(struct blob *b)
 	blob_add(b, "md1_phy_cap", word, 4);
 
 	put_le64(smem, 0x8c000000);
-	put_le32(smem + 8, 0x0);	/* ap_md1 offset, made up */
+	put_le32(smem + 8, 0x0);	/* ap_md1 offset */
 	put_le32(smem + 12, 0x80000);	/* ap_md1 size, made up */
 	put_le32(smem + 32, 0x100000);	/* total */
 	blob_add(b, "smem_layout", smem, sizeof(smem));
@@ -400,7 +400,45 @@ static void rt_append(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, pos, 24);
 }
 
+static void smem_md_view(struct kunit *test)
+{
+	/* The modem sees its non-cacheable bank 4 at 0x40000000, remapped from the 32 MiB boundary. */
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8c000000), 0x40000000U);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8c000000 + 58 * 1024), 0x4000e800U);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8b000000), 0x41000000U);
+}
+
+static void ap_query(struct kunit *test)
+{
+	struct mtk_md_ap_query q;
+	const u8 *b = (const u8 *)&q;
+
+	KUNIT_ASSERT_EQ(test, sizeof(q), 156);
+	KUNIT_ASSERT_EQ(test, sizeof(struct mtk_md_ccci_hdr) + sizeof(q), 172);	/* vendor packet */
+
+	mtk_md_ap_query_fill(&q, 0x4000e800, 0x40000000, 0x100000, 0, 0);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.head), MTK_MD_AP_QUERY_PATTERN);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.tail), MTK_MD_AP_QUERY_PATTERN);
+	/* feature_set[1] carries only a version: "the MPU size includes the MD1/MD3 share" */
+	KUNIT_EXPECT_EQ(test, q.feature_set[0], 0);
+	KUNIT_EXPECT_EQ(test, q.feature_set[1], 0x10);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.share_memory_support), 2U);	/* MULTI_MD_MPU_SUPPORT */
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.ap_rt_addr), 0x4000e800U);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.ap_rt_size), 0x800U);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.md_rt_addr), 0x4000f000U);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.md_rt_size), 0x800U);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.noncached_mpu_start), 0x40000000U);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(q.noncached_mpu_size), 0x100000U);
+	/* byte offsets, as the modem reads them */
+	KUNIT_EXPECT_EQ(test, b[68], 2);
+	KUNIT_EXPECT_EQ(test, b[72], 0x00);
+	KUNIT_EXPECT_EQ(test, b[73], 0xe8);
+	KUNIT_EXPECT_EQ(test, b[152], 0x49);
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
+	KUNIT_CASE(smem_md_view),
+	KUNIT_CASE(ap_query),
 	KUNIT_CASE(lk_hdr_captured),
 	KUNIT_CASE(lk_hdr_fields_only),
 	KUNIT_CASE(lk_hdr_rejects),

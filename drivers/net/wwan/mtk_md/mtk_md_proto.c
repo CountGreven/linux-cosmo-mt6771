@@ -12,7 +12,9 @@
 #include <linux/errno.h>
 #include <linux/export.h>
 #include <linux/module.h>
+#include <linux/math.h>
 #include <linux/overflow.h>
+#include <linux/sizes.h>
 #include <linux/string.h>
 #include <linux/unaligned.h>
 
@@ -324,6 +326,38 @@ int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mtk_md_rt_append);
+
+/*
+ * ccci_md_prepare_smem() in eccci/ccci_modem.c: "MD bank4 is remap to nearest 32M aligned address", so
+ * the modem's view of a non-cacheable share memory address is its offset from the 32 MiB boundary below
+ * it, plus 0x40000000.
+ */
+u32 mtk_md_smem_md_view(u64 ap_phys)
+{
+	return 0x40000000 + (u32)(ap_phys - round_down(ap_phys, SZ_32M));
+}
+EXPORT_SYMBOL_GPL(mtk_md_smem_md_view);
+
+/* config_ap_runtime_data_v2_1() in eccci/modem_sys1.c. */
+void mtk_md_ap_query_fill(struct mtk_md_ap_query *q, u32 ap_rt_addr, u32 noncached_start,
+			  u32 noncached_size, u32 cached_start, u32 cached_size)
+{
+	memset(q, 0, sizeof(*q));
+	q->head = cpu_to_le32(MTK_MD_AP_QUERY_PATTERN);
+	/* version 1: the MPU size covers the AP/MD1 and MD1/MD3 shares; mask stays 0 */
+	q->feature_set[1] = feature(0, 1);
+	q->share_memory_support = cpu_to_le32(2);	/* MULTI_MD_MPU_SUPPORT */
+	q->ap_rt_addr = cpu_to_le32(ap_rt_addr);
+	q->ap_rt_size = cpu_to_le32(MTK_MD_SMEM_RUNTIME_AP_SIZE);
+	q->md_rt_addr = cpu_to_le32(ap_rt_addr + MTK_MD_SMEM_RUNTIME_AP_SIZE);
+	q->md_rt_size = cpu_to_le32(MTK_MD_SMEM_RUNTIME_MD_SIZE);
+	q->noncached_mpu_start = cpu_to_le32(noncached_start);
+	q->noncached_mpu_size = cpu_to_le32(noncached_size);
+	q->cached_mpu_start = cpu_to_le32(cached_start);
+	q->cached_mpu_size = cpu_to_le32(cached_size);
+	q->tail = cpu_to_le32(MTK_MD_AP_QUERY_PATTERN);
+}
+EXPORT_SYMBOL_GPL(mtk_md_ap_query_fill);
 
 MODULE_DESCRIPTION("MediaTek MT6771 modem protocol helpers");
 MODULE_LICENSE("GPL");

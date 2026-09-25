@@ -809,12 +809,12 @@ VOID glWriteStatus(PPUINT_8 ppucWrPos, PUINT_32 pu4RemainLen, PUINT_8 pucFwt, ..
 	INT_32 i4BufUsed = 0;
 	INT_32 i4TimeUsed = 0;
 	va_list ap;
-	struct timeval tval;
+	struct __kernel_old_timeval tval;
 	struct rtc_time tm;
 	static UINT_8 aucBuf[TEMP_BUF_LEN];
 
 	pucTemp = &aucBuf[0];
-	do_gettimeofday(&tval);
+	mtk_gettimeofday(&tval);
 	tval.tv_sec -= sys_tz.tz_minuteswest * 60;
 	rtc_time_to_tm(tval.tv_sec, &tm);
 	i4TimeUsed = kalSnprintf(pucTemp, TEMP_BUF_LEN, "%04d-%02d-%02d %02d:%02d:%02d.%03d ",

@@ -4972,12 +4972,12 @@ const struct file_operations rMetProcFops = {
 .write = kalMetWriteProcfs
 };
 #endif
-const struct file_operations rMetProcCtrlFops = {
-.write = kalMetCtrlWriteProcfs
+const struct proc_ops rMetProcCtrlFops = {
+.proc_write = kalMetCtrlWriteProcfs
 };
 
-const struct file_operations rMetProcPortFops = {
-.write = kalMetPortWriteProcfs
+const struct proc_ops rMetProcPortFops = {
+.proc_write = kalMetPortWriteProcfs
 };
 
 int kalMetInitProcfs(IN P_GLUE_INFO_T prGlueInfo)

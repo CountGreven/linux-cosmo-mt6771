@@ -480,3 +480,13 @@
 		};
 	};
 };
+
+/*
+ * The MT6358's interrupt line: pin 182, the vendor's "pmic-eint" (interrupts.txt in the runtime
+ * snapshot: mtk-eint 182 Level pmic-eint). Without it the mt6397 MFD core fails to probe
+ * ("pmic: IRQ index 0 not found", first console log), and every MT6358 regulator, the MFG power
+ * domain and the eMMC's supplies go with it. Same pin as mt8183-kukui.
+ */
+&pmic {
+	interrupts-extended = <&pio 182 IRQ_TYPE_LEVEL_HIGH>;
+};

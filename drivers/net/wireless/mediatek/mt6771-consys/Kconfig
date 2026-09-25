@@ -4,6 +4,7 @@ config MT6771_CONSYS
 	depends on ARCH_MEDIATEK || COMPILE_TEST
 	depends on CFG80211
 	depends on GPIOLIB
+	depends on IPV6
 	depends on MMC
 	depends on RTC_CLASS
 	select NL80211_TESTMODE

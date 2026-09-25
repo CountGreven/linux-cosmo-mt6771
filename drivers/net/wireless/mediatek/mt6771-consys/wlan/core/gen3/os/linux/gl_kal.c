@@ -1132,7 +1132,7 @@ kalIndicateStatusAndComplete(IN P_GLUE_INFO_T prGlueInfo, IN WLAN_STATUS eStatus
 			/* CFG80211 Indication */
 			if (eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0))
-				rRoamInfo.bss = bss;
+				rRoamInfo.links[0].bss = bss;
 				rRoamInfo.req_ie = prGlueInfo->aucReqIe;
 				rRoamInfo.req_ie_len = prGlueInfo->u4ReqIeLength;
 				rRoamInfo.resp_ie = prGlueInfo->aucRspIe;

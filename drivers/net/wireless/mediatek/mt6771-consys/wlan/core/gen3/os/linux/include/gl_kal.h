@@ -951,7 +951,7 @@ VOID kalScanDone(IN P_GLUE_INFO_T prGlueInfo, IN ENUM_KAL_NETWORK_TYPE_INDEX_T e
 
 UINT_32 kalRandomNumber(VOID);
 
-VOID kalTimeoutHandler(unsigned long arg);
+VOID kalTimeoutHandler(struct timer_list *t);
 
 VOID kalSetEvent(P_GLUE_INFO_T pr);
 

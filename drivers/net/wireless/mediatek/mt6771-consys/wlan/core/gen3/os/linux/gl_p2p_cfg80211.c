@@ -1282,11 +1282,13 @@ int mtk_p2p_cfg80211_change_bss(struct wiphy *wiphy, struct net_device *dev, str
 }				/* mtk_p2p_cfg80211_change_bss */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev, struct station_del_parameters *params)
+int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params)
 #else
-int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev, const u8 *mac)
+int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac)
 #endif
 {
+	struct net_device *dev = wdev->netdev;
+
 	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) NULL;
 	INT_32 i4Rslt = -EINVAL;
 	P_MSG_P2P_CONNECTION_ABORT_T prDisconnectMsg = (P_MSG_P2P_CONNECTION_ABORT_T) NULL;

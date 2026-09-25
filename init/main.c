@@ -1357,8 +1357,8 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	/*
 	 * DEBUG (Cosmo bring-up): write this initcall's name into the pstore reservation before calling
 	 * it. The kernel hangs somewhere in the core initcalls with no console, and the marker that
-	 * survives the watchdog reset names the one that never returned. Goes silent once ramoops has
-	 * claimed the buffer (cosmo_mark_off), so it cannot overwrite a real log.
+	 * survives the watchdog reset names the one that never returned. Once ramoops has claimed the
+	 * buffer it is rendered on the tag page instead, so it cannot overwrite a real log.
 	 */
 	{
 		char name[64];

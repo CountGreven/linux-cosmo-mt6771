@@ -29,8 +29,8 @@
 #include "internal.h"
 
 /* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
-extern bool cosmo_mark_off;
 void cosmo_mark(const char *tag);
+void cosmo_note_pw(bool returned);
 
 /*
  * We defer making "oops" entries appear in pstore - see
@@ -408,18 +408,12 @@ static void pstore_console_write(struct console *con, const char *s, unsigned c)
 	record.buf = (char *)s;
 	record.size = c;
 	/*
-	 * DEBUG (Cosmo bring-up): three-way split of the hang inside register_console. If this tag
-	 * survives, the replay reached us and the very first write into the zone never returned. If
-	 * COSMO-PR-CSL survives instead, register_console hung before ever calling this. The kill switch
-	 * is thrown after the first write returns, so from then on nothing can overwrite the log.
+	 * DEBUG (Cosmo bring-up): count console writes on the tag page. Entered-but-not-returned names the
+	 * write that hangs; returned-and-no-further says printk never handed us the next record.
 	 */
-	if (!cosmo_mark_off)
-		cosmo_mark("COSMO-PW-ENT");
+	cosmo_note_pw(false);
 	psinfo->write(&record);
-	if (!cosmo_mark_off) {
-		cosmo_mark("COSMO-PW-OK1");
-		cosmo_mark_off = true;
-	}
+	cosmo_note_pw(true);
 }
 
 static struct console pstore_console = {
@@ -427,7 +421,6 @@ static struct console pstore_console = {
 	.index	= -1,
 };
 
-extern bool cosmo_mark_off;
 
 static void pstore_register_console(void)
 {

@@ -88,27 +88,39 @@ def main() -> int:
         return 1
     print(f"tags: {', '.join(sorted(set(all_tags)))}")
 
-    # No marker may run after the console is registered: pstore_register() replays the whole boot log
-    # into this buffer, and a marker written afterwards overwrites it. That cost three attempts.
-    if PLATFORM_C.exists():
-        plat = PLATFORM_C.read_text()
-        # The log is written by pstore_console_write. The kill switch must be thrown there, right after
-        # the first successful write, so every later marker anywhere is a no-op and cannot erase a log.
-        w = plat.find("static void pstore_console_write(")
-        first_write = plat.find("psinfo->write(&record);", w)
-        kill = plat.find("cosmo_mark_off = true;", first_write)
-        if w == -1 or first_write == -1 or kill == -1:
-            print("fs/pstore/platform.c: the kill switch (cosmo_mark_off = true) must follow the first "
-                  "psinfo->write in pstore_console_write, or a marker can erase the console log")
-            return 1
+    # Once ramoops claims the region (cosmo_mark_claimed = true in ramoops_probe, before any zone is
+    # initialised) every marker must land on the single tag page inside the pmsg zone and nowhere else:
+    # the console zone then holds the real log, and the tag page tells how far the console writes got.
+    # Sprays after the claim erased four logs; the kill switch that replaced them hid the second write.
     if RAM_C.exists():
         ram = RAM_C.read_text()
-        reg = ram.find("pstore_register(&cxt->pstore)")
-        late = [m.start() for m in re.finditer(r"cosmo_mark\(", ram) if reg != -1 and m.start() > reg]
-        if late:
-            print("fs/pstore/ram.c calls cosmo_mark after pstore_register(); that overwrites the "
-                  "console log the registration just replayed")
+        claim = ram.find("cosmo_mark_claimed = true;")
+        first_zone = ram.find('ramoops_init_przs("dmesg"')
+        if claim == -1 or first_zone == -1 or claim > first_zone:
+            print("fs/pstore/ram.c: ramoops_probe must set cosmo_mark_claimed = true before it initialises "
+                  "the first zone, or a later marker can spray over the console log")
             return 1
+    if PLATFORM_C.exists():
+        plat = PLATFORM_C.read_text()
+        w = plat.find("static void pstore_console_write(")
+        w_end = plat.find("\n}\n", w)
+        body = plat[w:w_end]
+        first_write = body.find("psinfo->write(&record);")
+        if w == -1 or first_write == -1:
+            print("fs/pstore/platform.c: pstore_console_write not found")
+            return 1
+        if "cosmo_mark(" in body or "cosmo_mark_len(" in body or "cosmo_mark_off" in body:
+            print("fs/pstore/platform.c: pstore_console_write may only use cosmo_note_pw(); a stage tag or "
+                  "a kill switch there hides the console writes it should count")
+            return 1
+        ent, ok = body.find("cosmo_note_pw(false);"), body.find("cosmo_note_pw(true);")
+        if not (0 <= ent < first_write < ok):
+            print("fs/pstore/platform.c: cosmo_note_pw(false) must precede and cosmo_note_pw(true) must "
+                  "follow psinfo->write in pstore_console_write, so the tag page counts entries and returns")
+            return 1
+    if "cosmo_mark_off" in C_SOURCES:
+        print("cosmo_mark_off is retired: after the claim, markers go to the tag page instead of going quiet")
+        return 1
 
     block = src[src.index(".macro\tcosmo_mark"):][:1600]
     start, end, sig = movz_movk(block, "5"), movz_movk(block, "6"), movz_movk(block, "7")
@@ -156,6 +168,22 @@ def main() -> int:
                   f"but head.S writes 0x{start:08x}..0x{end:08x}; the stages would not overwrite each "
                   "other and the furthest-reached tag would be meaningless")
             ok = False
+    if C_MARK.exists():
+        cm = C_MARK.read_text()
+        page = re.search(r"COSMO_TAG_PAGE\s+0x([0-9a-fA-F]+)", cm)
+        pm = re.search(r"pmsg-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
+        if not (page and pm):
+            print("no COSMO_TAG_PAGE in cosmo-mark.c or no pmsg-size in the dts")
+            ok = False
+        else:
+            tag_page, pmsg = int(page.group(1), 16), int(pm.group(1), 16)
+            pmsg_start = base + size - pmsg
+            if tag_page != pmsg_start:
+                print(f"COSMO_TAG_PAGE 0x{tag_page:08x} is not the start of the pmsg zone 0x{pmsg_start:08x}; "
+                      "the vendor kernel reads exactly that page back as pmsg-ramoops-0")
+                ok = False
+            else:
+                print(f"tag page 0x{tag_page:08x} = start of the pmsg zone")
     print("boot marker: ok" if ok else "boot marker: FAILED")
     return 0 if ok else 1
 

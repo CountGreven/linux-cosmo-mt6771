@@ -719,7 +719,7 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	return 0;
 }
 
-extern bool cosmo_mark_off;
+extern bool cosmo_mark_claimed;
 void cosmo_mark(const char *tag);	/* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
 
 static int ramoops_probe(struct platform_device *pdev)
@@ -798,6 +798,8 @@ static int ramoops_probe(struct platform_device *pdev)
 
 	paddr = cxt->phys_addr;
 
+	/* DEBUG (Cosmo bring-up): from here on markers go to the tag page only; see cosmo-mark.c. */
+	cosmo_mark_claimed = true;
 	dump_mem_sz = cxt->size - cxt->console_size - cxt->ftrace_size
 			- cxt->pmsg_size;
 	err = ramoops_init_przs("dmesg", dev, cxt, &cxt->dprzs, &paddr,

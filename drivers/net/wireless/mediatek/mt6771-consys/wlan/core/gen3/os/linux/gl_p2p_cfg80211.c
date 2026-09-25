@@ -1374,7 +1374,7 @@ int mtk_p2p_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev, struct
 		ASSERT_BREAK((prGlueInfo != NULL) && (prNetDevPrivate != NULL));
 		prP2pBssInfo = GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, prNetDevPrivate->ucBssIdx);
 
-		if (wdev->current_bss && (prP2pBssInfo->eConnectionState == PARAM_MEDIA_STATE_DISCONNECTED)) {
+		if (wdev->connected && (prP2pBssInfo->eConnectionState == PARAM_MEDIA_STATE_DISCONNECTED)) {
 			DBGLOG(P2P, WARN, "Reject this connecting request\n");
 			return -EALREADY;
 		}

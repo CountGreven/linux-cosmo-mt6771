@@ -525,6 +525,11 @@ typedef enum _ENUM_MODULATION_TYPE_T {
 	MODULATION_TYPE_NUM
 } ENUM_MODULATION_TYPE_T, *P_ENUM_MODULATION_TYPE_T;
 
+/* <acpi/actypes.h> (reached through linux/fb.h -> linux/acpi.h) defines these as macros */
+#undef ACPI_STATE_D0
+#undef ACPI_STATE_D1
+#undef ACPI_STATE_D2
+#undef ACPI_STATE_D3
 typedef enum _ENUM_ACPI_STATE_T {
 	ACPI_STATE_D0 = 0,
 	ACPI_STATE_D1,

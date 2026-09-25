@@ -164,9 +164,15 @@ def main() -> int:
         if not (cbase and cend):
             print("cosmo-mark.c does not define the region")
             ok = False
-        elif (int(cbase.group(1), 16), int(cend.group(1), 16)) != (start, end):
-            print("cosmo-mark.c and head.S disagree about the reservation")
-            ok = False
+        else:
+            # head.S may only write the pmsg zone (the last pmsg-size bytes of the reservation): its
+            # MMU-off stores came back on top of ramoops' console records after every reset.
+            pm2 = re.search(r"pmsg-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
+            c_end = int(cend.group(1), 16)
+            if not pm2 or (start, end) != (c_end - int(pm2.group(1), 16), c_end):
+                print(f"head.S writes 0x{start:08x}..0x{end:08x}; it may only write the pmsg zone "
+                      f"(the last pmsg-size bytes ending at 0x{c_end:08x}), never the console zone")
+                ok = False
         # C must never write the reservation through the cacheable linear map except on the tag page:
         # such writes came back after a reset on top of ramoops' own write-combined records.
         if "COSMO_MARK_STRIDE" in cm_src or "cosmo_spray" in cm_src:

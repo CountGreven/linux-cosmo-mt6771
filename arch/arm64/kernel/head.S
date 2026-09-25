@@ -103,8 +103,11 @@
  * preserve_boot_args, so the FDT pointer in x0 and the boot status in x20/x21 are safe.
  */
 	.macro	cosmo_mark, tail
-	movz	x5, #0x5441, lsl #16		// 0x54410000, start of the pstore reservation
-	movz	x6, #0x544f, lsl #16		// one past its end
+	// Only the pmsg zone (last 0x10000 of the reservation), never the console zone: the bytes these
+	// MMU-off stores wrote came back on top of ramoops' records after every reset, on exactly those
+	// 24 bytes per page. The vendor reads the pmsg zone back as pmsg-ramoops-0, so the stages still show.
+	movz	x5, #0x544e, lsl #16		// 0x544e0000, start of the pmsg zone
+	movz	x6, #0x544f, lsl #16		// one past the end of the reservation
 	movz	w7, #0x4244
 	movk	w7, #0x4347, lsl #16		// PERSISTENT_RAM_SIG
 	mov	w8, #12				// payload length; start == size == 12

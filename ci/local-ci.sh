@@ -100,6 +100,15 @@ echo "dtbs_check: only the complaints ci/dtbs_check.allow accounts for"
 echo "dtbs_check had nothing to say about our device trees"
 EOF
 
+# The panel driver's init table is generated from the vendor's LCM driver, never typed: the driver must
+# carry exactly what ci/nt36672-init-table.py emits, and the translator's own rules are unit-tested.
+step panel-table "$out/panel-table.log" <<EOF
+set -e
+cd "$repo"
+python3 ci/test-nt36672-init-table.py
+python3 ci/nt36672-init-table.py check
+EOF
+
 # Reads the dtb the dtbs job built, so `--job memory` alone needs a prior `--job dtbs`.
 step memory "$out/memory.log" <<EOF
 set -e

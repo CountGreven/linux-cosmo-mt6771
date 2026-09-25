@@ -50,6 +50,18 @@ jobs:
           path: arch/arm64/boot/dts/mediatek/*.dtb
           if-no-files-found: ignore
 
+  # The NT36672 init table in the panel driver is generated from the vendor's LCM driver (a copy lives
+  # in ci/vendor/); one mistyped byte out of hundreds would fail here instead of on the device.
+  panel-table:
+    name: panel init table equals the vendor's
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translator unit tests
+        run: python3 ci/test-nt36672-init-table.py
+      - name: Driver carries the generated table
+        run: python3 ci/nt36672-init-table.py check
+
   notes:
     name: no private notes in the tree
     runs-on: ubuntu-latest

@@ -676,7 +676,7 @@ static INT32 wmt_dbg_ap_reg_read(INT32 par1, INT32 par2, INT32 par3)
 	PUINT8 ap_reg_base = NULL;
 
 	WMT_INFO_FUNC("AP register read, reg address:0x%x\n", par2);
-	ap_reg_base = ioremap_nocache(par2, 0x4);
+	ap_reg_base = ioremap(par2, 0x4);
 	if (ap_reg_base) {
 		value = readl(ap_reg_base);
 		WMT_INFO_FUNC("AP register read, reg address:0x%x, value:0x%x\n", par2, value);
@@ -694,7 +694,7 @@ static INT32 wmt_dbg_ap_reg_write(INT32 par1, INT32 par2, INT32 par3)
 
 	WMT_INFO_FUNC("AP register write, reg address:0x%x, value:0x%x\n", par2, par3);
 
-	ap_reg_base = ioremap_nocache(par2, 0x4);
+	ap_reg_base = ioremap(par2, 0x4);
 	if (ap_reg_base) {
 		writel(par3, ap_reg_base);
 		value = readl(ap_reg_base);

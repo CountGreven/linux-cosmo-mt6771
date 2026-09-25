@@ -43,7 +43,8 @@ TAGS_ADDR = 0x54000000
 # one attempt's evidence was lost. Rebooting itself after five seconds gets us a warm reset and keeps the
 # buffer, without depending on how the device was restarted.
 CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
-           "console=tty0 panic=5 "
+           # The panel is portrait (1080x2160) in a landscape clamshell; the vendor draws at 270 degrees.
+           "console=tty0 fbcon=rotate:3 panic=5 "
            # The real Debian root, mounted READ-ONLY.
            #
            # Gemian roots from /dev/mmcblk0p43, plain ext4 -- the root=/dev/dm-0 that LK puts on the

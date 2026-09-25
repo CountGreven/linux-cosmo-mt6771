@@ -508,3 +508,28 @@
 &mfg {
 	domain-supply = <&mt6358_vgpu_reg>;
 };
+
+/*
+ * Rails the vendor keeps up that nothing in this tree consumes yet. Thirty seconds after boot the
+ * regulator core switched them off (console log 2026-09-25: "vdram2: disabling" was the last line
+ * before the reset) -- VDRAM2 feeds the DRAM. mt8183-kukui marks vdram2 always-on for the same reason.
+ */
+&mt6358_vdram2_reg {
+	regulator-always-on;
+};
+
+&mt6358_vio28_reg {
+	regulator-always-on;
+};
+
+&mt6358_vaux18_reg {
+	regulator-always-on;
+};
+
+&mt6358_vbif28_reg {
+	regulator-always-on;
+};
+
+&mt6358_vaud28_reg {
+	regulator-always-on;
+};

@@ -184,6 +184,12 @@ def main() -> int:
                 ok = False
             else:
                 print(f"tag page 0x{tag_page:08x} = start of the pmsg zone")
+            cz = re.search(r"COSMO_CONSOLE_ZONE\s+0x([0-9a-fA-F]+)", cm)
+            cs = re.search(r"console-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
+            if cz and cs and int(cz.group(1), 16) != pmsg_start - int(cs.group(1), 16):
+                print(f"COSMO_CONSOLE_ZONE 0x{int(cz.group(1), 16):08x} is not the console zone header "
+                      f"0x{pmsg_start - int(cs.group(1), 16):08x}")
+                ok = False
     print("boot marker: ok" if ok else "boot marker: FAILED")
     return 0 if ok else 1
 

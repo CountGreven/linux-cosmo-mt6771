@@ -37,6 +37,8 @@
 #define COSMO_MARK_LEN		12
 /* First page of the pmsg zone: base + size - pmsg_size, read back as pmsg-ramoops-0. */
 #define COSMO_TAG_PAGE		0x544e0000UL
+/* Header of ramoops' console zone: base + (size - console - pmsg). Read back to see whether its writes land. */
+#define COSMO_CONSOLE_ZONE	0x544a0000UL
 
 /*
  * Set by ramoops_probe before it initialises the first zone. Until then a marker is sprayed across the
@@ -82,8 +84,17 @@ static void cosmo_spray(const char *text, size_t len)
 static void cosmo_render(void)
 {
 	char line[64];
-	int n = snprintf(line, sizeof(line), "%s PW%u%c %s", cosmo_last_tag, cosmo_pw_n, cosmo_pw_state,
-			 cosmo_ic);
+	u32 *cz = (u32 *)phys_to_virt(COSMO_CONSOLE_ZONE);
+	int n;
+
+	/*
+	 * ramoops writes the console zone through a write-combined alias. Invalidate our cacheable alias
+	 * first, so this read comes from DRAM and shows what the next boot will see: start/size of the
+	 * zone header, which should grow with every console write.
+	 */
+	dcache_inval_poc((unsigned long)cz, (unsigned long)cz + 16);
+	n = snprintf(line, sizeof(line), "%s PW%u%c CZ%u/%u %s", cosmo_last_tag, cosmo_pw_n,
+		     cosmo_pw_state, cz[1], cz[2], cosmo_ic);
 
 	cosmo_write_page(COSMO_TAG_PAGE, line, n > 0 ? min_t(size_t, n, sizeof(line)) : 0);
 }

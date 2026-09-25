@@ -3,7 +3,7 @@
 #
 #   ci/kexec-test.sh                 # copy Image+dtb from the CI build dir, load, jump
 #   ci/kexec-test.sh --load-only     # copy and load; jump by hand with: sudo kexec -e
-#   ci/kexec-test.sh --live-dtb      # hand over the running (LK-modified) tree instead of our dtb
+#   ci/kexec-test.sh --built-dtb     # hand over our built dtb instead of the running tree (see below)
 #   ci/kexec-test.sh --set fbcon=rotate:3   # rewrite one key=value in the running cmdline (repeatable)
 #   ci/kexec-test.sh --dry-run
 #
@@ -11,21 +11,29 @@
 # What does not: if the new kernel hangs, hold the button; LK autoboots the slot image (the last one
 # written with ci/flash-test.sh --no-reboot), which is therefore always a known-good kernel.
 #
-# The running kernel must have CONFIG_KEXEC (dbafc2496c63 and later). Use --live-dtb only when the dts
-# is unchanged: the built dtb is the one under test, but LK's additions to /chosen are not in it.
+# The running kernel must have CONFIG_KEXEC (dbafc2496c63 and later).
+#
+# The device tree handed over is the RUNNING one (/sys/firmware/fdt), not the built dtb, and that is not
+# a convenience: our dts leaves the firmware-owned regions (atf 0x54600000, tee, SPM, SSPM, the LK
+# framebuffer, ccci) to LK, which injects them at boot and panics on duplicates. A kexec'd kernel that
+# gets our built dtb sees ATF's DRAM as free memory; on 2026-09-25 that kernel came up on one CPU with
+# all seven secondaries failing PSCI CPU_ON, and could not kexec again ("CPUs are stuck in the kernel").
+# --built-dtb exists for the day the dts itself is under test, and then the firmware regions have to be
+# merged in first (TODO in 19-kexec.org).
 set -euo pipefail
 
 ci=/storage/kernel/build/ci/build-image
 host="${COSMO_SSH:-cosmo-eth}"
 image="$ci/arch/arm64/boot/Image"
 dtb="$ci/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
-dry=0 load_only=0 live_dtb=0
+dry=0 load_only=0 live_dtb=1
 sets=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry=1 ;;
         --load-only) load_only=1 ;;
         --live-dtb) live_dtb=1 ;;
+        --built-dtb) live_dtb=0; echo "WARNING: the built dtb lacks the firmware regions LK injects; expect a broken kernel" >&2 ;;
         --image) image="$2"; shift ;;
         --dtb) dtb="$2"; shift ;;
         --set) sets+=("$2"); shift ;;

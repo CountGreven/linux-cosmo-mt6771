@@ -5058,10 +5058,10 @@ nla_put_failure:
 
 UINT_64 kalGetBootTime(void)
 {
-	struct timespec ts;
+	struct timespec64 ts;
 	UINT_64 bootTime = 0;
 
-	get_monotonic_boottime(&ts);
+	ktime_get_boottime_ts64(&ts);
 	bootTime = ts.tv_sec;
 	bootTime *= USEC_PER_SEC;
 	bootTime += ts.tv_nsec / NSEC_PER_USEC;

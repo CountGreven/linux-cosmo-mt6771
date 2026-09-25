@@ -26,6 +26,7 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/vmalloc.h>
 
 #include <asm/cacheflush.h>
 
@@ -94,8 +95,15 @@ static void cosmo_render(void)
 	u32 *cz = (u32 *)phys_to_virt(COSMO_CONSOLE_ZONE);
 	int n;
 
-	if (cosmo_mark_claimed && !cosmo_wc)
-		cosmo_wc = ioremap_wc(COSMO_TAG_PAGE + COSMO_WC_OFFSET, PAGE_SIZE);
+	/*
+	 * ioremap_wc() refuses system RAM on arm64 (it returned NULL and the WARN cost 41 console
+	 * lines), so map the page the way ramoops maps its zones: vmap of the struct page, write-combined.
+	 */
+	if (cosmo_mark_claimed && !cosmo_wc) {
+		struct page *pg = phys_to_page(COSMO_TAG_PAGE + COSMO_WC_OFFSET);
+
+		cosmo_wc = vmap(&pg, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+	}
 
 	/*
 	 * ramoops writes the console zone through a write-combined alias. Invalidate our cacheable alias

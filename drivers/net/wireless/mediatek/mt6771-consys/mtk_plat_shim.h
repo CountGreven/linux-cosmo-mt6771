@@ -46,6 +46,16 @@ static inline char *strncpy(char *dest, const char *src, size_t count)
 }
 
 /*
+ * FB_EVENT_BLANK (linux/fb.h, removed): the fbdev screen-blank notification
+ * that told the driver to enter or leave its screen-off power mode. Nothing
+ * in mainline sends it any more, so the notifier the vendor registers never
+ * fires.
+ * STAND-IN: needs a panel/backlight follower (drm_panel_add_follower() or a
+ * regulator/backlight event); the value is the vendor's.
+ */
+#define FB_EVENT_BLANK		0x09
+
+/*
  * do_gettimeofday() and struct timeval are gone. The vendor keeps its
  * struct timeval variables (as struct __kernel_old_timeval, same two
  * fields) and reads the wall clock through this.

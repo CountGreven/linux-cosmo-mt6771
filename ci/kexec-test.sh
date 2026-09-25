@@ -4,6 +4,7 @@
 #   ci/kexec-test.sh                 # copy Image+dtb from the CI build dir, load, jump
 #   ci/kexec-test.sh --load-only     # copy and load; jump by hand with: sudo kexec -e
 #   ci/kexec-test.sh --live-dtb      # hand over the running (LK-modified) tree instead of our dtb
+#   ci/kexec-test.sh --set fbcon=rotate:3   # rewrite one key=value in the running cmdline (repeatable)
 #   ci/kexec-test.sh --dry-run
 #
 # What survives the hop: DRAM, so the outgoing kernel's ramoops console is readable in the new one.
@@ -19,6 +20,7 @@ host="${COSMO_SSH:-cosmo-eth}"
 image="$ci/arch/arm64/boot/Image"
 dtb="$ci/arch/arm64/boot/dts/mediatek/mt6771-planet-cosmo.dtb"
 dry=0 load_only=0 live_dtb=0
+sets=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry=1 ;;
@@ -26,6 +28,7 @@ while [ $# -gt 0 ]; do
         --live-dtb) live_dtb=1 ;;
         --image) image="$2"; shift ;;
         --dtb) dtb="$2"; shift ;;
+        --set) sets+=("$2"); shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -50,7 +53,23 @@ ssh_ "sha256sum ~/kexec/Image | cut -c1-12"
 if [ $live_dtb = 1 ]; then
     ssh_ 'cp /sys/firmware/fdt ~/kexec/cosmo.dtb'
 fi
-ssh_ 'sudo -n kexec -l ~/kexec/Image --dtb=$HOME/kexec/cosmo.dtb --reuse-cmdline && cat /sys/kernel/kexec_loaded'
+if [ ${#sets[@]} = 0 ]; then
+    ssh_ 'sudo -n kexec -l ~/kexec/Image --dtb=$HOME/kexec/cosmo.dtb --reuse-cmdline && cat /sys/kernel/kexec_loaded'
+else
+    # Start from the running cmdline (LK's arguments included) and replace each key's value; a key that is
+    # not there yet is appended. The result is printed so the log says what was actually booted.
+    cmdline="$(ssh_ 'cat /proc/cmdline')"
+    for kv in "${sets[@]}"; do
+        key="${kv%%=*}"
+        if printf '%s' "$cmdline" | grep -qE "(^| )$key="; then
+            cmdline="$(printf '%s' "$cmdline" | sed -E "s|(^\| )$key=[^ ]*|\1$kv|")"
+        else
+            cmdline="$cmdline $kv"
+        fi
+    done
+    echo "cmdline: $cmdline"
+    ssh_ "sudo -n kexec -l ~/kexec/Image --dtb=\$HOME/kexec/cosmo.dtb --command-line '$cmdline' && cat /sys/kernel/kexec_loaded"
+fi
 echo "=== loaded"
 [ $load_only = 1 ] && { echo "not jumping; run: ssh $host sudo kexec -e"; exit 0; }
 echo "=== jumping (the ssh session will drop)"

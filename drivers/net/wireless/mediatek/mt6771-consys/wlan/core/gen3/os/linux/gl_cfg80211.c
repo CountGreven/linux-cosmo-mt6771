@@ -369,8 +369,10 @@ mtk_cfg80211_set_default_key(struct wiphy *wiphy, struct net_device *ndev, int l
  *         others:  failure
  */
 /*----------------------------------------------------------------------------*/
-int mtk_cfg80211_get_station(struct wiphy *wiphy, struct net_device *ndev, const u8 *mac, struct station_info *sinfo)
+int mtk_cfg80211_get_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_info *sinfo)
 {
+	struct net_device *ndev = wdev->netdev;
+
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	WLAN_STATUS rStatus;
 	PARAM_MAC_ADDRESS arBssid;
@@ -2695,9 +2697,11 @@ int mtk_cfg80211_testmode_get_scan_done(IN struct wiphy *wiphy, IN void *data, I
  */
 /*----------------------------------------------------------------------------*/
 int
-mtk_cfg80211_change_station(struct wiphy *wiphy, struct net_device *ndev, const u8 *mac,
+mtk_cfg80211_change_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac,
 				struct station_parameters *params)
 {
+	struct net_device *ndev = wdev->netdev;
+
 
 	/* return 0; */
 
@@ -2808,9 +2812,11 @@ mtk_cfg80211_change_station(struct wiphy *wiphy, struct net_device *ndev, const 
  *         others:  failure
  */
 /*----------------------------------------------------------------------------*/
-int mtk_cfg80211_add_station(struct wiphy *wiphy, struct net_device *ndev,
+int mtk_cfg80211_add_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 				const u8 *mac, struct station_parameters *params)
 {
+	struct net_device *ndev = wdev->netdev;
+
 	/* return 0; */
 
 	/* from supplicant -- wpa_supplicant_tdls_peer_addset() */

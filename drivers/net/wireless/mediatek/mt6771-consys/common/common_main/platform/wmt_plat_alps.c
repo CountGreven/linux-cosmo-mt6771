@@ -32,7 +32,7 @@
 
 #ifdef CONFIG_PM_WAKELOCKS
 #else
-#include <linux/wakelock.h>
+#include <mtk_plat_shim.h>
 #endif
 #define CFG_WMT_WAKELOCK_SUPPORT 1
 

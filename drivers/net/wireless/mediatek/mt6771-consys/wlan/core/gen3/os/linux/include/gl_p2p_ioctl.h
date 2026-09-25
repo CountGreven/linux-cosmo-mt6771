@@ -343,7 +343,7 @@ mtk_p2p_cfg80211_del_key(struct wiphy *wiphy,
 
 int
 mtk_p2p_cfg80211_set_default_key(struct wiphy *wiphy,
-				 struct net_device *netdev, u8 key_index, bool unicast, bool multicast);
+				 struct net_device *netdev, int link_id, u8 key_index, bool unicast, bool multicast);
 
 int mtk_p2p_cfg80211_get_station(struct wiphy *wiphy, struct net_device *ndev,
 				const u8 *mac, struct station_info *sinfo);

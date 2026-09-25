@@ -391,10 +391,12 @@
 	 */
 	mt6370_otg_vbus: usb-otg-vbus-regulator {
 		regulator-name = "mt6370-usb-otg-vbus";
-		regulator-min-microvolt = <4350000>;
-		regulator-max-microvolt = <5800000>;
+		/* The boost's own table (mt6370-charger: 4.425 V + n * 25 mV), as mt8195-demo writes it. */
+		regulator-min-microvolt = <4425000>;
+		regulator-max-microvolt = <5825000>;
+		/* The vendor's OTG limit: 500 mA at enable, 1.5 A once host mode is up (xhci-mtk-driver.c). */
 		regulator-min-microamp = <500000>;
-		regulator-max-microamp = <3000000>;
+		regulator-max-microamp = <1500000>;
 	};
 };
 
@@ -846,7 +848,11 @@
 		vbus-supply = <&mt6370_otg_vbus>;
 		data-role = "dual";
 		power-role = "dual";
-		try-power-role = "sink";
+		/*
+		 * No try-power-role: the vendor runs role_def 4 (plain DRP, tcpci_typec.c). With Try.SNK,
+		 * TCPM drops Rp for tDRPTry after every attach, which a hub with its own PD controller sees
+		 * as a detach.
+		 */
 		source-pdos = <PDO_FIXED(5000, 500, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
 		sink-pdos = <PDO_FIXED(5000, 2000, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
 		op-sink-microwatt = <10000000>;

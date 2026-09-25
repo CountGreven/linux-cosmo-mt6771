@@ -116,10 +116,14 @@ echo "commits under review:"
 git log --oneline "\$base"..HEAD
 # Only the kernel changes are judged by kernel standards: cosmo-notes/ and .github/ are ours and
 # never go upstream, so they must not fail a check that exists to keep patches submittable.
+# The same goes for the imported vendor sources under mt6771-consys/{common,wlan}: 4.4-era MediaTek
+# code that is compiled, not submitted. The shim, Kconfig and Makefile beside them are judged.
 patches="$out/patches"
 rm -rf "\$patches"; mkdir -p "\$patches"
 git format-patch -o "\$patches" "\$base"..HEAD -- \
-    arch drivers include Documentation sound net fs kernel mm lib scripts >/dev/null
+    arch drivers include Documentation sound net fs kernel mm lib scripts \
+    ':(exclude)drivers/net/wireless/mediatek/mt6771-consys/common' \
+    ':(exclude)drivers/net/wireless/mediatek/mt6771-consys/wlan' >/dev/null
 if [ -z "\$(ls -A "\$patches" 2>/dev/null)" ]; then
     echo "no kernel changes in this range — nothing for checkpatch to judge"
     exit 0

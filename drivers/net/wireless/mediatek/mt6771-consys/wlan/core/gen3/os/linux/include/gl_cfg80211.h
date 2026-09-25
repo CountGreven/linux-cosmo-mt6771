@@ -253,9 +253,9 @@ int mtk_cfg80211_mgmt_tx(struct wiphy *wiphy,
 			struct cfg80211_mgmt_tx_params *params,
 			u64 cookie);
 
-void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
-				      IN struct wireless_dev *wdev,
-				      IN u16 frame_type, IN bool reg);
+void mtk_cfg80211_update_mgmt_frame_registrations(IN struct wiphy *wiphy,
+						  IN struct wireless_dev *wdev,
+						  IN struct mgmt_frame_regs *upd);
 
 int mtk_cfg80211_mgmt_tx_cancel_wait(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,

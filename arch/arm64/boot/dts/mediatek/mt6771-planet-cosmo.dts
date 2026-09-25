@@ -348,12 +348,16 @@
 			};
 
 			mt6370_dsvpos: dsvpos {
+				/* Panel bias; nothing consumes it until the panel driver does. */
+				regulator-always-on;
 				regulator-name = "mt6370-dsv-vpos";
 				regulator-min-microvolt = <5400000>;
 				regulator-max-microvolt = <5400000>;
 			};
 
 			mt6370_dsvneg: dsvneg {
+				/* Panel bias; nothing consumes it until the panel driver does. */
+				regulator-always-on;
 				regulator-name = "mt6370-dsv-vneg";
 				regulator-min-microvolt = <5400000>;
 				regulator-max-microvolt = <5400000>;
@@ -378,6 +382,8 @@
 	 */
 	mt6370_otg_vbus: usb-otg-vbus-regulator {
 		regulator-name = "mt6370-usb-otg-vbus";
+		/* On at boot: mtu3 in plain host mode never enables its vbus-supply (only the role switch does). */
+		regulator-always-on;
 		regulator-min-microvolt = <4350000>;
 		regulator-max-microvolt = <5800000>;
 		regulator-min-microamp = <500000>;
@@ -772,6 +778,8 @@
 	 * (otg_vbus), not described yet; a powered hub or PD pass-through dongle does not need it.
 	 */
 	dr_mode = "host";
+	pinctrl-names = "default";
+	pinctrl-0 = <&usb_default_pins>;	/* GPIO79 low: D+/D- to the left (MT6370) port */
 	vusb33-supply = <&mt6358_vusb_reg>;
 	/* 5 V for the dongle: the MT6370's OTG boost, which mtu3 switches on in host mode. */
 	vbus-supply = <&mt6370_otg_vbus>;

@@ -79,22 +79,44 @@ static void cosmo_write_page(phys_addr_t phys, const char *text, size_t len)
 	dcache_clean_inval_poc((unsigned long)buf, (unsigned long)buf + 12 + len);
 }
 
-/*
- * Experiment: the same status line is also written to the page after the tag page through a
- * write-combined mapping, the way ramoops writes its zones. The tag page header declares both pages, so
- * the vendor's pmsg-ramoops-0 shows the cacheable copy at its start and the write-combined copy at
- * offset 0xff4. If the second copy comes back stale, write-combined writes do not persist across the
- * reset on this SoC, and that is why the console zone never carries the log.
- */
+/* E1: the same status line through a write-combined alias on the page after the tag page. */
 #define COSMO_WC_OFFSET		0x1000UL
 static void __iomem *cosmo_wc;
+
+/*
+ * The console zone is only ever looked at through a write-combined vmap, never through the cacheable
+ * linear map: an earlier readout through phys_to_virt left a valid cache line for the zone header,
+ * and that line is the prime suspect for the header coming back stale after every reset (a
+ * non-cacheable store that hits a valid line may be served by the cache on these cores).
+ */
+static void __iomem *cosmo_nc;
+/* E4: what DRAM held in the console zone when this boot claimed it -- the previous run's leftovers. */
+static char cosmo_prev[160];
+
+static void cosmo_snapshot_prev(void)
+{
+	u8 d12[16], m800[16];
+
+	memcpy_fromio(d12, cosmo_nc + 12, sizeof(d12));
+	memcpy_fromio(m800, cosmo_nc + 0x800, sizeof(m800));
+	snprintf(cosmo_prev, sizeof(cosmo_prev), "PREV %u/%u d12=%16phN m800=%16phN",
+		 readl(cosmo_nc + 4), readl(cosmo_nc + 8), d12, m800);
+}
 
 static void cosmo_render(void)
 {
 	char line[64];
-	u32 *cz = (u32 *)phys_to_virt(COSMO_CONSOLE_ZONE);
+	u32 *hdr;
+	u32 cz_start = 0, cz_size = 0;
 	int n;
 
+	if (cosmo_mark_claimed && !cosmo_nc) {
+		struct page *pg = phys_to_page(COSMO_CONSOLE_ZONE);
+
+		cosmo_nc = vmap(&pg, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+		if (cosmo_nc)
+			cosmo_snapshot_prev();
+	}
 	/*
 	 * ioremap_wc() refuses system RAM on arm64 (it returned NULL and the WARN cost 41 console
 	 * lines), so map the page the way ramoops maps its zones: vmap of the struct page, write-combined.
@@ -104,27 +126,24 @@ static void cosmo_render(void)
 
 		cosmo_wc = vmap(&pg, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
 	}
-
-	/*
-	 * ramoops writes the console zone through a write-combined alias. Invalidate our cacheable alias
-	 * first, so this read comes from DRAM and shows what the next boot will see: start/size of the
-	 * zone header, which should grow with every console write.
-	 */
-	dcache_inval_poc((unsigned long)cz, (unsigned long)cz + 16);
-	n = snprintf(line, sizeof(line), "%s PW%u%c CZ%u/%u %s", cosmo_last_tag, cosmo_pw_n,
-		     cosmo_pw_state, cz[1], cz[2], cosmo_ic);
-
-	n = n > 0 ? min_t(size_t, n, sizeof(line)) : 0;
-	if (cosmo_wc) {
-		memcpy_toio(cosmo_wc, line, n);
-		cosmo_write_page(COSMO_TAG_PAGE, line, n);
-		/* Declare both pages: start = size = up to the end of the write-combined copy. */
-		cz = (u32 *)phys_to_virt(COSMO_TAG_PAGE);
-		cz[1] = cz[2] = COSMO_WC_OFFSET + n;
-		dcache_clean_inval_poc((unsigned long)cz, (unsigned long)cz + 12);
-	} else {
-		cosmo_write_page(COSMO_TAG_PAGE, line, n);
+	if (cosmo_nc) {
+		cz_start = readl(cosmo_nc + 4);
+		cz_size = readl(cosmo_nc + 8);
 	}
+	n = snprintf(line, sizeof(line), "%s PW%u%c CZ%u/%u %s", cosmo_last_tag, cosmo_pw_n,
+		     cosmo_pw_state, cz_start, cz_size, cosmo_ic);
+	n = n > 0 ? min_t(size_t, n, sizeof(line)) : 0;
+	cosmo_write_page(COSMO_TAG_PAGE, line, n);
+	if (!cosmo_wc)
+		return;
+	/* E1: the same line through a write-combined alias on the next page ... */
+	memcpy_toio(cosmo_wc, line, n);
+	/* ... E4: the snapshot at +0x100 of the tag page ... */
+	hdr = (u32 *)phys_to_virt(COSMO_TAG_PAGE);
+	memcpy((u8 *)hdr + 0x100, cosmo_prev, sizeof(cosmo_prev));
+	/* ... and a header that declares everything up to the end of the write-combined copy. */
+	hdr[1] = hdr[2] = COSMO_WC_OFFSET + n;
+	dcache_clean_inval_poc((unsigned long)hdr, (unsigned long)hdr + 0x100 + sizeof(cosmo_prev));
 }
 
 void cosmo_mark_len(const char *buf_in, size_t len)

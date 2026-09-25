@@ -255,6 +255,214 @@
 };
 
 /*
+ * The MT6370 sub-PMIC, for the panel's bias rails (DSV) and backlight (WLED).
+ *
+ * The vendor calls this bus i2c-5, but that is its own numbering: the live tree's i2c5 alias points
+ * at i2c@11017000 (id = <5>), which is the controller mt8183.dtsi labels i2c11. The vendor node has
+ * no pinctrl either, so the pins are left as the bootloader muxed them. No clock-frequency: the
+ * vendor runs this bus at 3.4 MHz high-speed, the controller's 100 kHz default is enough for a PMIC
+ * and cannot be wrong for the wiring.
+ */
+&i2c11 {
+	/*
+	 * STAND-IN for the panel branch's status = "okay": here the bus stays "disabled", as mt8183.dtsi has
+	 * it, so nothing on it probes before root mounts. Enabled per flash. Everything else in this block
+	 * is byte-identical to dev/panel-nt36672 so the two merge without a conflict.
+	 */
+
+	/*
+	 * Label deliberately not mt6370_pmu: that name belongs to the empty LK overlay stub above,
+	 * which must stay a stub so the vendor overlay's properties bind to nothing.
+	 */
+	mt6370: pmic@34 {
+		compatible = "mediatek,mt6370";
+		reg = <0x34>;
+		/*
+		 * live tree mt6370_pmu_dts: mt6370,intr_gpio = <&pio 10 0>; gpio-330 is
+		 * "mt6370_pmu_irq_gpio"
+		 */
+		interrupts-extended = <&pio 10 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+
+		/*
+		 * Only the backlight and the regulators are used. The binding wants every function
+		 * described; the rest are disabled, which also keeps the MFD core from registering
+		 * them, so nothing here reconfigures the charger or the USB-C port behind the
+		 * vendor's back.
+		 */
+		mt6370_adc: adc {
+			compatible = "mediatek,mt6370-adc";
+			#io-channel-cells = <1>;
+			status = "okay";
+		};
+
+		/* live tree bled: mt,chan_en = <0x0f>, all four WLED strings */
+		mt6370_backlight: backlight {
+			compatible = "mediatek,mt6370-backlight";
+			mediatek,bled-channel-use = /bits/ 8 <15>;
+		};
+
+		charger {
+			compatible = "mediatek,mt6370-charger";
+			interrupts = <68>, <48>, <6>;
+			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
+			io-channels = <&mt6370_adc MT6370_CHAN_IBUS>;
+			status = "okay";
+		};
+
+		flashlight {
+			compatible = "mediatek,mt6370-flashlight";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		indicator {
+			compatible = "mediatek,mt6370-indicator";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		/* live tree mt6370pd,intr_gpio = <&pio 41 0>; gpio-361 is "type_c_port0-IRQ" */
+		tcpc {
+			compatible = "mediatek,mt6370-tcpc";
+			interrupts-extended = <&pio 41 IRQ_TYPE_LEVEL_LOW>;
+			status = "disabled";
+		};
+
+		/*
+		 * Enabled over I2C (live tree dsv: db_ext_en = <0>), so no enable-gpios. Voltages
+		 * are the vendor's: the boost from db_vbst = <0x1644> (5700 mV), the outputs from
+		 * lcm_pmic.c:59,64 (5.4 V each, and regulator_summary on the running device
+		 * agrees).
+		 */
+		regulators {
+			dsvbst {
+				regulator-name = "mt6370-dsv-vbst";
+				regulator-min-microvolt = <5700000>;
+				regulator-max-microvolt = <5700000>;
+			};
+
+			mt6370_dsvpos: dsvpos {
+				regulator-name = "mt6370-dsv-vpos";
+				regulator-min-microvolt = <5400000>;
+				regulator-max-microvolt = <5400000>;
+			};
+
+			mt6370_dsvneg: dsvneg {
+				regulator-name = "mt6370-dsv-vneg";
+				regulator-min-microvolt = <5400000>;
+				regulator-max-microvolt = <5400000>;
+			};
+		};
+	};
+};
+
+/*
+ * The rest of the MT6370, beyond what the panel needs. Written as references by path so this block and the
+ * panel branch's node above stay byte-identical and merge cleanly; all of it lives under the disabled
+ * charger, flashlight and indicator nodes, so none of it is live.
+ *
+ * live.dts:7171 mt6370_pmu_dts is the vendor node; the vendor's own driver is mt6370_pmu_*, which mainline
+ * replaces with the mfd, charger, LED and regulator drivers.
+ */
+&{/soc/i2c@11017000/pmic@34/charger} {
+	/*
+	 * VBUS out for the Type-C connector. Otto Pflueger's node; the vendor drives OTG from the charger and
+	 * the aeon_usb_otg_en pins (live.dts:7450), which mainline models as this regulator. Range is the
+	 * MT6370's, not a measurement.
+	 */
+	mt6370_otg_vbus: usb-otg-vbus-regulator {
+		regulator-name = "mt6370-usb-otg-vbus";
+		regulator-min-microvolt = <4350000>;
+		regulator-max-microvolt = <5800000>;
+		regulator-min-microamp = <500000>;
+		regulator-max-microamp = <3000000>;
+	};
+};
+
+/*
+ * The vendor's rgbled (live.dts:7239) names four sinks: "green", "blue", "mt6370_pmu_led3", "red". The
+ * mainline indicator binding is an RGB multi-led plus the fourth sink; which colour the fourth is on this
+ * board is not in the vendor tree. STAND-IN: white, and led-max-microamp on both, from Otto's tree.
+ */
+&{/soc/i2c@11017000/pmic@34/indicator} {
+	multi-led@0 {
+		reg = <0>;
+		function = LED_FUNCTION_INDICATOR;
+		color = <LED_COLOR_ID_RGB>;
+		led-max-microamp = <24000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		led@0 {
+			reg = <0>;
+			color = <LED_COLOR_ID_RED>;
+		};
+
+		led@1 {
+			reg = <1>;
+			color = <LED_COLOR_ID_GREEN>;
+		};
+
+		led@2 {
+			reg = <2>;
+			color = <LED_COLOR_ID_BLUE>;
+		};
+	};
+
+	led@3 {
+		reg = <3>;
+		function = LED_FUNCTION_INDICATOR;
+		color = <LED_COLOR_ID_WHITE>;
+		led-max-microamp = <6000>;
+	};
+};
+
+/*
+ * live.dts:7208 mt6370_pmu_fled1 and :7217 fled2. The currents are the vendor's, converted: torch
+ * 0x493e0 = 300000 uA and 0x30d40 = 200000 uA, strobe 0x124f80 = 1200000 uA and 0xf4240 = 1000000 uA,
+ * timeout 0x960 = 2400 ms and 0x4b0 = 1200 ms. They agree with Otto's tree.
+ */
+&{/soc/i2c@11017000/pmic@34/flashlight} {
+	led@0 {
+		reg = <0>;
+		led-sources = <0>;
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_WHITE>;
+		function-enumerator = <1>;
+		led-max-microamp = <300000>;
+		flash-max-microamp = <1200000>;
+		flash-max-timeout-us = <2400000>;
+	};
+
+	led@1 {
+		reg = <1>;
+		led-sources = <1>;
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_WHITE>;
+		function-enumerator = <2>;
+		led-max-microamp = <200000>;
+		flash-max-microamp = <1000000>;
+		flash-max-timeout-us = <1200000>;
+	};
+};
+
+/*
+ * live.dts:7226 mt6370_pmu_ldo, min 1.6 V, max 4.0 V. The vendor names the regulator "irtx_ldo": the
+ * infrared transmitter's supply. Mainline calls the same block VIBLDO.
+ */
+&{/soc/i2c@11017000/pmic@34/regulators} {
+	vibldo {
+		regulator-name = "mt6370-vib-ldo";
+		regulator-min-microvolt = <1600000>;
+		regulator-max-microvolt = <4000000>;
+	};
+};
+
+/*
  * The display, described rather than left to be discovered.
  *
  * mt8183.dtsi brings the whole display pipeline with it, so mtk_drm bound and started driving the panel
@@ -563,6 +771,8 @@
 	 */
 	dr_mode = "host";
 	vusb33-supply = <&mt6358_vusb_reg>;
+	/* 5 V for the dongle: the MT6370's OTG boost, which mtu3 switches on in host mode. */
+	vbus-supply = <&mt6370_otg_vbus>;
 	status = "okay";
 };
 

@@ -1605,7 +1605,7 @@ int mtk_p2p_cfg80211_set_channel(IN struct wiphy *wiphy,
 int
 mtk_p2p_cfg80211_set_bitrate_mask(IN struct wiphy *wiphy,
 				  IN struct net_device *dev,
-				  IN const u8 *peer, IN const struct cfg80211_bitrate_mask *mask)
+				  IN unsigned int link_id, IN const u8 *peer, IN const struct cfg80211_bitrate_mask *mask)
 {
 	INT_32 i4Rslt = -EINVAL;
 	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) NULL;

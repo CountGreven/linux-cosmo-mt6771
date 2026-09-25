@@ -34,6 +34,7 @@
  ********************************************************************************
  */
 #include "gl_os.h"
+#include <linux/sched/debug.h>
 #include "gl_kal.h"
 #include "gl_wext.h"
 #include "precomp.h"
@@ -5115,7 +5116,7 @@ INT_32 kalHaltLock(UINT_32 waitMs)
 #ifndef MTK_WCN_BUILT_IN_DRIVER
 				KERNEL_show_stack(prGlueInfo->main_thread, NULL);
 #else
-				show_stack(prGlueInfo->main_thread, NULL);
+				sched_show_task(prGlueInfo->main_thread);
 #endif
 		} else {
 			DBGLOG(INIT, ERROR, "halt lock held by %s pid %d longer than %u ms!\n",
@@ -5124,7 +5125,7 @@ INT_32 kalHaltLock(UINT_32 waitMs)
 #ifndef MTK_WCN_BUILT_IN_DRIVER
 			KERNEL_show_stack(rHaltCtrl.owner, NULL);
 #else
-			show_stack(rHaltCtrl.owner, NULL);
+			sched_show_task(rHaltCtrl.owner);
 #endif
 		}
 		return i4Ret;

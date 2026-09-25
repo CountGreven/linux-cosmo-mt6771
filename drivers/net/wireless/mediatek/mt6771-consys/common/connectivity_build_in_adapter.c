@@ -96,7 +96,8 @@ RESERVEDMEM_OF_DECLARE(reserve_memory_test, "mediatek,consys-reserve-memory", re
 
 void connectivity_export_show_stack(struct task_struct *tsk, unsigned long *sp)
 {
-	show_stack(tsk, sp, KERN_INFO);
+	/* show_stack() is not exported; sched_show_task() is the exported equivalent. */
+	sched_show_task(tsk);
 }
 EXPORT_SYMBOL(connectivity_export_show_stack);
 

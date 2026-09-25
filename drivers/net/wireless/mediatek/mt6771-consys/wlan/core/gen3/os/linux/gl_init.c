@@ -34,6 +34,7 @@
 ********************************************************************************
 */
 #include "gl_os.h"
+#include <linux/sched/debug.h>
 #include "wlan_lib.h"
 #include "gl_wext.h"
 #include "gl_cfg80211.h"
@@ -2600,7 +2601,7 @@ static VOID wlanRemove(VOID)
 #ifndef MTK_WCN_BUILT_IN_DRIVER
 		KERNEL_show_stack(prGlueInfo->hif_thread, NULL);
 #else
-		show_stack(prGlueInfo->hif_thread, NULL);
+		sched_show_task(prGlueInfo->hif_thread);
 #endif
 	}
 	wake_up_interruptible(&prGlueInfo->waitq_rx);
@@ -2609,7 +2610,7 @@ static VOID wlanRemove(VOID)
 #ifndef MTK_WCN_BUILT_IN_DRIVER
 		KERNEL_show_stack(prGlueInfo->rx_thread, NULL);
 #else
-		show_stack(prGlueInfo->rx_thread, NULL);
+		sched_show_task(prGlueInfo->rx_thread);
 #endif
 	}
 #endif
@@ -2622,7 +2623,7 @@ static VOID wlanRemove(VOID)
 #ifndef MTK_WCN_BUILT_IN_DRIVER
 		KERNEL_show_stack(prGlueInfo->main_thread, NULL);
 #else
-		show_stack(prGlueInfo->main_thread, NULL);
+		sched_show_task(prGlueInfo->main_thread);
 #endif
 	}
 

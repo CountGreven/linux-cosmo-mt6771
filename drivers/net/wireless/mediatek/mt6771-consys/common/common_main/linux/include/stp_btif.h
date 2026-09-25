@@ -15,7 +15,7 @@
 #define _STP_BTIF_H_
 
 #include "osal_typedef.h"
-#include "mtk_btif_exp.h"
+#include <mtk_plat_shim.h>
 #include "osal.h"
 
 struct stp_btif {

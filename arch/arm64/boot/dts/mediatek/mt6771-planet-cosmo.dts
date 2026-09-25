@@ -5,6 +5,10 @@
 
 /dts-v1/;
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/iio/adc/mediatek,mt6370_adc.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/usb/pd.h>
 #include "mt6771.dtsi"
 /* The MT6358 PMIC, so regulators exist at all. LK reports its chip code as 0x5820, which the vendor
  * kernel's mtk_pmic_info.h defines as PMIC6358_E2_CID_CODE. Otto Pflueger's tree includes it too. */
@@ -532,4 +536,100 @@
 
 &mt6358_vaud28_reg {
 	regulator-always-on;
+ * USB. The vendor's usb3@11200000 (live.dts:4160, mediatek,usb3) is mainline's mtu3 at 11201000 with the
+ * xhci child at 11200000, and its PHY (live.dts:6164 usb3_phy) is phy-mtk-tphy at 11f40000. Both are
+ * mt8183.dtsi's nodes; the SoC block is the same one.
+ *
+ * All of it stays disabled. Type-C is on the MT6370's TCPC at i2c 0x4e (live.dts:3023 usb_type_c@4e), not
+ * on the FUSB301A at i2c-3 0x25: that one is a Type-C CC controller the vendor uses to steer the USB3 lane
+ * mux (pins 176 and 177, aeon_fusb301a_sw_sel/sw_en, live.dts:7454) and it has no mainline driver, so it
+ * is not described. The TCPC has no separate i2c client in the mainline binding; it is the tcpc child of
+ * the MT6370 node.
+ */
+&u3phy {
+	/* on in mt8183.dtsi; nothing may power the PHY until the port above it is described and enabled */
+	status = "okay";
+};
+
+&ssusb {
+	/*
+	 * Peripheral only for now: the Type-C controller (MT6370 TCPC) that would drive role switching is
+	 * not enabled yet, and what this port needs first is a network -- the kernel's built-in Ethernet
+	 * gadget on this controller, with a static ip= on the cmdline, gives ssh on mainline without
+	 * touching the rootfs. VBUS comes from the host side in this mode.
+	 */
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	vusb33-supply = <&mt6358_vusb_reg>;
+	status = "okay";
+};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			ssusb_ss_ep: endpoint {
+				remote-endpoint = <&tcpc_ss_ep>;
+			};
+		};
+	};
+};
+
+&usb_host {
+	vusb33-supply = <&mt6358_vusb_reg>;
+};
+
+/*
+ * The connector. live.dts:7298 type_c_port0: role_def 4 (dual role), local_dr_power/local_dr_data and
+ * VCONN supply. The source PDO 0x19032 is 5 V at 500 mA and the first sink PDO 0x190c8 is 5 V at 2 A, both
+ * as written here. STAND-IN: try-power-role sink and op-sink-microwatt, from Otto's tree; the vendor's
+ * second sink PDO is a PPS range that has no counterpart here yet.
+ */
+&{/soc/i2c@11017000/pmic@34/tcpc} {
+	connector {
+		compatible = "usb-c-connector";
+		label = "USB-C";
+		vbus-supply = <&mt6370_otg_vbus>;
+		data-role = "dual";
+		power-role = "dual";
+		try-power-role = "sink";
+		source-pdos = <PDO_FIXED(5000, 500, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
+		sink-pdos = <PDO_FIXED(5000, 2000, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
+		op-sink-microwatt = <10000000>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				tcpc_hs_ep: endpoint {
+					remote-endpoint = <&ssusb_hs_ep>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				tcpc_ss_ep: endpoint {
+					remote-endpoint = <&ssusb_ss_ep>;
+				};
+			};
+		};
+	};
+};
+
+&pio {
+	/*
+	 * live.dts:7464 aeon_usb_lr_sw_low/high (pin 79): the vendor switches the USB data lines between the
+	 * two USB ports with this pin. Low is the left port in Otto's tree. WAITING: which level the
+	 * vendor's default state is, and which port is which, are not in the live tree.
+	 */
+	usb_default_pins: usb-default-pins {
+		pins-lr-switch {
+			pinmux = <PINMUX_GPIO79__FUNC_GPIO79>;
+			output-low;
+		};
+	};
 };

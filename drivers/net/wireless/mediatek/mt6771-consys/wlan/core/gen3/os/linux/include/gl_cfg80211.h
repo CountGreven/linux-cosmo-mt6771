@@ -312,7 +312,7 @@ int mtk_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, con
 #endif
 
 int
-mtk_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev, const u8 *peer, u8 action_code, u8 dialog_token,
+mtk_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev, const u8 *peer, int link_id, u8 action_code, u8 dialog_token,
 		u16 status_code, u32 peer_capability, bool initiator, const u8 *buf, size_t len);
 
 int mtk_cfg80211_tdls_oper(struct wiphy *wiphy, struct net_device *dev, const u8 *peer,

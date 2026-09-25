@@ -92,6 +92,7 @@
 #include <linux/timer.h>	/* struct timer_list */
 #include <linux/jiffies.h>	/* jiffies */
 #include <linux/delay.h>	/* udelay and mdelay macro */
+#include <linux/sched/clock.h>	/* sched_clock() */
 
 #if CONFIG_ANDROID
 #ifdef CONFIG_WAKELOCK

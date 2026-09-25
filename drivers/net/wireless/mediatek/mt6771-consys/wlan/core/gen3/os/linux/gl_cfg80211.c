@@ -148,9 +148,11 @@ mtk_cfg80211_change_iface(struct wiphy *wiphy,
 /*----------------------------------------------------------------------------*/
 int
 mtk_cfg80211_add_key(struct wiphy *wiphy,
-		     struct net_device *ndev,
+		     struct wireless_dev *wdev, int link_id,
 		     u8 key_index, bool pairwise, const u8 *mac_addr, struct key_params *params)
 {
+	struct net_device *ndev = wdev->netdev;
+
 	PARAM_KEY_T rKey;
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	WLAN_STATUS rStatus = WLAN_STATUS_SUCCESS;
@@ -235,11 +237,13 @@ mtk_cfg80211_add_key(struct wiphy *wiphy,
 /*----------------------------------------------------------------------------*/
 int
 mtk_cfg80211_get_key(struct wiphy *wiphy,
-		     struct net_device *ndev,
+		     struct wireless_dev *wdev, int link_id,
 		     u8 key_index,
 		     bool pairwise,
 		     const u8 *mac_addr, void *cookie, void (*callback) (void *cookie, struct key_params *))
 {
+	struct net_device *ndev = wdev->netdev;
+
 	P_GLUE_INFO_T prGlueInfo = NULL;
 
 	prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
@@ -264,8 +268,10 @@ mtk_cfg80211_get_key(struct wiphy *wiphy,
  *         others:  failure
  */
 /*----------------------------------------------------------------------------*/
-int mtk_cfg80211_del_key(struct wiphy *wiphy, struct net_device *ndev, u8 key_index, bool pairwise, const u8 *mac_addr)
+int mtk_cfg80211_del_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr)
 {
+	struct net_device *ndev = wdev->netdev;
+
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	WLAN_STATUS rStatus = WLAN_STATUS_SUCCESS;
 	PARAM_REMOVE_KEY_T rRemoveKey;

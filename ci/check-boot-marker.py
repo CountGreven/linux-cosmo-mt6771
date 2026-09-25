@@ -158,15 +158,22 @@ def main() -> int:
         print("marker range is empty")
         ok = False
     if C_MARK.exists():
-        cbase = re.search(r"COSMO_MARK_BASE\s+0x([0-9a-fA-F]+)", C_MARK.read_text())
-        cend = re.search(r"COSMO_MARK_END\s+0x([0-9a-fA-F]+)", C_MARK.read_text())
+        cm_src = C_MARK.read_text()
+        cbase = re.search(r"COSMO_MARK_BASE\s+0x([0-9a-fA-F]+)", cm_src)
+        cend = re.search(r"COSMO_MARK_END\s+0x([0-9a-fA-F]+)", cm_src)
         if not (cbase and cend):
             print("cosmo-mark.c does not define the region")
             ok = False
         elif (int(cbase.group(1), 16), int(cend.group(1), 16)) != (start, end):
-            print(f"cosmo-mark.c writes 0x{int(cbase.group(1), 16):08x}..0x{int(cend.group(1), 16):08x} "
-                  f"but head.S writes 0x{start:08x}..0x{end:08x}; the stages would not overwrite each "
-                  "other and the furthest-reached tag would be meaningless")
+            print("cosmo-mark.c and head.S disagree about the reservation")
+            ok = False
+        # C must never write the reservation through the cacheable linear map except on the tag page:
+        # such writes came back after a reset on top of ramoops' own write-combined records.
+        if "COSMO_MARK_STRIDE" in cm_src or "cosmo_spray" in cm_src:
+            print("cosmo-mark.c still sprays the reservation from C; only head.S (MMU off) may do that")
+            ok = False
+        if cm_src.count("phys_to_virt(") > 2:
+            print("cosmo-mark.c maps more than the tag page and the console-zone header")
             ok = False
     if C_MARK.exists():
         cm = C_MARK.read_text()

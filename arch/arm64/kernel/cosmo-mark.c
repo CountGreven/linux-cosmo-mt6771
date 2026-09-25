@@ -31,7 +31,6 @@
 /* Must match the reservation in mt6771-planet-cosmo.dts and the macro in head.S. */
 #define COSMO_MARK_BASE		0x54410000UL
 #define COSMO_MARK_END		0x544f0000UL
-#define COSMO_MARK_STRIDE	0x1000UL
 /* fs/pstore/ram_core.c in the vendor kernel: #define PERSISTENT_RAM_SIG (0x43474244) */
 #define PERSISTENT_RAM_SIG	0x43474244
 #define COSMO_MARK_LEN		12
@@ -41,15 +40,20 @@
 #define COSMO_CONSOLE_ZONE	0x544a0000UL
 
 /*
- * Set by ramoops_probe before it initialises the first zone. Until then a marker is sprayed across the
- * whole reservation (every page, so the vendor's reader finds it whatever zone layout it assumes) and
- * probe wipes it. From then on pstore owns the zones and the log we want lives in the console zone, so
- * every marker is instead rendered onto ONE page: the first page of the pmsg zone, which the vendor
- * kernel reads back as pmsg-ramoops-0. Nothing after the claim touches the console zone.
+ * Every C-side marker is rendered onto ONE page: the first page of the pmsg zone, which the vendor
+ * kernel reads back as pmsg-ramoops-0. Nothing written from C ever touches the console zone.
+ *
+ * That is the lesson of the spray: markers written through the cacheable linear map and cleaned to
+ * PoC still came back after a reset on top of what ramoops had written through its write-combined
+ * alias -- the kernel's own readout (CZ below) saw 25 KB of log in the zone, the next boot saw the
+ * spray header. Only the MMU-off stages in head.S still write the whole reservation, and ramoops
+ * zaps those at probe.
  *
  * The page carries one status line: the last stage tag, how many times the console write was entered
- * and whether the last one returned (E = entered, K = returned), and the initcall currently running.
- * A spray after the claim erased four logs; the kill switch that replaced it hid the second write.
+ * and whether the last one returned (E = entered, K = returned), the console zone header as read back
+ * from DRAM, and the initcall currently running. Before ramoops probes, the pmsg zone is scratch; the
+ * probe zaps it, and everything after the claim is rendered again, so a tag that survives is either
+ * from before probe (the kernel died there) or from after it.
  */
 bool cosmo_mark_claimed;
 static char cosmo_last_tag[COSMO_MARK_LEN + 1] = "-";
@@ -71,14 +75,6 @@ static void cosmo_write_page(phys_addr_t phys, const char *text, size_t len)
 	 * rather than sit in a dirty line.
 	 */
 	dcache_clean_inval_poc((unsigned long)buf, (unsigned long)buf + 12 + len);
-}
-
-static void cosmo_spray(const char *text, size_t len)
-{
-	phys_addr_t phys;
-
-	for (phys = COSMO_MARK_BASE; phys < COSMO_MARK_END; phys += COSMO_MARK_STRIDE)
-		cosmo_write_page(phys, text, len);
 }
 
 static void cosmo_render(void)
@@ -103,10 +99,6 @@ void cosmo_mark_len(const char *buf_in, size_t len)
 {
 	if (len > 64)
 		len = 64;
-	if (!cosmo_mark_claimed) {
-		cosmo_spray(buf_in, len);
-		return;
-	}
 	strscpy(cosmo_ic, buf_in, sizeof(cosmo_ic));
 	cosmo_render();
 }
@@ -115,10 +107,6 @@ void cosmo_mark(const char *tag)
 {
 	memcpy(cosmo_last_tag, tag, COSMO_MARK_LEN);
 	cosmo_last_tag[COSMO_MARK_LEN] = '\0';
-	if (!cosmo_mark_claimed) {
-		cosmo_spray(tag, COSMO_MARK_LEN);
-		return;
-	}
 	cosmo_render();
 }
 

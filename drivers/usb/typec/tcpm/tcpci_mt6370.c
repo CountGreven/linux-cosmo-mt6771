@@ -124,6 +124,22 @@ static irqreturn_t mt6370_irq_handler(int irq, void *dev_id)
 		regmap_write(regmap, MT6370_REG_MT_INT, mt_int);
 		ret = IRQ_HANDLED;
 	}
+	if (ret == IRQ_NONE) {
+		/* Cosmo bring-up: the line fired with nothing the generic driver recognises. Show why. */
+		unsigned int alert = 0, mt_stat = 0, mt_mask = 0;
+		u16 alert16 = 0;
+
+		regmap_raw_read(regmap, TCPC_ALERT, &alert16, sizeof(alert16));
+		alert = alert16;
+		regmap_read(regmap, 0x97, &mt_stat);
+		regmap_read(regmap, MT6370_REG_MT_MASK, &mt_mask);
+		dev_info_ratelimited(priv->dev, "spurious alert: ALERT=%#x MT_INT=%#x MT_STATUS=%#x MT_MASK=%#x\n",
+				     alert, mt_int, mt_stat, mt_mask);
+		if (alert) {
+			regmap_raw_write(regmap, TCPC_ALERT, &alert16, sizeof(alert16));
+			ret = IRQ_HANDLED;
+		}
+	}
 	return ret;
 }
 

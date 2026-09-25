@@ -8,9 +8,25 @@
  */
 
 #include <linux/string_choices.h>
+#include <linux/phy/phy.h>
 #include "mtu3.h"
 #include "mtu3_dr.h"
 #include "mtu3_debug.h"
+
+/*
+ * Cosmo bring-up: the MAC's force mode (IPPC) and the PHY's IDDIG are two different registers. The
+ * vendor's host load reconfigures the U2 PHY for host (usb_phy_recover + host PLL settings); this
+ * driver only ever initialises and powers the PHYs. With the role switched to host, VBUS on and the
+ * hub attached, xhci never saw a connect. Tell the PHY which side it is on.
+ */
+static void ssusb_set_phy_mode(struct ssusb_mtk *ssusb, enum phy_mode mode)
+{
+	int i;
+
+	for (i = 0; i < ssusb->num_phys; i++)
+		phy_set_mode(ssusb->phys[i], mode);
+}
+
 
 #define USB2_PORT 2
 #define USB3_PORT 3
@@ -155,10 +171,12 @@ static void ssusb_mode_sw_work(struct work_struct *work)
 		ssusb_set_force_mode(ssusb, MTU3_DR_FORCE_HOST);
 		mtu3_stop(mtu);
 		switch_port_to_host(ssusb);
+		ssusb_set_phy_mode(ssusb, PHY_MODE_USB_HOST);
 		ssusb_set_vbus(otg_sx, 1);
 		ssusb->is_host = true;
 		break;
 	case USB_ROLE_DEVICE:
+		ssusb_set_phy_mode(ssusb, PHY_MODE_USB_DEVICE);
 		ssusb_set_force_mode(ssusb, MTU3_DR_FORCE_DEVICE);
 		ssusb->is_host = false;
 		ssusb_set_vbus(otg_sx, 0);

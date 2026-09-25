@@ -136,6 +136,18 @@ static inline void aee_kernel_warning_api(const char *file, const int line, cons
 	pr_warn("aee: %s:%d %s: %s\n", file, line, module, detail);
 }
 
+static inline void aed_combo_exception(const int *log, int log_size, const int *phy,
+				       int phy_size, const char *detail)
+{
+	pr_warn("aee: combo exception: %s\n", detail);
+}
+
+static inline void aed_combo_exception_api(const int *log, int log_size, const int *phy,
+					   int phy_size, const char *detail, const int db_opt)
+{
+	pr_warn("aee: combo exception: %s\n", detail);
+}
+
 #define aee_kernel_dal_show(msg)	pr_info("aee: %s", msg)
 #define aee_kernel_exception(module, msg...)	pr_err("aee: %s: " msg)
 #define aee_kernel_warning(module, msg...)	pr_warn("aee: %s: " msg)
@@ -319,19 +331,19 @@ static inline int emi_mpu_set_protection(struct emi_region_info_t *region_info)
  */
 #define BTIF_MAX_LEN_PER_PKT	2048
 
-typedef enum {
+typedef enum _ENUM_BTIF_DPIDLE_ {
 	BTIF_DPIDLE_DISABLE = 0,
 	BTIF_DPIDLE_ENABLE,
 	BTIF_DPIDLE_MAX,
 } ENUM_BTIF_DPIDLE_CTRL;
 
-typedef enum {
+typedef enum _ENUM_BTIF_LPBK_MODE_ {
 	BTIF_LPBK_DISABLE = 0,
 	BTIF_LPBK_ENABLE,
 	BTIF_LPBK_MAX,
 } ENUM_BTIF_LPBK_MODE;
 
-typedef enum {
+typedef enum _ENUM_BTIF_DBG_ID_ {
 	BTIF_DISABLE_LOGGER = 0,
 	BTIF_ENABLE_LOGGER,
 	BTIF_DUMP_LOG,

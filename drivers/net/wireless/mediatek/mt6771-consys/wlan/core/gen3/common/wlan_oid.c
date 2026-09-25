@@ -35,7 +35,7 @@
 #include "mgmt/rsn.h"
 #include "gl_wext.h"
 #include "debug.h"
-#include <stddef.h>
+#include <linux/stddef.h>
 
 #ifdef FW_CFG_SUPPORT
 #include "fwcfg.h"

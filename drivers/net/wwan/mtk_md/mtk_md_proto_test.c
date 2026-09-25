@@ -132,7 +132,8 @@ static struct mtk_md_lk_info blob_info(struct blob *b, int version)
 /*
  * The Cosmo's list as far as the vendor log shows it: MD1 at 0x66000000, 0x7e00000 bytes ("ccci_md0 at
  * LK"), share memory at 0x8c000000, 1 MiB ("ccci_share_mem at LK"), MD type 12 (CCCI_IOC_GET_MD_TYPE).
- * The share memory split and md1_phy_cap are not logged; those values are made up.
+ * The AP/MD1 share starts at offset 0: the log remaps CCB control, 96 KiB into it, at 0x8c018000. Its
+ * size and md1_phy_cap are not logged; those values are made up.
  */
 static void cosmo_blob(struct blob *b)
 {

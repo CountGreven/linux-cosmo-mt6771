@@ -699,7 +699,7 @@ static ssize_t procWifiCfgWrite(struct file *file, const char __user *buffer, si
 	prAdapter = g_prGlueInfo_proc->prAdapter;
 	kalMemSet(aucProcBuf, 0, u4CopySize);
 
-	u4CopySize = (u4CopySize >= count + 1) ? count : u4CopySize - 1;
+	u4CopySize = (u4CopySize > count) ? count : u4CopySize - 1;
 
 	if (!u4CopySize || copy_from_user(aucProcBuf, buffer, u4CopySize)) {
 		pr_err("error of copy from user\n");

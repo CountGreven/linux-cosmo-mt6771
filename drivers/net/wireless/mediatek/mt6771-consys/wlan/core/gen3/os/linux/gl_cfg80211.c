@@ -1591,9 +1591,9 @@ int mtk_cfg80211_set_rekey_data(struct wiphy *wiphy, struct net_device *dev, str
 	return 0;
 }
 
-void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
-				      IN struct wireless_dev *wdev,
-				      IN u16 frame_type, IN bool reg)
+static void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
+					     IN struct wireless_dev *wdev,
+					     IN u16 frame_type, IN bool reg)
 {
 #if 0
 	P_MSG_P2P_MGMT_FRAME_REGISTER_T prMgmtFrameRegister = (P_MSG_P2P_MGMT_FRAME_REGISTER_T) NULL;
@@ -1663,6 +1663,17 @@ void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
 	} while (FALSE);
 
 }				/* mtk_cfg80211_mgmt_frame_register */
+
+void mtk_cfg80211_update_mgmt_frame_registrations(IN struct wiphy *wiphy,
+						  IN struct wireless_dev *wdev,
+						  IN struct mgmt_frame_regs *upd)
+{
+	/* the per-frame-type registration of the old callback, for the two types the driver filters */
+	mtk_cfg80211_mgmt_frame_register(wiphy, wdev, MAC_FRAME_PROBE_REQ,
+					 !!(upd->interface_stypes & BIT(IEEE80211_STYPE_PROBE_REQ >> 4)));
+	mtk_cfg80211_mgmt_frame_register(wiphy, wdev, MAC_FRAME_ACTION,
+					 !!(upd->interface_stypes & BIT(IEEE80211_STYPE_ACTION >> 4)));
+}
 
 /*----------------------------------------------------------------------------*/
 /*!

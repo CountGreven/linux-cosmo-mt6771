@@ -22,6 +22,7 @@
 #include <linux/cache.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <asm/early_ioremap.h>
 #include <linux/minmax.h>
 #include <linux/mm.h>
 #include <linux/string.h>
@@ -92,6 +93,7 @@ static void __iomem *cosmo_wc;
 static void __iomem *cosmo_nc;
 /* E4: what DRAM held in the console zone when this boot claimed it -- the previous run's leftovers. */
 static char cosmo_prev[160];
+static char cosmo_rgu[48] = "RGU -";
 
 static void cosmo_snapshot_prev(void)
 {
@@ -141,9 +143,10 @@ static void cosmo_render(void)
 	/* ... E4: the snapshot at +0x100 of the tag page ... */
 	hdr = (u32 *)phys_to_virt(COSMO_TAG_PAGE);
 	memcpy((u8 *)hdr + 0x100, cosmo_prev, sizeof(cosmo_prev));
+	memcpy((u8 *)hdr + 0x1c0, cosmo_rgu, sizeof(cosmo_rgu));
 	/* ... and a header that declares everything up to the end of the write-combined copy. */
 	hdr[1] = hdr[2] = COSMO_WC_OFFSET + n;
-	dcache_clean_inval_poc((unsigned long)hdr, (unsigned long)hdr + 0x100 + sizeof(cosmo_prev));
+	dcache_clean_inval_poc((unsigned long)hdr, (unsigned long)hdr + 0x1c0 + sizeof(cosmo_rgu));
 }
 
 /*
@@ -157,8 +160,41 @@ static void cosmo_render(void)
  * invalidate the whole reservation through the linear map now, while we are still on the CPU that
  * holds those lines, so nothing stale survives into the pstore era.
  */
+/*
+ * MediaTek RGU (watchdog/reset unit) at 0x10007000. The vendor kernel sets MCU_CACHE_PRESERVE in
+ * DEBUG_CTL so the cluster caches survive a watchdog reset for its last-PC dumps, and nothing on the
+ * way to us clears it. With it set, what we write into ramoops can sit dirty in a preserved cache
+ * line through the reset: the next kernel reads stale DRAM, and our bytes only land when something
+ * later flushes all caches (the E4 snapshot saw the previous run's complete log one boot late).
+ * Record the registers on the tag page, then clear the bit with its key.
+ */
+#define COSMO_RGU_BASE		0x10007000UL
+#define RGU_MODE		0x00
+#define RGU_STATUS		0x0c
+#define RGU_DEBUG_CTL		0x40
+#define RGU_LATCH_CTL		0x44
+#define RGU_DEBUG_CTL_KEY	0x59000000
+#define RGU_MCU_CACHE_PRESERVE	0x00000008
+static void __init cosmo_rgu_probe(void)
+{
+	void __iomem *rgu = early_ioremap(COSMO_RGU_BASE, 0x100);
+	u32 mode, status, dbg, latch;
+
+	if (!rgu)
+		return;
+	mode = readl(rgu + RGU_MODE);
+	status = readl(rgu + RGU_STATUS);
+	dbg = readl(rgu + RGU_DEBUG_CTL);
+	latch = readl(rgu + RGU_LATCH_CTL);
+	snprintf(cosmo_rgu, sizeof(cosmo_rgu), "RGU m=%x s=%x d=%x l=%x", mode, status, dbg, latch);
+	if (dbg & RGU_MCU_CACHE_PRESERVE)
+		writel((dbg & ~RGU_MCU_CACHE_PRESERVE) | RGU_DEBUG_CTL_KEY, rgu + RGU_DEBUG_CTL);
+	early_iounmap(rgu, 0x100);
+}
+
 void __init cosmo_mark_scrub(void)
 {
+	cosmo_rgu_probe();
 	unsigned long start = (unsigned long)phys_to_virt(COSMO_MARK_BASE);
 
 	dcache_clean_inval_poc(start, start + (COSMO_MARK_END - COSMO_MARK_BASE));

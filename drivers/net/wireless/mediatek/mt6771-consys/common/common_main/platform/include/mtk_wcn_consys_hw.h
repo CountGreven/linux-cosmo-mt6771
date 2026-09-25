@@ -20,7 +20,7 @@
 #ifndef _MTK_WCN_CONSYS_HW_H_
 #define _MTK_WCN_CONSYS_HW_H_
 
-#include <sync_write.h>
+#include <mtk_plat_shim.h>
 /*#include <mt_reg_base.h>*/
 #include "wmt_plat.h"
 

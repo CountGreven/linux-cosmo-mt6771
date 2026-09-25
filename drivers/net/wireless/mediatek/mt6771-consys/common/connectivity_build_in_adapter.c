@@ -300,3 +300,6 @@ void connectivity_export_dump_gpio_info(int start, int end)
 }
 EXPORT_SYMBOL(connectivity_export_dump_gpio_info);
 #endif
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("MT6771 CONSYS build-in adapter (vendor platform glue)");

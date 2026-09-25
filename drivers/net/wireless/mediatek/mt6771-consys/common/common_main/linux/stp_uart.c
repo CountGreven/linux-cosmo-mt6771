@@ -204,7 +204,6 @@ static INT32 stp_uart_tty_open(struct tty_struct *tty)
 	UART_PR_DBG("stp_uart_tty_opentty: %p\n", tty);
 
 	tty->receive_room = 65536;
-	tty->port->low_latency = 1;
 
 	/* Flush any pending characters in the driver and line discipline. */
 
@@ -577,7 +576,6 @@ static INT32 stp_uart_tty_ioctl(struct tty_struct *tty, unsigned int cmd, unsign
 	switch (cmd) {
 	case HCIUARTSETPROTO:
 		UART_PR_DBG("<!!> Set low_latency to TRUE <!!>\n");
-		tty->port->low_latency = 1;
 
 		break;
 	default:

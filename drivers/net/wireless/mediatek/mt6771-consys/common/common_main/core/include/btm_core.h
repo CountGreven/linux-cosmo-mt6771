@@ -22,7 +22,7 @@
 #include "wmt_plat.h"
 #include "wmt_idc.h"
 #include "osal.h"
-#include "mtk_btif_exp.h"
+#include <mtk_plat_shim.h>
 /*******************************************************************************
 *                         C O M P I L E R   F L A G S
 ********************************************************************************

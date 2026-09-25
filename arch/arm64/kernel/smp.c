@@ -54,6 +54,7 @@
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 #include <asm/virt.h>
+#include <asm/cosmo-mark.h>
 
 #include <trace/events/ipi.h>
 
@@ -196,6 +197,7 @@ static void init_gic_priority_masking(void)
  */
 asmlinkage notrace void secondary_start_kernel(void)
 {
+	cosmo_secondary_arrived(read_cpuid_mpidr());
 	u64 mpidr = read_cpuid_mpidr() & MPIDR_HWID_BITMASK;
 	struct mm_struct *mm = &init_mm;
 	const struct cpu_operations *ops;

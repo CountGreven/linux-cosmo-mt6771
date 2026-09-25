@@ -27,6 +27,7 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <asm/cosmo-mark.h>
 #include <linux/vmalloc.h>
 
 #include <asm/cacheflush.h>
@@ -42,6 +43,9 @@
 /* Header of ramoops' console zone: base + (size - console - pmsg). Read back to see whether its writes land. */
 #define COSMO_CONSOLE_ZONE	0x544e0000UL
 #define COSMO_CONSOLE_SIZE	0x10000UL
+/* Secondary-CPU arrival marks in the tag page: +0x300 MMU-off (head.S, by MPIDR), +0x340 MMU-on (by MPIDR). */
+#define COSMO_SEC_OFF		0x300
+#define COSMO_SEC_ON		0x340
 #define COSMO_CONSOLE_PAGES	(COSMO_CONSOLE_SIZE / PAGE_SIZE)
 
 /*
@@ -189,6 +193,7 @@ static void __init cosmo_rgu_probe(void)
 
 void __init cosmo_mark_scrub(void)
 {
+	cosmo_secondary_clear();
 	cosmo_rgu_probe();
 	unsigned long start = (unsigned long)phys_to_virt(COSMO_MARK_BASE);
 
@@ -278,3 +283,46 @@ COSMO_MARK_STAGE(early, 4);	/* start_kernel's setup completed */
  */
 COSMO_MARK_STAGE(pure, 5);
 COSMO_MARK_STAGE(core, 6);
+
+/*
+ * Secondary CPUs: the MMU-off mark is stored by head.S at secondary_entry; this one is the first C the
+ * core runs, still before it has a logical cpu number, hence MPIDR again. The boot CPU clears both rows
+ * in cosmo_mark_scrub() so a previous boot's marks cannot pass for this one.
+ */
+static inline unsigned int cosmo_sec_index(u64 mpidr)
+{
+	return (mpidr & 0xff) + 4 * ((mpidr >> 8) & 0xff);
+}
+
+void cosmo_secondary_arrived(u64 mpidr)
+{
+	u64 *row = (u64 *)phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_ON);
+	unsigned int i = cosmo_sec_index(mpidr);
+
+	if (i < 8) {
+		WRITE_ONCE(row[i], mpidr | BIT_ULL(63));
+		dcache_clean_inval_poc((unsigned long)&row[i], (unsigned long)&row[i + 1]);
+	}
+}
+
+void cosmo_secondary_clear(void)
+{
+	memset(phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_OFF), 0, 0x80);
+	dcache_clean_inval_poc((unsigned long)phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_OFF),
+			       (unsigned long)phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_OFF + 0x80));
+}
+
+static int __init cosmo_mark_secondaries(void)
+{
+	u64 off[8], on[8];
+	unsigned int i;
+
+	memcpy(off, phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_OFF), sizeof(off));
+	memcpy(on, phys_to_virt(COSMO_TAG_PAGE + COSMO_SEC_ON), sizeof(on));
+	for (i = 0; i < 8; i++)
+		pr_info("cosmo: secondary %u: mmu-off %s (%#llx), mmu-on %s, online %s\n", i,
+			off[i] ? "arrived" : "never", off[i], on[i] ? "arrived" : "never",
+			cpu_online(i) ? "yes" : "no");
+	return 0;
+}
+late_initcall(cosmo_mark_secondaries);

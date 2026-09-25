@@ -403,6 +403,18 @@ SYM_FUNC_END(secondary_holding_pen)
 	 * be used where CPUs are brought online dynamically by the kernel.
 	 */
 SYM_FUNC_START(secondary_entry)
+	// COSMO: did this core arrive at all? MMU off, first instructions after PSCI CPU_ON: store MPIDR
+	// into the tag page at +0x300 + 8 * (Aff0 + 4 * Aff1). Read back by cosmo_mark_secondaries()
+	// once the boot CPU has given up on it. A kexec'd kernel loses all seven secondaries (19-kexec).
+	mrs	x5, mpidr_el1
+	and	x6, x5, #0xff			// Aff0: core in cluster
+	ubfx	x7, x5, #8, #8			// Aff1: cluster
+	add	x6, x6, x7, lsl #2
+	movz	x7, #0x5446, lsl #16		// 0x54460000, the tag page
+	movk	x7, #0x0300
+	add	x7, x7, x6, lsl #3
+	str	x5, [x7]
+	dsb	sy
 	mov	x0, xzr
 	bl	init_kernel_el			// w0=cpu_boot_mode
 	b	secondary_startup

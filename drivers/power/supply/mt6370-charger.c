@@ -7,6 +7,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/delay.h>
 #include <linux/devm-helpers.h>
 #include <linux/gpio/consumer.h>
 #include <linux/iio/consumer.h>
@@ -638,10 +639,76 @@ static const struct power_supply_desc mt6370_chg_psy_desc = {
 		     BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN),
 };
 
+/*
+ * Cosmo bring-up: the vendor 4.4 driver (mt6370_pmu_charger.c, mt6370_enable_otg) never flips
+ * OPA_MODE alone. It unlocks the hidden register page, slows the low-side gate driver (reg 0x33 =
+ * 0x7C, "decline VBUS noise"), enables boost, waits 20 ms, reads the mode back, and writes hidden
+ * control 6 (reg 0x35 = 0x00); the mirror on disable (0x73 / 0x0F). On this board TCPM saw the hub,
+ * asked for VBUS and never got VBUS-present within PD_T_PS_SOURCE_ON with the plain bit. The
+ * vendor also enables the charger watchdog here and kicks it from its charger thread; nothing
+ * kicks it in mainline, so it stays off. Hidden page registers live in bank 0 (0x100 + reg).
+ */
+#define MT6370_REG_HIDDEN_PASCODE1	0x107
+#define MT6370_REG_LG_CONTROL		0x133
+#define MT6370_REG_CHG_HIDDEN_CTRL6	0x135
+#define MT6370_OPA_MODE_MASK		BIT(0)
+
+static int mt6370_chg_hidden_mode(struct regmap *regmap, bool en)
+{
+	static const u8 pascode[] = { 0x96, 0x69, 0xC3, 0x3C };
+
+	if (en)
+		return regmap_bulk_write(regmap, MT6370_REG_HIDDEN_PASCODE1, pascode,
+					 ARRAY_SIZE(pascode));
+	return regmap_write(regmap, MT6370_REG_HIDDEN_PASCODE1, 0x00);
+}
+
+static int mt6370_chg_otg_set(struct regulator_dev *rdev, bool en)
+{
+	struct regmap *regmap = rdev_get_regmap(rdev);
+	struct device *dev = rdev_get_dev(rdev)->parent;
+	unsigned int ctrl1 = 0, stat = 0;
+	int ret;
+
+	ret = mt6370_chg_hidden_mode(regmap, true);
+	if (ret)
+		return ret;
+	ret = regmap_write(regmap, MT6370_REG_LG_CONTROL, en ? 0x7C : 0x73);
+	if (ret)
+		goto out;
+	ret = regmap_update_bits(regmap, MT6370_REG_CHG_CTRL1, MT6370_OPA_MODE_MASK,
+				 en ? MT6370_OPA_MODE_MASK : 0);
+	if (ret)
+		goto out;
+	msleep(20);
+	regmap_read(regmap, MT6370_REG_CHG_CTRL1, &ctrl1);
+	regmap_read(regmap, MT6370_REG_CHG_STAT, &stat);
+	if (en && !(ctrl1 & MT6370_OPA_MODE_MASK)) {
+		dev_err(dev, "otg boost: OPA_MODE did not stick (ctrl1=%#x stat=%#x)\n", ctrl1, stat);
+		ret = -EIO;
+		goto out;
+	}
+	ret = regmap_write(regmap, MT6370_REG_CHG_HIDDEN_CTRL6, en ? 0x00 : 0x0F);
+	dev_info(dev, "otg boost %s: ctrl1=%#x stat=%#x\n", en ? "on" : "off", ctrl1, stat);
+out:
+	mt6370_chg_hidden_mode(regmap, false);
+	return ret;
+}
+
+static int mt6370_chg_otg_enable(struct regulator_dev *rdev)
+{
+	return mt6370_chg_otg_set(rdev, true);
+}
+
+static int mt6370_chg_otg_disable(struct regulator_dev *rdev)
+{
+	return mt6370_chg_otg_set(rdev, false);
+}
+
 static const struct regulator_ops mt6370_chg_otg_ops = {
 	.list_voltage = regulator_list_voltage_linear,
-	.enable = regulator_enable_regmap,
-	.disable = regulator_disable_regmap,
+	.enable = mt6370_chg_otg_enable,
+	.disable = mt6370_chg_otg_disable,
 	.is_enabled = regulator_is_enabled_regmap,
 	.set_voltage_sel = regulator_set_voltage_sel_regmap,
 	.get_voltage_sel = regulator_get_voltage_sel_regmap,

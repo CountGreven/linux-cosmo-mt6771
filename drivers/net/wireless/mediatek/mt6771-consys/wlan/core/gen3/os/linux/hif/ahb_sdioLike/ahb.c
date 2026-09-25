@@ -87,7 +87,7 @@ static int HifAhbMiscClose(IN struct inode *Inodep, IN struct file *Filp);
 
 static int HifAhbPltmProbe(IN struct platform_device *pDev);
 
-static int HifAhbPltmRemove(IN struct platform_device *pDev);
+static void HifAhbPltmRemove(IN struct platform_device *pDev);
 
 #ifdef CONFIG_PM
 static int HifAhbPltmSuspend(IN struct platform_device *pDev, pm_message_t message);
@@ -1281,10 +1281,9 @@ static int HifAhbPltmProbe(IN struct platform_device *pDev)
 * \return 0
 */
 /*----------------------------------------------------------------------------*/
-static int HifAhbPltmRemove(IN struct platform_device *pDev)
+static void HifAhbPltmRemove(IN struct platform_device *pDev)
 {
 	mtk_wcn_wmt_wlan_unreg();
-	return 0;
 }
 
 #ifdef CONFIG_PM

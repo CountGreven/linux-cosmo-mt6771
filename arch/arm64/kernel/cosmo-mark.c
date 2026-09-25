@@ -82,9 +82,6 @@ static void cosmo_write_page(phys_addr_t phys, const char *text, size_t len)
 	dcache_clean_inval_poc((unsigned long)buf, (unsigned long)buf + 12 + len);
 }
 
-/* E1: the same status line through a write-combined alias on the page after the tag page. */
-#define COSMO_WC_OFFSET		0x1000UL
-static void __iomem *cosmo_wc;
 
 /*
  * The console zone is only ever looked at through a write-combined vmap, never through the cacheable
@@ -124,15 +121,6 @@ static void cosmo_render(void)
 		if (cosmo_nc)
 			cosmo_snapshot_prev();
 	}
-	/*
-	 * ioremap_wc() refuses system RAM on arm64 (it returned NULL and the WARN cost 41 console
-	 * lines), so map the page the way ramoops maps its zones: vmap of the struct page, write-combined.
-	 */
-	if (cosmo_mark_claimed && !cosmo_wc) {
-		struct page *pg = phys_to_page(COSMO_TAG_PAGE + COSMO_WC_OFFSET);
-
-		cosmo_wc = vmap(&pg, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
-	}
 	if (cosmo_nc) {
 		cz_start = readl(cosmo_nc + 4);
 		cz_size = readl(cosmo_nc + 8);
@@ -141,16 +129,18 @@ static void cosmo_render(void)
 		     cosmo_pw_state, cz_start, cz_size, cosmo_ic);
 	n = n > 0 ? min_t(size_t, n, sizeof(line)) : 0;
 	cosmo_write_page(COSMO_TAG_PAGE, line, n);
-	if (!cosmo_wc)
+	if (!cosmo_mark_claimed)
 		return;
-	/* E1: the same line through a write-combined alias on the next page ... */
-	memcpy_toio(cosmo_wc, line, n);
-	/* ... E4: the snapshot at +0x100 of the tag page ... */
+	/*
+	 * E4/RGU: the snapshot at +0x100 and the RGU registers at +0x1c0 of the tag page. The header
+	 * declares up to the end of those and never past this page: the tag page sits inside a 4 KiB
+	 * ramoops dump zone, and a header claiming more made ramoops_pstore_read() run off the end of
+	 * its mapping when systemd mounted pstore (the first oops of this port, on the first boot to init).
+	 */
 	hdr = (u32 *)phys_to_virt(COSMO_TAG_PAGE);
 	memcpy((u8 *)hdr + 0x100, cosmo_prev, sizeof(cosmo_prev));
 	memcpy((u8 *)hdr + 0x1c0, cosmo_rgu, sizeof(cosmo_rgu));
-	/* ... and a header that declares everything up to the end of the write-combined copy. */
-	hdr[1] = hdr[2] = COSMO_WC_OFFSET + n;
+	hdr[1] = hdr[2] = 0x1c0 + sizeof(cosmo_rgu) - 12;
 	dcache_clean_inval_poc((unsigned long)hdr, (unsigned long)hdr + 0x1c0 + sizeof(cosmo_rgu));
 }
 

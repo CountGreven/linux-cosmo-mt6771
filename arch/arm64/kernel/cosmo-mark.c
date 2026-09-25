@@ -146,6 +146,24 @@ static void cosmo_render(void)
 	dcache_clean_inval_poc((unsigned long)hdr, (unsigned long)hdr + 0x100 + sizeof(cosmo_prev));
 }
 
+/*
+ * Called once from setup_arch, on the boot CPU, before any secondary is up and before ramoops runs.
+ *
+ * The MMU-off stages in head.S store into the reservation with the D-cache disabled. On this SoC that
+ * does not bypass the cluster L2: LK leaves valid lines behind, the stores hit them and dirty exactly
+ * the bytes they wrote, and nothing coherent ever cleans them -- ramoops' write-combined records
+ * landed in DRAM (E4 snapshot: the boot log was there), but at the reset-time cache flush those dirty
+ * lines were written back and restored precisely the 24 head.S bytes on every page. Clean and
+ * invalidate the whole reservation through the linear map now, while we are still on the CPU that
+ * holds those lines, so nothing stale survives into the pstore era.
+ */
+void __init cosmo_mark_scrub(void)
+{
+	unsigned long start = (unsigned long)phys_to_virt(COSMO_MARK_BASE);
+
+	dcache_clean_inval_poc(start, start + (COSMO_MARK_END - COSMO_MARK_BASE));
+}
+
 void cosmo_mark_len(const char *buf_in, size_t len)
 {
 	if (len > 64)

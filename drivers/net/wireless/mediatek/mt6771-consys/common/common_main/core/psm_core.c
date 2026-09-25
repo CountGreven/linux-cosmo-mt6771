@@ -1574,7 +1574,7 @@ INT32 stp_psm_disable_by_tx_rx_density(MTKSTP_PSM_T *stp_psm, INT32 dir)
 	return 0;
 }
 #else
-static struct timeval tv_now, tv_end;
+static struct __kernel_old_timeval tv_now, tv_end;
 static INT32 sample_start;
 static INT32 tx_sum_len;
 static INT32 rx_sum_len;
@@ -1588,7 +1588,7 @@ INT32 stp_psm_disable_by_tx_rx_density(MTKSTP_PSM_T *stp_psm, INT32 dir, INT32 l
 		else
 			tx_sum_len += length;
 
-		do_gettimeofday(&tv_now);
+		mtk_gettimeofday(&tv_now);
 		/* STP_PSM_PR_INFO("tv_now:%d.%d tv_end:%d.%d\n", tv_now.tv_sec, tv_now.tv_usec,
 		 * tv_end.tv_sec,tv_end.tv_usec);
 		 */
@@ -1612,7 +1612,7 @@ INT32 stp_psm_disable_by_tx_rx_density(MTKSTP_PSM_T *stp_psm, INT32 dir, INT32 l
 		}
 	} else {
 		sample_start = 1;
-		do_gettimeofday(&tv_now);
+		mtk_gettimeofday(&tv_now);
 		tv_end = tv_now;
 		tv_end.tv_sec += SAMPLE_DURATION;
 	}
@@ -1774,11 +1774,11 @@ INT32 stp_psm_check_sleep_enable(MTKSTP_PSM_T *stp_psm)
 static INT32 _stp_psm_dbg_dmp_in(STP_PSM_RECORD_T *stp_psm_dbg, UINT32 flag, UINT32 line_num)
 {
 	INT32 index = 0;
-	struct timeval now;
+	struct __kernel_old_timeval now;
 
 	if (stp_psm_dbg) {
 		osal_lock_unsleepable_lock(&stp_psm_dbg->lock);
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 		index = stp_psm_dbg->in - 1;
 		index = (index + STP_PSM_DBG_SIZE) % STP_PSM_DBG_SIZE;
 		STP_PSM_PR_DBG("index(%d)\n", index);
@@ -1843,14 +1843,14 @@ static INT32 _stp_psm_dbg_out_printk(STP_PSM_RECORD_T *stp_psm_dbg)
 static INT32 _stp_psm_opid_dbg_dmp_in(P_STP_PSM_OPID_RECORD p_opid_dbg, UINT32 opid, UINT32 line_num)
 {
 	INT32 index = 0;
-	struct timeval now;
+	struct __kernel_old_timeval now;
 	UINT64 ts;
 	ULONG nsec;
 
 	osal_get_local_time(&ts, &nsec);
 	if (p_opid_dbg) {
 		osal_lock_unsleepable_lock(&p_opid_dbg->lock);
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 		index = p_opid_dbg->in - 1;
 		index = (index + STP_PSM_DBG_SIZE) % STP_PSM_DBG_SIZE;
 		STP_PSM_PR_DBG("index(%d)\n", index);

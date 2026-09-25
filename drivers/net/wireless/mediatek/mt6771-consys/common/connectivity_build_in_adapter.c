@@ -248,10 +248,8 @@ EXPORT_SYMBOL(connectivity_export_mmc_io_rw_direct);
 
 void connectivity_export_dump_thread_state(const char *name)
 {
-	static const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
 	struct task_struct *p;
 	int cpu;
-	struct rq *rq;
 	struct task_struct *curr;
 	struct thread_info *ti;
 
@@ -268,15 +266,16 @@ void connectivity_export_dump_thread_state(const char *name)
 
 		if (strncmp(p->comm, name, strlen(name)) != 0)
 			continue;
-		state = p->state;
+		state = READ_ONCE(p->__state);
 		cpu = task_cpu(p);
-		rq = cpu_rq(cpu);
-		curr = rq->curr;
+		/*
+		 * cpu_rq() is private to the scheduler and not available to
+		 * modules: report the task itself where the vendor reported
+		 * whatever was running on its CPU (TODO: needs an export).
+		 */
+		curr = p;
 		ti = task_thread_info(curr);
-		if (state)
-			state = __ffs(state) + 1;
-		pr_info("%d:%-15.15s %c", p->pid, p->comm,
-			state < sizeof(stat_nam) - 1 ? stat_nam[state] : '?');
+		pr_info("%d:%-15.15s %c", p->pid, p->comm, task_state_to_char(p));
 		pr_info("cpu=%d on_cpu=%d ", cpu, p->on_cpu);
 		show_stack(p, NULL, KERN_INFO);
 		pr_info("CPU%d curr=%d:%-15.15s preempt_count=0x%x", cpu,

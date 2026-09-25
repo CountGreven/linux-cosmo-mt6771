@@ -204,10 +204,9 @@ static ssize_t procDbgLevelWrite(struct file *file, const char __user *buffer, s
 }
 
 
-static const struct file_operations dbglevel_ops = {
-	.owner = THIS_MODULE,
-	.read = procDbgLevelRead,
-	.write = procDbgLevelWrite,
+static const struct proc_ops dbglevel_ops = {
+	.proc_read = procDbgLevelRead,
+	.proc_write = procDbgLevelWrite,
 };
 
 static ssize_t procPktDelayDbgCfgRead(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -322,10 +321,9 @@ static ssize_t procPktDelayDbgCfgWrite(struct file *file, const char __user *buf
 	return count;
 }
 
-static const struct file_operations proc_pkt_delay_dbg_ops = {
-	.owner = THIS_MODULE,
-	.read  = procPktDelayDbgCfgRead,
-	.write = procPktDelayDbgCfgWrite,
+static const struct proc_ops proc_pkt_delay_dbg_ops = {
+	.proc_read  = procPktDelayDbgCfgRead,
+	.proc_write = procPktDelayDbgCfgWrite,
 };
 
 static ssize_t procSetCamCfgWrite(struct file *file, const char __user *buffer, size_t count, loff_t *data)
@@ -378,9 +376,8 @@ static ssize_t procSetCamCfgWrite(struct file *file, const char __user *buffer, 
 	return count;
 }
 
-static const struct file_operations proc_set_cam_ops = {
-	.owner = THIS_MODULE,
-	.write = procSetCamCfgWrite,
+static const struct proc_ops proc_set_cam_ops = {
+	.proc_write = procSetCamCfgWrite,
 };
 
 /*******************************************************************************
@@ -504,10 +501,9 @@ static ssize_t procMCRWrite(struct file *file, const char __user *buffer,
 
 }				/* end of procMCRWrite() */
 
-static const struct file_operations mcr_ops = {
-	.owner = THIS_MODULE,
-	.read = procMCRRead,
-	.write = procMCRWrite,
+static const struct proc_ops mcr_ops = {
+	.proc_read = procMCRRead,
+	.proc_write = procMCRWrite,
 };
 
 #if CFG_SUPPORT_DEBUG_FS
@@ -571,10 +567,9 @@ static ssize_t procRoamWrite(struct file *file, const char __user *buffer,
 	return count;
 }
 
-static const struct file_operations roam_ops = {
-	.owner = THIS_MODULE,
-	.read = procRoamRead,
-	.write = procRoamWrite,
+static const struct proc_ops roam_ops = {
+	.proc_read = procRoamRead,
+	.proc_write = procRoamWrite,
 };
 
 static ssize_t procCountryRead(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -635,10 +630,9 @@ static ssize_t procCountryWrite(struct file *file, const char __user *buffer,
 	return count;
 }
 
-static const struct file_operations country_ops = {
-	.owner = THIS_MODULE,
-	.read = procCountryRead,
-	.write = procCountryWrite,
+static const struct proc_ops country_ops = {
+	.proc_read = procCountryRead,
+	.proc_write = procCountryWrite,
 };
 #endif
 
@@ -717,10 +711,9 @@ static ssize_t procWifiCfgWrite(struct file *file, const char __user *buffer, si
 	return count;
 }
 
-static const struct file_operations wifi_cfg_ops = {
-	.owner = THIS_MODULE,
-	.read = procWifiCfgRead,
-	.write = procWifiCfgWrite,
+static const struct proc_ops wifi_cfg_ops = {
+	.proc_read = procWifiCfgRead,
+	.proc_write = procWifiCfgWrite,
 };
 #endif
 static ssize_t procAutoPerfCfgRead(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
@@ -796,10 +789,9 @@ static ssize_t procAutoPerfCfgWrite(struct file *file, const char *buffer, size_
 	return -EFAULT;
 }
 
-static const struct file_operations auto_perf_ops = {
-	.owner = THIS_MODULE,
-	.read = procAutoPerfCfgRead,
-	.write = procAutoPerfCfgWrite,
+static const struct proc_ops auto_perf_ops = {
+	.proc_read = procAutoPerfCfgRead,
+	.proc_write = procAutoPerfCfgWrite,
 };
 
 VOID glWriteStatus(PPUINT_8 ppucWrPos, PUINT_32 pu4RemainLen, PUINT_8 pucFwt, ...)
@@ -1092,10 +1084,9 @@ static ssize_t procDrvStatusCfg(struct file *file, const char *buffer, size_t co
 	return -EINVAL;
 }
 
-static const struct file_operations drv_status_ops = {
-	.owner = THIS_MODULE,
-	.read = procReadDrvStatus,
-	.write = procDrvStatusCfg,
+static const struct proc_ops drv_status_ops = {
+	.proc_read = procReadDrvStatus,
+	.proc_write = procDrvStatusCfg,
 };
 
 INT_32 procInitFs(VOID)
@@ -1557,10 +1548,9 @@ static ssize_t cfgWrite(struct file *filp, const char __user *buf, size_t count,
 	return count;
 }
 
-static const struct file_operations cfg_ops = {
-	.owner = THIS_MODULE,
-	.read = cfgRead,
-	.write = cfgWrite,
+static const struct proc_ops cfg_ops = {
+	.proc_read = cfgRead,
+	.proc_write = cfgWrite,
 };
 
 INT_32 cfgRemoveProcEntry(void)

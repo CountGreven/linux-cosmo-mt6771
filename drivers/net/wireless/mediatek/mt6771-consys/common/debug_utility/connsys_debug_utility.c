@@ -1164,9 +1164,9 @@ EXPORT_SYMBOL(connsys_log_get_emi_log_base_vir_addr);
 void connsys_dedicated_log_get_utc_time(unsigned int *second,
 	unsigned int *usecond)
 {
-	struct timeval time;
+	struct __kernel_old_timeval time;
 
-	do_gettimeofday(&time);
+	mtk_gettimeofday(&time);
 	*second = (unsigned int)time.tv_sec; /* UTC time second unit */
 	*usecond = (unsigned int)time.tv_usec; /* UTC time microsecond unit */
 }

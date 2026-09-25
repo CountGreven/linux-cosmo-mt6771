@@ -17,6 +17,9 @@
 #include <linux/usb/tcpm.h>
 
 #define MT6370_REG_SYSCTRL8	0x9B
+/* Chip-specific interrupt status/mask (vendor tcpc_mt6370.c: MT_INT / MT_MASK, set bit = enabled). */
+#define MT6370_REG_MT_INT	0x98
+#define MT6370_REG_MT_MASK	0x99
 
 #define MT6370_AUTOIDLE_MASK	BIT(3)
 
@@ -52,6 +55,13 @@ static const struct reg_sequence mt6370_reg_init[] = {
 	 * so every attach timed out at PD_T_PS_SOURCE_ON. Set the vendor's bits explicitly.
 	 */
 	REG_SEQ(0x90, 0x07, 0),
+	/*
+	 * No chip-specific interrupts: the vendor driver programs MT_MASK to exactly the events it
+	 * handles (vSafe0V, its watchdog, Ra detach); this driver handles none of them, and with the
+	 * reset default the ALERT line stayed low with TCPC_ALERT == 0 until the kernel disabled the
+	 * irq ("irq 57: nobody cared").
+	 */
+	REG_SEQ(0x99, 0x00, 0),
 };
 
 static int mt6370_tcpc_init(struct tcpci *tcpci, struct tcpci_data *data)
@@ -105,8 +115,16 @@ static int mt6370_tcpc_set_vbus(struct tcpci *tcpci, struct tcpci_data *data,
 static irqreturn_t mt6370_irq_handler(int irq, void *dev_id)
 {
 	struct mt6370_priv *priv = dev_id;
+	struct regmap *regmap = priv->tcpci_data.regmap;
+	irqreturn_t ret = tcpci_irq(priv->tcpci);
+	unsigned int mt_int = 0;
 
-	return tcpci_irq(priv->tcpci);
+	/* Acknowledge chip-specific events too, or the level-triggered line never deasserts. */
+	if (!regmap_read(regmap, MT6370_REG_MT_INT, &mt_int) && mt_int) {
+		regmap_write(regmap, MT6370_REG_MT_INT, mt_int);
+		ret = IRQ_HANDLED;
+	}
+	return ret;
 }
 
 static int mt6370_check_vendor_info(struct mt6370_priv *priv)
@@ -160,9 +178,20 @@ static int mt6370_tcpc_probe(struct platform_device *pdev)
 	priv->tcpci_data.init = mt6370_tcpc_init;
 	priv->tcpci_data.set_vconn = mt6370_tcpc_set_vconn;
 
+	/*
+	 * The VBUS source is normally the MT6370 charger's OTG boost, a sibling that may register after
+	 * this port controller probes. Dropping set_vbus on -EPROBE_DEFER left TCPM sourcing VBUS through
+	 * the generic TCPCI command, which this chip does not act on: every attach then timed out at
+	 * PD_T_PS_SOURCE_ON. Defer instead.
+	 */
 	priv->vbus = devm_regulator_get_optional(dev, "vbus");
-	if (!IS_ERR(priv->vbus))
+	if (IS_ERR(priv->vbus)) {
+		if (PTR_ERR(priv->vbus) == -EPROBE_DEFER)
+			return dev_err_probe(dev, -EPROBE_DEFER, "vbus regulator not ready\n");
+		priv->vbus = NULL;
+	} else {
 		priv->tcpci_data.set_vbus = mt6370_tcpc_set_vbus;
+	}
 
 	priv->tcpci = tcpci_register_port(dev, &priv->tcpci_data);
 	if (IS_ERR(priv->tcpci))

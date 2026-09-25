@@ -977,7 +977,7 @@ wlanImageDividDownload(IN P_ADAPTER_T prAdapter, IN PVOID pvFwImageMapFile)
 	}
 
 	kalSetEmiMpuProtection(gConEmiPhyBase, WIFI_EMI_MEM_SIZE, FALSE);
-	prWifiEmiBaseAddr = ioremap_nocache(gConEmiPhyBase, WIFI_EMI_AVAILABLE_MEM_SIZE);
+	prWifiEmiBaseAddr = ioremap(gConEmiPhyBase, WIFI_EMI_AVAILABLE_MEM_SIZE);
 
 	/* IEMI + DEMI */
 	for (i = ENTRY_DIRECTLY_TO_CHIP; i < prFwHead->u4NumOfEntries; i++) {

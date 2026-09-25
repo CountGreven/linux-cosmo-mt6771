@@ -267,6 +267,15 @@
 	/* On: the MT6370 lives here, and its OTG boost is the only 5 V for USB host mode. */
 	status = "okay";
 	/*
+	 * The controller driver asks for an optional "vbus" (bus pull-up) regulator. With none on this node,
+	 * the regulator core's of_get_child_regulator() walks the bus's descendants and finds the Type-C
+	 * connector's vbus-supply -- the MT6370 OTG boost, provided by a chip on this very bus -- and the
+	 * controller waits for it forever ("deferred probe pending: cannot get vbus regulator"). Name the
+	 * pull-up rail explicitly so the walk never runs. STAND-IN: VIO18 is the plausible 1.8 V I/O rail
+	 * for these pull-ups; the schematic is not available.
+	 */
+	vbus-supply = <&mt6358_vio18_reg>;
+	/*
 	 * STAND-IN for the panel branch's status = "okay": here the bus stays "disabled", as mt8183.dtsi has
 	 * it, so nothing on it probes before root mounts. Enabled per flash. Everything else in this block
 	 * is byte-identical to dev/panel-nt36672 so the two merge without a conflict.

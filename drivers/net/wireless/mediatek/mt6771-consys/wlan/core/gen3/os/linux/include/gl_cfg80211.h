@@ -241,7 +241,8 @@ int mtk_cfg80211_set_rekey_data(struct wiphy *wiphy, struct net_device *dev, str
 int mtk_cfg80211_remain_on_channel(struct wiphy *wiphy,
 				   struct wireless_dev *wdev,
 				   struct ieee80211_channel *chan,
-				   unsigned int duration, u64 *cookie);
+				   unsigned int duration, u64 cookie,
+				   const u8 *rx_addr);
 
 int mtk_cfg80211_cancel_remain_on_channel(struct wiphy *wiphy,
 					  struct wireless_dev *wdev,
@@ -250,7 +251,7 @@ int mtk_cfg80211_cancel_remain_on_channel(struct wiphy *wiphy,
 int mtk_cfg80211_mgmt_tx(struct wiphy *wiphy,
 			struct wireless_dev *wdev,
 			struct cfg80211_mgmt_tx_params *params,
-			u64 *cookie);
+			u64 cookie);
 
 void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
 				      IN struct wireless_dev *wdev,

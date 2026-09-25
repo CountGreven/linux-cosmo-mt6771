@@ -44,11 +44,11 @@
 #include "mtk_wcn_consys_hw.h"
 
 #ifdef CONFIG_MTK_EMI
-#include <mt_emi_api.h>
+#include <mtk_plat_shim.h>
 #endif
 
 #if CONSYS_PMIC_CTRL_ENABLE
-#include <upmu_common.h>
+#include <mtk_plat_shim.h>
 #include <linux/regulator/consumer.h>
 #endif
 
@@ -57,7 +57,7 @@
 #endif
 
 #include <linux/of_reserved_mem.h>
-#include <mtk_clkbuf_ctl.h>
+#include <mtk_plat_shim.h>
 
 /*******************************************************************************
 *                              C O N S T A N T S

@@ -59,7 +59,7 @@ scp -q "$image" "$host:~/kexec/Image"
 ssh_ "sha256sum ~/kexec/Image | cut -c1-12"
 
 if [ $live_dtb = 1 ]; then
-    ssh_ 'cp /sys/firmware/fdt ~/kexec/cosmo.dtb'
+    ssh_ 'sudo -n cp /sys/firmware/fdt ~/kexec/cosmo.dtb && sudo -n chown $(id -u) ~/kexec/cosmo.dtb'
 fi
 if [ ${#sets[@]} = 0 ]; then
     ssh_ 'sudo -n kexec -l ~/kexec/Image --dtb=$HOME/kexec/cosmo.dtb --reuse-cmdline && cat /sys/kernel/kexec_loaded'

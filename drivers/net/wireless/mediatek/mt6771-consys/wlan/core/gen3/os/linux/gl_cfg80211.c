@@ -2872,11 +2872,13 @@ int mtk_cfg80211_add_station(struct wiphy *wiphy, struct wireless_dev *wdev,
  */
 /*----------------------------------------------------------------------------*/
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-int mtk_cfg80211_del_station(struct wiphy *wiphy, struct net_device *ndev, struct station_del_parameters *params)
+int mtk_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params)
 #else
-int mtk_cfg80211_del_station(struct wiphy *wiphy, struct net_device *ndev, const u8 *mac)
+int mtk_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac)
 #endif
 {
+	struct net_device *ndev = wdev->netdev;
+
 /* fgIsTDLSlinkEnable = 0; */
 
 	/* return 0; */

@@ -21,6 +21,7 @@
  */
 #include <linux/cache.h>
 #include <linux/init.h>
+#include <linux/io.h>
 #include <linux/minmax.h>
 #include <linux/mm.h>
 #include <linux/string.h>
@@ -77,11 +78,24 @@ static void cosmo_write_page(phys_addr_t phys, const char *text, size_t len)
 	dcache_clean_inval_poc((unsigned long)buf, (unsigned long)buf + 12 + len);
 }
 
+/*
+ * Experiment: the same status line is also written to the page after the tag page through a
+ * write-combined mapping, the way ramoops writes its zones. The tag page header declares both pages, so
+ * the vendor's pmsg-ramoops-0 shows the cacheable copy at its start and the write-combined copy at
+ * offset 0xff4. If the second copy comes back stale, write-combined writes do not persist across the
+ * reset on this SoC, and that is why the console zone never carries the log.
+ */
+#define COSMO_WC_OFFSET		0x1000UL
+static void __iomem *cosmo_wc;
+
 static void cosmo_render(void)
 {
 	char line[64];
 	u32 *cz = (u32 *)phys_to_virt(COSMO_CONSOLE_ZONE);
 	int n;
+
+	if (cosmo_mark_claimed && !cosmo_wc)
+		cosmo_wc = ioremap_wc(COSMO_TAG_PAGE + COSMO_WC_OFFSET, PAGE_SIZE);
 
 	/*
 	 * ramoops writes the console zone through a write-combined alias. Invalidate our cacheable alias
@@ -92,7 +106,17 @@ static void cosmo_render(void)
 	n = snprintf(line, sizeof(line), "%s PW%u%c CZ%u/%u %s", cosmo_last_tag, cosmo_pw_n,
 		     cosmo_pw_state, cz[1], cz[2], cosmo_ic);
 
-	cosmo_write_page(COSMO_TAG_PAGE, line, n > 0 ? min_t(size_t, n, sizeof(line)) : 0);
+	n = n > 0 ? min_t(size_t, n, sizeof(line)) : 0;
+	if (cosmo_wc) {
+		memcpy_toio(cosmo_wc, line, n);
+		cosmo_write_page(COSMO_TAG_PAGE, line, n);
+		/* Declare both pages: start = size = up to the end of the write-combined copy. */
+		cz = (u32 *)phys_to_virt(COSMO_TAG_PAGE);
+		cz[1] = cz[2] = COSMO_WC_OFFSET + n;
+		dcache_clean_inval_poc((unsigned long)cz, (unsigned long)cz + 12);
+	} else {
+		cosmo_write_page(COSMO_TAG_PAGE, line, n);
+	}
 }
 
 void cosmo_mark_len(const char *buf_in, size_t len)

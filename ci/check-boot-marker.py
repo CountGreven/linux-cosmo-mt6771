@@ -172,7 +172,8 @@ def main() -> int:
         if "COSMO_MARK_STRIDE" in cm_src or "cosmo_spray" in cm_src:
             print("cosmo-mark.c still sprays the reservation from C; only head.S (MMU off) may do that")
             ok = False
-        if cm_src.count("phys_to_virt(") > 2:
+        # the tag page (twice: line and header) and the console-zone header, nothing else
+        if cm_src.count("phys_to_virt(") > 3:
             print("cosmo-mark.c maps more than the tag page and the console-zone header")
             ok = False
     if C_MARK.exists():

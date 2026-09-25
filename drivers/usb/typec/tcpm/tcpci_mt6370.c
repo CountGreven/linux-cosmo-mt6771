@@ -44,6 +44,14 @@ static const struct reg_sequence mt6370_reg_init[] = {
 	REG_SEQ(0x95, 0x01, 0),
 	REG_SEQ(0x80, 0x71, 0),
 	REG_SEQ(0x9B, 0x3A, 1000),
+	/*
+	 * BMC_CTRL (0x90): the vendor driver leaves low-power mode at Type-C init by writing
+	 * BMCIO_BG_EN | VBUS_DET_EN | BMCIO_OSC_EN here (tcpc_mt6370.c, mt6370_set_low_power_mode(false)),
+	 * and never issues the TCPCI ENABLE_VBUS_DETECT command. This driver only issues the command. On
+	 * the Cosmo, TCPM attached as source, the boost came up, and POWER_STATUS.VBUS_PRES never fired,
+	 * so every attach timed out at PD_T_PS_SOURCE_ON. Set the vendor's bits explicitly.
+	 */
+	REG_SEQ(0x90, 0x07, 0),
 };
 
 static int mt6370_tcpc_init(struct tcpci *tcpci, struct tcpci_data *data)

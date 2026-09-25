@@ -163,7 +163,7 @@ VOID StatsEnvRxTime2Host(IN P_ADAPTER_T prAdapter, struct sk_buff *prSkb)
 	u4Delay = ((UINT_32)(sched_clock() - u8IntTime))/NSEC_PER_USEC;
 	u8RxTime = GLUE_RX_GET_PKT_RX_TIME(prSkb);
 	mtk_gettimeofday(&tval);
-	rtc_time_to_tm(tval.tv_sec, &tm);
+	rtc_time64_to_tm(tval.tv_sec, &tm);
 
 	switch (ucIpProto) {
 	case IP_PRO_TCP:

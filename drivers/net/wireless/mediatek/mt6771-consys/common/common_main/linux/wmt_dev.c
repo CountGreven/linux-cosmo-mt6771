@@ -639,13 +639,13 @@ LONG wmt_dev_tm_temp_query(VOID)
 
 	static INT32 s_temp_table[HISTORY_NUM] = { 99 };	/* not query yet. */
 	static INT32 s_idx_temp_table;
-	static struct timeval s_query_time;
+	static struct __kernel_old_timeval s_query_time;
 
 	INT32 temp_table[HISTORY_NUM];
 	INT32 idx_temp_table;
-	struct timeval query_time;
+	struct __kernel_old_timeval query_time;
 
-	struct timeval now_time;
+	struct __kernel_old_timeval now_time;
 	INT32 current_temp = 0;
 	INT32 index = 0;
 	LONG return_temp = 0;
@@ -654,7 +654,7 @@ LONG wmt_dev_tm_temp_query(VOID)
 	/* Let us work on the copied version of function static variables */
 	osal_lock_unsleepable_lock(&g_temp_query_spinlock);
 	osal_memcpy(temp_table, s_temp_table, sizeof(s_temp_table));
-	osal_memcpy(&query_time, &s_query_time, sizeof(struct timeval));
+	osal_memcpy(&query_time, &s_query_time, sizeof(struct __kernel_old_timeval));
 	idx_temp_table = s_idx_temp_table;
 	osal_unlock_unsleepable_lock(&g_temp_query_spinlock);
 
@@ -669,7 +669,7 @@ LONG wmt_dev_tm_temp_query(VOID)
 		}
 	}
 
-	do_gettimeofday(&now_time);
+	mtk_gettimeofday(&now_time);
 #if 1
 	/* Query condition 2: */
 	/* Moniter the bus activity to decide if we have the need to query temperature. */
@@ -728,7 +728,7 @@ LONG wmt_dev_tm_temp_query(VOID)
 			osal_memcpy(s_temp_table, temp_table, sizeof(s_temp_table));
 			s_idx_temp_table = (s_idx_temp_table + 1) % HISTORY_NUM;
 			s_temp_table[s_idx_temp_table] = current_temp;
-			do_gettimeofday(&s_query_time);
+			mtk_gettimeofday(&s_query_time);
 			index = -1;
 		} else {
 			index = s_idx_temp_table;

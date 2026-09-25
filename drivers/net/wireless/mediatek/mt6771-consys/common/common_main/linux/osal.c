@@ -30,6 +30,7 @@
 *                    E X T E R N A L   R E F E R E N C E S
 ********************************************************************************
 */
+#include <linux/sched/clock.h>
 #include "osal.h"
 #include "connectivity_build_in_adapter.h"
 

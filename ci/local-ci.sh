@@ -116,10 +116,14 @@ echo "commits under review:"
 git log --oneline "\$base"..HEAD
 # Only the kernel changes are judged by kernel standards: cosmo-notes/ and .github/ are ours and
 # never go upstream, so they must not fail a check that exists to keep patches submittable.
+# The same goes for the imported vendor sources under mt6771-consys/{common,wlan}: 4.4-era MediaTek
+# code that is compiled, not submitted. The shim, Kconfig and Makefile beside them are judged.
 patches="$out/patches"
 rm -rf "\$patches"; mkdir -p "\$patches"
 git format-patch -o "\$patches" "\$base"..HEAD -- \
-    arch drivers include Documentation sound net fs kernel mm lib scripts >/dev/null
+    arch drivers include Documentation sound net fs kernel mm lib scripts \
+    ':(exclude)drivers/net/wireless/mediatek/mt6771-consys/common' \
+    ':(exclude)drivers/net/wireless/mediatek/mt6771-consys/wlan' >/dev/null
 if [ -z "\$(ls -A "\$patches" 2>/dev/null)" ]; then
     echo "no kernel changes in this range — nothing for checkpatch to judge"
     exit 0
@@ -175,6 +179,35 @@ python3 ci/mkbootimg-cosmo.py --image "\$b/arch/arm64/boot/Image" \
 python3 ci/check-image-size.py "$out/boot-test.img"
 python3 ci/check-boot-protocol.py "$out/boot-test.img"
 python3 ci/check-boot-marker.py
+EOF
+fi
+
+# The MT6771 CONSYS wifi port (drivers/net/wireless/mediatek/mt6771-consys) is off by default, so the
+# jobs above never compile it. This one turns it on (=m: a built-in would have to link, and stage 1 only
+# promises that it COMPILES), builds the directory and its modules with W=0, and fails on any compiler
+# error or on a module that did not come out. Nothing here says the radio works.
+if [ "$want_full" = 1 ] || [ "$only" = "consys" ]; then
+    step consys "$out/consys.log" <<EOF
+set -eo pipefail
+cd "$repo"
+b="$out/build-consys"
+mkdir -p "\$b"
+rm -rf "\$b"; mkdir -p "\$b"
+# allnoconfig + the port's own dependencies: \`make modules\` then builds this driver and almost nothing else
+make O="\$b" allnoconfig KCONFIG_ALLCONFIG="$repo/ci/consys.config" >/dev/null
+grep -qx 'CONFIG_MT6771_CONSYS=m' "\$b/.config" || { echo "CONFIG_MT6771_CONSYS=m was dropped by Kconfig"; exit 1; }
+# vmlinux first: modpost resolves the modules' symbols against it, and without it every kernel symbol is "undefined"
+make O="\$b" -j$jobs vmlinux
+# Stage 1 does not promise the modules load: the platform symbols the shim does not cover stay undefined.
+# KBUILD_MODPOST_WARN turns them into warnings; they are listed at the end and are the port's TODO list.
+make O="\$b" -j$jobs W=0 KCFLAGS=-Wno-error KBUILD_MODPOST_WARN=1 modules 2>&1 | tee "$out/consys.modpost"
+echo "unresolved module symbols (expected at stage 1):"
+grep -o "symbol '[^']*' undefined" "$out/consys.modpost" | sort -u | sed 's/^/    /' || echo "    (none)"
+for ko in wmt_drv wlan_drv_gen3; do
+    f="\$(find "\$b/drivers/net/wireless/mediatek/mt6771-consys" -name "\$ko.ko" | head -1)"
+    [ -n "\$f" ] || { echo "\$ko.ko was not built"; exit 1; }
+    ls -l "\$f"
+done
 EOF
 fi
 

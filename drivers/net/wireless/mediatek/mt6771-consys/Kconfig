@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config MT6771_CONSYS
+	tristate "MediaTek MT6771 CONSYS wifi (vendor gen3 stack, compile-only port)"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on CFG80211
+	depends on GPIOLIB
+	depends on IPV6
+	depends on MMC
+	depends on RTC_CLASS
+	select NL80211_TESTMODE
+	select ZLIB_DEFLATE
+	select WIRELESS_EXT
+	select WEXT_PRIV
+	default n
+	help
+	  The vendor 4.4 wifi stack for the CONSYS combo radio in the MT6771
+	  (WMT/STP core, consys power-up, firmware download and the "gen3"
+	  MT6631 wlan driver), carried into mainline unmodified in logic.
+
+	  This is stage 1 of the port: it is meant to COMPILE against this
+	  kernel, and nothing more. The platform services the vendor tree got
+	  from its mt-plat headers (EMI MPU, clkbuf, PMIC rails, SPM, BTIF)
+	  are stubs in mtk_plat_shim.h that log and return -ENOSYS, so the
+	  driver cannot power the radio yet.
+
+	  Say N. If unsure, say N.
+
+# The vendor Makefiles and sources test these by their vendor names. They
+# are fixed for the one chip this directory supports and are not meant to
+# be set by hand.
+config MTK_COMBO_CHIP
+	string
+	depends on MT6771_CONSYS
+	default "CONSYS_6771"
+
+config MTK_PLATFORM
+	string
+	depends on MT6771_CONSYS
+	default "mt6771"
+
+config MTK_COMBO
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MTK_COMBO_WIFI
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MACH_MT6771
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MTK_BTIF
+	bool
+	depends on MT6771_CONSYS
+	default y
+
+config MTK_EMI
+	bool
+	depends on MT6771_CONSYS
+	default y

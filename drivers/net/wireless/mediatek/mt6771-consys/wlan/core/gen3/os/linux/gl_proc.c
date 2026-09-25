@@ -816,7 +816,7 @@ VOID glWriteStatus(PPUINT_8 ppucWrPos, PUINT_32 pu4RemainLen, PUINT_8 pucFwt, ..
 	pucTemp = &aucBuf[0];
 	mtk_gettimeofday(&tval);
 	tval.tv_sec -= sys_tz.tz_minuteswest * 60;
-	rtc_time_to_tm(tval.tv_sec, &tm);
+	rtc_time64_to_tm(tval.tv_sec, &tm);
 	i4TimeUsed = kalSnprintf(pucTemp, TEMP_BUF_LEN, "%04d-%02d-%02d %02d:%02d:%02d.%03d ",
 				 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
 				 tm.tm_min, tm.tm_sec, (INT_32)(tval.tv_usec / USEC_PER_MSEC));

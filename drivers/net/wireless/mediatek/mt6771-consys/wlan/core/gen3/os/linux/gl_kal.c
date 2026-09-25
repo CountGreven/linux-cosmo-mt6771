@@ -4801,7 +4801,8 @@ static unsigned long __read_mostly tracing_mark_write_addr;
 static inline void __mt_update_tracing_mark_write_addr(void)
 {
 	if (unlikely(tracing_mark_write_addr == 0))
-		tracing_mark_write_addr = kallsyms_lookup_name("tracing_mark_write");
+		/* kallsyms_lookup_name() is not exported since 5.7: systrace markers stay off on mainline. */
+		tracing_mark_write_addr = 0;
 }
 
 VOID kalMetTagPacket(IN P_GLUE_INFO_T prGlueInfo, IN P_NATIVE_PACKET prPacket, IN ENUM_TX_PROFILING_TAG_T eTag)

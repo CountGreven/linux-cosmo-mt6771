@@ -1025,7 +1025,8 @@ int mtk_p2p_cfg80211_disassoc(struct wiphy *wiphy, struct net_device *dev, struc
 int mtk_p2p_cfg80211_remain_on_channel(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ieee80211_channel *chan,
-				       unsigned int duration, u64 *cookie)
+				       unsigned int duration, u64 cookie,
+				       const u8 *rx_addr)
 {
 	INT_32 i4Rslt = -EINVAL;
 	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) NULL;
@@ -1037,14 +1038,12 @@ int mtk_p2p_cfg80211_remain_on_channel(struct wiphy *wiphy,
 	do {
 		if ((wiphy == NULL) ||
 		    /* (dev == NULL) || */
-		    (chan == NULL) || (cookie == NULL)) {
+		    (chan == NULL)) {
 			break;
 		}
 
 		prGlueInfo = *((P_GLUE_INFO_T *) wiphy_priv(wiphy));
 		prGlueP2pInfo = prGlueInfo->prP2PInfo;
-
-		*cookie = prGlueP2pInfo->u8Cookie++;
 
 		prChnlReqMsg = cnmMemAlloc(prGlueInfo->prAdapter, RAM_TYPE_MSG, sizeof(MSG_P2P_CHNL_REQUEST_T));
 
@@ -1054,10 +1053,10 @@ int mtk_p2p_cfg80211_remain_on_channel(struct wiphy *wiphy,
 			break;
 		}
 
-		DBGLOG(P2P, INFO, "Cookie: 0x%llx, duration: %d\n", *cookie, duration);
+		DBGLOG(P2P, INFO, "Cookie: 0x%llx, duration: %d\n", cookie, duration);
 
 		prChnlReqMsg->rMsgHdr.eMsgId = MID_MNY_P2P_CHNL_REQ;
-		prChnlReqMsg->u8Cookie = *cookie;
+		prChnlReqMsg->u8Cookie = cookie;
 		prChnlReqMsg->u4Duration = duration;
 		prChnlReqMsg->eChnlReqType = CH_REQ_TYPE_P2P_LISTEN;
 
@@ -1115,7 +1114,7 @@ int mtk_p2p_cfg80211_cancel_remain_on_channel(struct wiphy *wiphy,
 int mtk_p2p_cfg80211_mgmt_tx(struct wiphy *wiphy,
 				struct wireless_dev *wdev,
 				struct cfg80211_mgmt_tx_params *params,
-				u64 *cookie)
+				u64 cookie)
 {
 	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) NULL;
 	P_GL_P2P_INFO_T prGlueP2pInfo = (P_GL_P2P_INFO_T) NULL;
@@ -1128,7 +1127,7 @@ int mtk_p2p_cfg80211_mgmt_tx(struct wiphy *wiphy,
 	struct net_device *dev = NULL;
 
 	do {
-		if ((wiphy == NULL) || (wdev == NULL) || (params == 0) || (cookie == NULL))
+		if ((wiphy == NULL) || (wdev == NULL) || (params == 0))
 			break;
 
 		prGlueInfo = *((P_GLUE_INFO_T *) wiphy_priv(wiphy));
@@ -1147,8 +1146,7 @@ int mtk_p2p_cfg80211_mgmt_tx(struct wiphy *wiphy,
 			}
 		}
 
-		*cookie = prGlueP2pInfo->u8Cookie++;
-		DBGLOG(P2P, INFO, "mtk_p2p_cfg80211_mgmt_tx, cookie: 0x%llx\n", *cookie);
+		DBGLOG(P2P, INFO, "mtk_p2p_cfg80211_mgmt_tx, cookie: 0x%llx\n", cookie);
 
 		/* Channel & Channel Type & Wait time are ignored. */
 		prMsgTxReq = cnmMemAlloc(prGlueInfo->prAdapter, RAM_TYPE_MSG, sizeof(MSG_P2P_MGMT_TX_REQUEST_T));
@@ -1189,7 +1187,7 @@ int mtk_p2p_cfg80211_mgmt_tx(struct wiphy *wiphy,
 			break;
 		}
 
-		prMsgTxReq->u8Cookie = *cookie;
+		prMsgTxReq->u8Cookie = cookie;
 		prMsgTxReq->rMsgHdr.eMsgId = MID_MNY_P2P_MGMT_TX;
 		prMsgTxReq->ucBssIdx = ucBssIdx;
 
@@ -1199,7 +1197,7 @@ int mtk_p2p_cfg80211_mgmt_tx(struct wiphy *wiphy,
 
 		kalMemCopy(pucFrameBuf, params->buf, params->len);
 
-		*pu8GlCookie = *cookie;
+		*pu8GlCookie = cookie;
 
 		prMgmtFrame->u2FrameLength = params->len;
 

@@ -2313,8 +2313,11 @@ void wmt_step_print_version(void)
 /*******************************************************************************
  *                      E X T E R N A L   F U N C T I O N S
 ********************************************************************************/
+static bool g_step_inited;
+
 void wmt_step_init(void)
 {
+	g_step_inited = true;
 	wmt_step_setup();
 	wmt_step_init_list();
 	if (wmt_step_read_file(STEP_CONFIG_NAME) == 0) {
@@ -2327,6 +2330,14 @@ void wmt_step_init(void)
 
 void wmt_step_deinit(void)
 {
+	/*
+	 * wmt_step_init() runs from the wmt core's module-init ioctl, not from module_init; unloading
+	 * the module before that ioctl (bring-up, or a failed init) dereferenced the never-initialised
+	 * list head (NULL deref in wmt_step_deinit, Cosmo 2026-09-25).
+	 */
+	if (!g_step_inited)
+		return;
+	g_step_inited = false;
 	down_write(&g_step_env.init_rwsem);
 	g_step_env.is_enable = 0;
 	up_write(&g_step_env.init_rwsem);

@@ -125,17 +125,21 @@ static irqreturn_t mt6370_irq_handler(int irq, void *dev_id)
 		ret = IRQ_HANDLED;
 	}
 	if (ret == IRQ_NONE) {
-		/* Cosmo bring-up: the line fired with nothing the generic driver recognises. Show why. */
-		unsigned int alert = 0, mt_stat = 0, mt_mask = 0;
+		/*
+		 * The generic driver never services ALERT.FAULT: the chip latches a fault (on the Cosmo
+		 * FAULT_STATUS reads 0x01, an I2C interface error, on every boot) and holds the line until
+		 * the kernel disables the irq ("irq 57: nobody cared"). Clear the fault, then the alert.
+		 */
+		unsigned int fault = 0;
 		u16 alert16 = 0;
 
 		regmap_raw_read(regmap, TCPC_ALERT, &alert16, sizeof(alert16));
-		alert = alert16;
-		regmap_read(regmap, 0x97, &mt_stat);
-		regmap_read(regmap, MT6370_REG_MT_MASK, &mt_mask);
-		dev_info_ratelimited(priv->dev, "spurious alert: ALERT=%#x MT_INT=%#x MT_STATUS=%#x MT_MASK=%#x\n",
-				     alert, mt_int, mt_stat, mt_mask);
-		if (alert) {
+		if (alert16 & TCPC_ALERT_FAULT) {
+			regmap_read(regmap, TCPC_FAULT_STATUS, &fault);
+			dev_info_ratelimited(priv->dev, "tcpc fault %#x cleared\n", fault);
+			regmap_write(regmap, TCPC_FAULT_STATUS, fault);
+		}
+		if (alert16) {
 			regmap_raw_write(regmap, TCPC_ALERT, &alert16, sizeof(alert16));
 			ret = IRQ_HANDLED;
 		}

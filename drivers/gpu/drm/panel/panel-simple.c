@@ -6508,49 +6508,10 @@ static const struct panel_desc_dsi tsd_tst070wsbe_196c = {
 	.lanes = 4,
 };
 
-/*
- * Planet Computers Cosmo Communicator. Timings, dimensions and DSI flags from Otto Pflueger's
- * commit 965a4272cd0f ("drm/panel: simple: Add support for the Planet Cosmo Communicator panel"),
- * applied by hand because panel-simple.c moved on between v6.5 and here.
- */
-static const struct drm_display_mode planet_cosmocom_x800_datong_mode = {
-	.clock = 154500,
-	.hdisplay = 1080,
-	.hsync_start = 1080 + 4,
-	.hsync_end = 1080 + 4 + 2,
-	.htotal = 1080 + 4 + 2 + 33,
-	.vdisplay = 2160,
-	.vsync_start = 2160 + 120,
-	.vsync_end = 2160 + 120 + 16,
-	.vtotal = 2160 + 120 + 16 + 0,
-	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
-};
-
-static const struct panel_desc_dsi planet_cosmocom_x800_datong = {
-	.desc = {
-		.modes = &planet_cosmocom_x800_datong_mode,
-		.num_modes = 1,
-		.bpc = 8,
-		.size = {
-			.width = 68,
-			.height = 136,
-		},
-		.connector_type = DRM_MODE_CONNECTOR_DSI,
-	},
-	.flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
-		 MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
-		 MIPI_DSI_MODE_NO_EOT_PACKET,
-	.format = MIPI_DSI_FMT_RGB888,
-	.lanes = 4,
-};
-
 static const struct of_device_id dsi_of_match[] = {
 	{
 		.compatible = "auo,b080uan01",
 		.data = &auo_b080uan01
-	}, {
-		.compatible = "planet,cosmocom-x800-datong-panel",
-		.data = &planet_cosmocom_x800_datong
 	}, {
 		.compatible = "boe,tv080wum-nl0",
 		.data = &boe_tv080wum_nl0

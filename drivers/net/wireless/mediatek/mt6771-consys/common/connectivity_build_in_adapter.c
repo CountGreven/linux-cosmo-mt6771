@@ -282,12 +282,12 @@ void connectivity_export_dump_thread_state(const char *name)
 		ti = task_thread_info(curr);
 		pr_info("%d:%-15.15s %c", p->pid, p->comm, task_state_to_char(p));
 		pr_info("cpu=%d on_cpu=%d ", cpu, p->on_cpu);
-		show_stack(p, NULL, KERN_INFO);
+		sched_show_task(p);
 		pr_info("CPU%d curr=%d:%-15.15s preempt_count=0x%x", cpu,
 			curr->pid, curr->comm, ti->preempt_count);
 
 		if (state == TASK_RUNNING && curr != p)
-			show_stack(curr, NULL, KERN_INFO);
+			sched_show_task(curr);
 
 		break;
 	}

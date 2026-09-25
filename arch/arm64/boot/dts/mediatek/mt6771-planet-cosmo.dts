@@ -296,7 +296,9 @@
  *
  * The vendor groups set drive strength only: the pads are muxed by LK, and the pinmux and pull settings
  * below are the mt8183 boards' (the SoC's pad design is shared). STAND-IN: the pull-up/pull-down
- * settings, until measured against the vendor's msdc register dump.
+ * settings, until measured against the vendor's msdc register dump. The *-adv properties take the
+ * 2-bit register value as a number (0-3); mt8183-kukui writes them as <10> and <01>, which dtc reads as
+ * decimal ten and (octal) one, and the schema rejects the ten. <2> is the binary 10 those boards mean.
  */
 &mmc0 {
 	status = "okay";
@@ -320,10 +322,13 @@
 	hs400-ds-delay = <0x12814>;
 	non-removable;
 	/*
-	 * live.dts:317 vmmc-supply is the only supply the vendor gives msdc0. No vqmmc: Otto's choice of
-	 * VIO18 has no vendor basis, and VIO18 is always-on in mt6358.dtsi anyway.
+	 * live.dts:317 vmmc-supply is the only supply the vendor gives msdc0. The mt8183-mmc binding
+	 * requires a vqmmc-supply as well, so VIO18 goes there as in Otto's tree. STAND-IN: that choice has no
+	 * vendor basis (nothing in live.dts consumes VIO18); it is the always-on 1.8 V I/O rail (mt6358.dtsi)
+	 * the eMMC's I/O most plausibly sits on. WAITING: the board schematic.
 	 */
 	vmmc-supply = <&mt6358_vemc_reg>;
+	vqmmc-supply = <&mt6358_vio18_reg>;
 };
 
 &mmc1 {
@@ -364,25 +369,25 @@
 				 <PINMUX_GPIO122__FUNC_MSDC0_CMD>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-up-adv = <01>;
+			mediatek,pull-up-adv = <1>;
 		};
 
 		pins-clk {
 			pinmux = <PINMUX_GPIO124__FUNC_MSDC0_CLK>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-ds {
 			pinmux = <PINMUX_GPIO131__FUNC_MSDC0_DSL>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-rst {
 			pinmux = <PINMUX_GPIO133__FUNC_MSDC0_RSTB>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <01>;
+			mediatek,pull-down-adv = <1>;
 		};
 	};
 
@@ -400,25 +405,25 @@
 				 <PINMUX_GPIO122__FUNC_MSDC0_CMD>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-up-adv = <01>;
+			mediatek,pull-up-adv = <1>;
 		};
 
 		pins-clk {
 			pinmux = <PINMUX_GPIO124__FUNC_MSDC0_CLK>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-ds {
 			pinmux = <PINMUX_GPIO131__FUNC_MSDC0_DSL>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-rst {
 			pinmux = <PINMUX_GPIO133__FUNC_MSDC0_RSTB>;
 			drive-strength = <MTK_DRIVE_10mA>;
-			mediatek,pull-down-adv = <01>;
+			mediatek,pull-down-adv = <1>;
 		};
 	};
 
@@ -432,14 +437,14 @@
 				 <PINMUX_GPIO30__FUNC_MSDC1_DAT3>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_8mA>;
-			mediatek,pull-up-adv = <10>;
+			mediatek,pull-up-adv = <2>;
 		};
 
 		pins-clk {
 			pinmux = <PINMUX_GPIO29__FUNC_MSDC1_CLK>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_8mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-cd {
@@ -458,14 +463,14 @@
 				 <PINMUX_GPIO30__FUNC_MSDC1_DAT3>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_8mA>;
-			mediatek,pull-up-adv = <10>;
+			mediatek,pull-up-adv = <2>;
 		};
 
 		pins-clk {
 			pinmux = <PINMUX_GPIO29__FUNC_MSDC1_CLK>;
 			input-enable;
 			drive-strength = <MTK_DRIVE_8mA>;
-			mediatek,pull-down-adv = <10>;
+			mediatek,pull-down-adv = <2>;
 		};
 
 		pins-cd {

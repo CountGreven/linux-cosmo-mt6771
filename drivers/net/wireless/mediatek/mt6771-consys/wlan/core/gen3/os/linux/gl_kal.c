@@ -956,7 +956,7 @@ WLAN_STATUS kalRxIndicateOnePkt(IN P_GLUE_INFO_T prGlueInfo, IN PVOID pvPkt)
 		DBGLOG_MEM32(RX, ERROR, (PUINT_32) prSkb->data, prSkb->len);
 	}
 	if (!in_interrupt())
-		netif_rx_ni(prSkb);	/* only in non-interrupt context */
+		netif_rx(prSkb);	/* only in non-interrupt context */
 	else
 		netif_rx(prSkb);
 

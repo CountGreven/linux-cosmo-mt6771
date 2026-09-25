@@ -603,7 +603,7 @@ VOID wlanFillTimestamp(P_ADAPTER_T prAdapter, PVOID pvPacket, UINT_8 ucPhase)
 	PUINT_8 pucEth = NULL;
 	UINT_32 u4Length = 0;
 	PUINT_8 pucUdp = NULL;
-	struct timeval tval;
+	struct __kernel_old_timeval tval;
 
 	if (!prAdapter || !prAdapter->rDebugInfo.fgVoE5_7Test || !skb)
 		return;
@@ -617,7 +617,7 @@ VOID wlanFillTimestamp(P_ADAPTER_T prAdapter, PVOID pvPacket, UINT_8 ucPhase)
 	pucUdp = &pucEth[ETH_HLEN+28];
 	if (kalStrnCmp(pucUdp, "1345678", 7))
 		return;
-	do_gettimeofday(&tval);
+	mtk_gettimeofday(&tval);
 	switch (ucPhase) {
 	case PHASE_XMIT_RCV: /* xmit */
 		pucUdp += 20;

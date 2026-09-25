@@ -1197,7 +1197,7 @@ INT32 osal_wake_lock_init(P_OSAL_WAKE_LOCK pLock)
 		return -1;
 
 	if (pLock->init_flag == 0) {
-		pLock->wake_lock = wakeup_source_register(pLock->name);
+		pLock->wake_lock = wakeup_source_register(NULL, pLock->name);
 		pLock->init_flag = 1;
 	}
 

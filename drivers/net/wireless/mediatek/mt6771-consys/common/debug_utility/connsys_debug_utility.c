@@ -26,6 +26,7 @@
 #include "ring.h"
 
 #include <linux/alarmtimer.h>
+#include <linux/rtc.h>
 #include <linux/suspend.h>
 
 /*******************************************************************************

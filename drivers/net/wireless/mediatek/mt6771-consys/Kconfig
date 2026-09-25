@@ -8,6 +8,7 @@ config MT6771_CONSYS
 	depends on MMC
 	depends on RTC_CLASS
 	select NL80211_TESTMODE
+	select ZLIB_DEFLATE
 	select WIRELESS_EXT
 	select WEXT_PRIV
 	default n

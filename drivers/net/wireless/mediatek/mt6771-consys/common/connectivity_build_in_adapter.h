@@ -150,7 +150,6 @@ void connectivity_export_mt6306_set_gpio_dir(unsigned long pin, unsigned long di
 unsigned int connectivity_export_slp_get_wake_reason(void);
 unsigned int connectivity_export_spm_get_last_wakeup_src(void);
 extern void tracing_record_cmdline(struct task_struct *tsk);
-extern void show_stack(struct task_struct *tsk, unsigned long *sp);
 #ifdef CPU_BOOST
 extern void mt_ppm_sysboost_freq(enum ppm_sysboost_user user, unsigned int freq);
 extern void mt_ppm_sysboost_core(enum ppm_sysboost_user user, unsigned int core_num);

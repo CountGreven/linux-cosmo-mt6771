@@ -40,18 +40,18 @@ ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common
 
 
 
-ifneq ($(filter "MT6628",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6628,$(CONFIG_MTK_COMBO_CHIP)),)
     ccflags-y += -D MT6628
     ccflags-y += -D MERGE_INTERFACE_SUPPORT
 endif
-ifneq ($(filter "MT6630",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6630,$(CONFIG_MTK_COMBO_CHIP)),)
     ccflags-y += -D MT6630
 ifneq ($(CONFIG_ARCH_MT2601),y)
     ccflags-y += -D MERGE_INTERFACE_SUPPORT
 endif
 endif
 
-ifneq ($(filter "MT6632",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6632,$(CONFIG_MTK_COMBO_CHIP)),)
     ccflags-y += -D MT6632
     ccflags-y += -D MERGE_INTERFACE_SUPPORT
 endif
@@ -77,23 +77,23 @@ endif
 ccflags-y += -DWMT_PLAT_ALPS=1
 
 COMBO_CHIP_SUPPORT := false
-ifneq ($(filter "MT6620E3",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6620E3,$(CONFIG_MTK_COMBO_CHIP)),)
     COMBO_CHIP_SUPPORT := true
 endif
-ifneq ($(filter "MT6628",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6628,$(CONFIG_MTK_COMBO_CHIP)),)
     COMBO_CHIP_SUPPORT := true
 endif
-ifneq ($(filter "MT6630",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6630,$(CONFIG_MTK_COMBO_CHIP)),)
     COMBO_CHIP_SUPPORT := true
 endif
-ifneq ($(filter "MT6632",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6632,$(CONFIG_MTK_COMBO_CHIP)),)
     COMBO_CHIP_SUPPORT := true
 endif
 ifeq ($(COMBO_CHIP_SUPPORT), true)
     ccflags-y += -D MTK_WCN_COMBO_CHIP_SUPPORT
 endif
 
-ifneq ($(filter "CONSYS_%",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter CONSYS_%,$(CONFIG_MTK_COMBO_CHIP)),)
     ccflags-y += -D MTK_WCN_SOC_CHIP_SUPPORT
 endif
 
@@ -109,17 +109,17 @@ $(MODULE_NAME)-objs += common_detect/mtk_wcn_stub_alps.o
 $(MODULE_NAME)-objs += common_detect/wmt_gpio.o
 
 
-ifneq ($(filter "MT6630",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6630,$(CONFIG_MTK_COMBO_CHIP)),)
 	ccflags-y += -D MTK_WCN_WLAN_GEN3
 endif
 
-ifneq ($(filter "MT6632",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter MT6632,$(CONFIG_MTK_COMBO_CHIP)),)
         ccflags-y += -D MTK_WCN_WLAN_GEN4
 endif
 
-ifneq ($(filter "CONSYS_6797" "CONSYS_6759" "CONSYS_6758" "CONSYS_6771" "CONSYS_6775",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter CONSYS_6797 CONSYS_6759 CONSYS_6758 CONSYS_6771 CONSYS_6775,$(CONFIG_MTK_COMBO_CHIP)),)
 	ccflags-y += -D MTK_WCN_WLAN_GEN3
-else ifneq ($(filter "CONSYS_%",$(CONFIG_MTK_COMBO_CHIP)),)
+else ifneq ($(filter CONSYS_%,$(CONFIG_MTK_COMBO_CHIP)),)
 	ccflags-y += -D MTK_WCN_WLAN_GEN2
 endif
 
@@ -178,7 +178,7 @@ ifeq ($(findstring evb, $(MTK_PROJECT)), evb)
 ccflags-y += -D CFG_WMT_EVB
 endif
 
-ifneq ($(filter "CONSYS_%",$(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter CONSYS_%,$(CONFIG_MTK_COMBO_CHIP)),)
 $(MODULE_NAME)-objs += common_main/platform/$(MTK_PLATFORM).o
 endif
 

@@ -359,11 +359,18 @@ UINT32 mtk_wcn_consys_jtag_flag_ctrl(UINT32 en)
 
 static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
 {
-	clk_scp_conn_main = devm_clk_get(&pdev->dev, "conn");
+	/*
+	 * Mainline: the vendor's "conn" clock is its scpsys power-domain wrapper. Here the CONN domain
+	 * comes from power-domains = <&spm MT8183_POWER_DOMAIN_CONN> on the node, attached by the
+	 * platform bus at probe, so the clock is optional (NULL is a no-op for clk_prepare_enable).
+	 */
+	clk_scp_conn_main = devm_clk_get_optional(&pdev->dev, "conn");
 	if (IS_ERR(clk_scp_conn_main)) {
 		WMT_PLAT_PR_ERR("[CCF]cannot get clk_scp_conn_main clock.\n");
 		return PTR_ERR(clk_scp_conn_main);
 	}
+	if (!clk_scp_conn_main)
+		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; relying on the CONN power domain\n");
 	WMT_PLAT_PR_DBG("[CCF]clk_scp_conn_main=%p\n", clk_scp_conn_main);
 
 	return 0;

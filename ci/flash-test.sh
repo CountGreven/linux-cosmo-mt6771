@@ -21,7 +21,9 @@ backups="${COSMO_BACKUPS:-/storage/kernel/cosmo-backups}"
 # bootloader; writing to those is how a phone becomes a paperweight.
 target_part="${COSMO_TARGET_PART:-42}"
 target_name="${COSMO_TARGET_NAME:-UBPORTS}"
-dev="/dev/block/mmcblk0p${target_part}"
+# The vendor kernel (Gemian) names the eMMC /dev/block/mmcblk0*, mainline /dev/mmcblk0*; both give the
+# GPT name in sysfs, so the guard reads that rather than gdisk on a path only one of them has.
+dev="/dev/mmcblk0p${target_part}"
 wait_secs="${COSMO_WAIT:-180}"
 
 image=""
@@ -75,7 +77,7 @@ slot_size=$(( 32 * 1024 * 1024 ))
 [ "$size" -le "$slot_size" ] || { echo "refusing: image is $size bytes, slot is $slot_size" >&2; exit 3; }
 
 # 2. The target must be the sacrificial slot, by name as well as by number.
-name_on_device="$(ssh_ro "sudo -n gdisk -l /dev/block/mmcblk0 2>/dev/null | awk '\$1 == $target_part {print \$NF}'")"
+name_on_device="$(ssh_ro "sed -n 's/^PARTNAME=//p' /sys/class/block/mmcblk0p${target_part}/uevent")"
 [ "$name_on_device" = "$target_name" ] || {
     echo "refusing: partition $target_part is '$name_on_device', expected '$target_name'" >&2; exit 3; }
 

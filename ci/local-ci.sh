@@ -188,15 +188,21 @@ fi
 # error or on a module that did not come out. Nothing here says the radio works.
 if [ "$want_full" = 1 ] || [ "$only" = "consys" ]; then
     step consys "$out/consys.log" <<EOF
-set -e
+set -eo pipefail
 cd "$repo"
 b="$out/build-consys"
 mkdir -p "\$b"
-make O="\$b" defconfig >/dev/null
-./scripts/kconfig/merge_config.sh -m -O "\$b" "\$b/.config" ci/cosmo.config ci/consys.config >/dev/null
-make O="\$b" olddefconfig >/dev/null
+rm -rf "\$b"; mkdir -p "\$b"
+# allnoconfig + the port's own dependencies: \`make modules\` then builds this driver and almost nothing else
+make O="\$b" allnoconfig KCONFIG_ALLCONFIG="$repo/ci/consys.config" >/dev/null
 grep -qx 'CONFIG_MT6771_CONSYS=m' "\$b/.config" || { echo "CONFIG_MT6771_CONSYS=m was dropped by Kconfig"; exit 1; }
-make O="\$b" -j$jobs W=0 KCFLAGS=-Wno-error drivers/net/wireless/mediatek/mt6771-consys/ modules
+# vmlinux first: modpost resolves the modules' symbols against it, and without it every kernel symbol is "undefined"
+make O="\$b" -j$jobs vmlinux
+# Stage 1 does not promise the modules load: the platform symbols the shim does not cover stay undefined.
+# KBUILD_MODPOST_WARN turns them into warnings; they are listed at the end and are the port's TODO list.
+make O="\$b" -j$jobs W=0 KCFLAGS=-Wno-error KBUILD_MODPOST_WARN=1 modules 2>&1 | tee "$out/consys.modpost"
+echo "unresolved module symbols (expected at stage 1):"
+grep -o "symbol '[^']*' undefined" "$out/consys.modpost" | sort -u | sed 's/^/    /'
 for ko in wmt_drv wlan_drv_gen3; do
     f="\$(find "\$b/drivers/net/wireless/mediatek/mt6771-consys" -name "\$ko.ko" | head -1)"
     [ -n "\$f" ] || { echo "\$ko.ko was not built"; exit 1; }

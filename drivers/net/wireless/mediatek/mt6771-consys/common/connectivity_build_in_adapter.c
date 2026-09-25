@@ -18,7 +18,8 @@
 
 #include "connectivity_build_in_adapter.h"
 
-#include <kernel/sched/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/debug.h>
 
 /*device tree mode*/
 #ifdef CONFIG_OF

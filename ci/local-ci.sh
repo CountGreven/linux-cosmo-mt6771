@@ -202,7 +202,7 @@ make O="\$b" -j$jobs vmlinux
 # KBUILD_MODPOST_WARN turns them into warnings; they are listed at the end and are the port's TODO list.
 make O="\$b" -j$jobs W=0 KCFLAGS=-Wno-error KBUILD_MODPOST_WARN=1 modules 2>&1 | tee "$out/consys.modpost"
 echo "unresolved module symbols (expected at stage 1):"
-grep -o "symbol '[^']*' undefined" "$out/consys.modpost" | sort -u | sed 's/^/    /'
+grep -o "symbol '[^']*' undefined" "$out/consys.modpost" | sort -u | sed 's/^/    /' || echo "    (none)"
 for ko in wmt_drv wlan_drv_gen3; do
     f="\$(find "\$b/drivers/net/wireless/mediatek/mt6771-consys" -name "\$ko.ko" | head -1)"
     [ -n "\$f" ] || { echo "\$ko.ko was not built"; exit 1; }

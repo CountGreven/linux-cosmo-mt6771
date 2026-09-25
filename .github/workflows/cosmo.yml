@@ -78,12 +78,25 @@ jobs:
       - name: dtbs_check
         run: |
           make defconfig
-          make DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml" dt_binding_check
+          make DT_SCHEMA_FILES="interrupt-controller/mediatek,mt6577-sysirq.yaml vendor-prefixes.yaml net/mediatek,mt6771-md.yaml" dt_binding_check
           make -j"$(nproc)" CHECK_DTBS=y mediatek/mt6771-planet-cosmo.dtb 2>&1 | tee dtbs_check.log
           if grep -E "mt6771|cosmo" dtbs_check.log; then
             echo "::error::dtbs_check has complaints about our device trees"
             exit 1
           fi
+
+  # The modem driver's pure-data half (LK info parser, handshake structs), on UML: no hardware.
+  kunit:
+    name: modem protocol unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev bc flex bison
+      - name: KUnit
+        run: ./tools/testing/kunit/kunit.py run --kunitconfig=drivers/net/wwan/mtk_md
 
   checkpatch:
     name: patches are upstream-shaped

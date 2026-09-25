@@ -4,6 +4,9 @@
  */
 
 /dts-v1/;
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/iio/adc/mediatek,mt6370_adc.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include "mt6771.dtsi"
 /* The MT6358 PMIC, so regulators exist at all. LK reports its chip code as 0x5820, which the vendor
  * kernel's mtk_pmic_info.h defines as PMIC6358_E2_CID_CODE. Otto Pflueger's tree includes it too. */
@@ -246,13 +249,126 @@
 };
 
 /*
- * The display, described rather than left to be discovered.
+ * The MT6370 sub-PMIC, for the panel's bias rails (DSV) and backlight (WLED).
  *
- * mt8183.dtsi brings the whole display pipeline with it, so mtk_drm bound and started driving the panel
- * with no panel node, no endpoint graph and no supplies -- which is what put garbage on the screen and is
- * a plausible place to wedge. This is Otto Pflueger's description, minus the backlight: his points at the
- * MT6370 PMU on i2c, which we have not wired yet, and panel-simple treats backlight as optional. The
- * screen will stay dark; we read the log through pstore, not the screen.
+ * The vendor calls this bus i2c-5, but that is its own numbering: the live tree's i2c5 alias points
+ * at i2c@11017000 (id = <5>), which is the controller mt8183.dtsi labels i2c11. The vendor node has
+ * no pinctrl either, so the pins are left as the bootloader muxed them. No clock-frequency: the
+ * vendor runs this bus at 3.4 MHz high-speed, the controller's 100 kHz default is enough for a PMIC
+ * and cannot be wrong for the wiring.
+ */
+&i2c11 {
+	status = "okay";
+
+	/*
+	 * Label deliberately not mt6370_pmu: that name belongs to the empty LK overlay stub above,
+	 * which must stay a stub so the vendor overlay's properties bind to nothing.
+	 */
+	mt6370: pmic@34 {
+		compatible = "mediatek,mt6370";
+		reg = <0x34>;
+		/*
+		 * live tree mt6370_pmu_dts: mt6370,intr_gpio = <&pio 10 0>; gpio-330 is
+		 * "mt6370_pmu_irq_gpio"
+		 */
+		interrupts-extended = <&pio 10 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+
+		/*
+		 * Only the backlight and the regulators are used. The binding wants every function
+		 * described; the rest are disabled, which also keeps the MFD core from registering
+		 * them, so nothing here reconfigures the charger or the USB-C port behind the
+		 * vendor's back.
+		 */
+		mt6370_adc: adc {
+			compatible = "mediatek,mt6370-adc";
+			#io-channel-cells = <1>;
+			status = "disabled";
+		};
+
+		/* live tree bled: mt,chan_en = <0x0f>, all four WLED strings */
+		mt6370_backlight: backlight {
+			compatible = "mediatek,mt6370-backlight";
+			mediatek,bled-channel-use = /bits/ 8 <15>;
+		};
+
+		charger {
+			compatible = "mediatek,mt6370-charger";
+			interrupts = <68>, <48>, <6>;
+			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
+			io-channels = <&mt6370_adc MT6370_CHAN_IBUS>;
+			status = "disabled";
+		};
+
+		flashlight {
+			compatible = "mediatek,mt6370-flashlight";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		indicator {
+			compatible = "mediatek,mt6370-indicator";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		/* live tree mt6370pd,intr_gpio = <&pio 41 0>; gpio-361 is "type_c_port0-IRQ" */
+		tcpc {
+			compatible = "mediatek,mt6370-tcpc";
+			interrupts-extended = <&pio 41 IRQ_TYPE_LEVEL_LOW>;
+			status = "disabled";
+		};
+
+		/*
+		 * Enabled over I2C (live tree dsv: db_ext_en = <0>), so no enable-gpios. Voltages
+		 * are the vendor's: the boost from db_vbst = <0x1644> (5700 mV), the outputs from
+		 * lcm_pmic.c:59,64 (5.4 V each, and regulator_summary on the running device
+		 * agrees).
+		 */
+		regulators {
+			dsvbst {
+				regulator-name = "mt6370-dsv-vbst";
+				regulator-min-microvolt = <5700000>;
+				regulator-max-microvolt = <5700000>;
+			};
+
+			mt6370_dsvpos: dsvpos {
+				regulator-name = "mt6370-dsv-vpos";
+				regulator-min-microvolt = <5400000>;
+				regulator-max-microvolt = <5400000>;
+			};
+
+			mt6370_dsvneg: dsvneg {
+				regulator-name = "mt6370-dsv-vneg";
+				regulator-min-microvolt = <5400000>;
+				regulator-max-microvolt = <5400000>;
+			};
+		};
+	};
+};
+
+&pio {
+	/*
+	 * The LCM reset line. The vendor drives it as the pin's LCM_RST function from MMSYS
+	 * (ddp_dsi.c lcm_set_reset_pin, DISP_REG_CONFIG_MMSYS_LCM_RST_B); k71v1_64_bsp.dws names
+	 * GPIO45 GPIO_LCM_RST, mode 1, output high. Mainline has no driver for that register, so
+	 * the pin is used as a plain GPIO instead, starting out of reset like the bootloader leaves
+	 * it.
+	 */
+	panel_pins: panel-pins {
+		pins-reset {
+			pinmux = <PINMUX_GPIO45__FUNC_GPIO45>;
+			output-high;
+		};
+	};
+};
+
+/*
+ * The display. mt8183.dtsi brings the whole pipeline; this is the panel at its end, a Novatek
+ * NT36672 that the vendor kernel resets and initialises from cold on every boot.
  */
 &dsi0 {
 	status = "okay";
@@ -260,8 +376,26 @@
 	#size-cells = <0>;
 
 	panel: panel@0 {
-		compatible = "planet,cosmocom-x800-datong-panel";
+		compatible = "planet,cosmocom-nt36672";
 		reg = <0>;
+
+		/*
+		 * STAND-IN: VDDI on VIO18. No vendor source names the panel's 1.8 V supply -- the
+		 * LCM driver only ever switches the bias rails -- and VIO18 is the always-on 1.8 V
+		 * I/O rail the vendor leaves enabled. Replace with the schematic's rail if one
+		 * turns up.
+		 */
+		vddi-supply = <&mt6358_vio18_reg>;
+		avdd-supply = <&mt6370_dsvpos>;
+		avee-supply = <&mt6370_dsvneg>;
+		reset-gpios = <&pio 45 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&panel_pins>;
+		backlight = <&mt6370_backlight>;
+		/*
+		 * k71v1_64_bsp_defconfig:178 MTK_LCM_PHYSICAL_ROTATION="270": portrait panel,
+		 * landscape device
+		 */
 		rotation = <270>;
 
 		port {

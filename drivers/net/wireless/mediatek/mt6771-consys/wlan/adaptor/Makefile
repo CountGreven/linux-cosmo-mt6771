@@ -10,12 +10,13 @@ endif
 KBUILD_MODPOST_FAIL_ON_WARNINGS := y
 
 ccflags-y += \
-    -I$(srctree)/drivers/misc/mediatek/include/mt-plat \
-    -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/include \
-    -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/linux/include
+    -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys \
+    -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common \
+    -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/include \
+    -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/linux/include
 
 ifneq ($(CONFIG_MTK_CONNSYS_DEDICATED_LOG_PATH),)
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/debug_utility
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/debug_utility
 endif
 
 ifeq ($(CONFIG_MTK_CONN_LTE_IDC_SUPPORT),y)

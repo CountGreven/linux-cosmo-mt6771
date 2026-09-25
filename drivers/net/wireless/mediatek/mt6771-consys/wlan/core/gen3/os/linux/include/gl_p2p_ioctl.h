@@ -345,7 +345,7 @@ int
 mtk_p2p_cfg80211_set_default_key(struct wiphy *wiphy,
 				 struct net_device *netdev, int link_id, u8 key_index, bool unicast, bool multicast);
 
-int mtk_p2p_cfg80211_get_station(struct wiphy *wiphy, struct net_device *ndev,
+int mtk_p2p_cfg80211_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 				const u8 *mac, struct station_info *sinfo);
 
 int mtk_p2p_cfg80211_scan(struct wiphy *wiphy,
@@ -402,9 +402,9 @@ int mtk_p2p_cfg80211_mgmt_tx_cancel_wait(struct wiphy *wiphy,
 int mtk_p2p_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev);
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev, struct station_del_parameters *params);
+int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params);
 #else
-int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct net_device *dev, const u8 *mac);
+int mtk_p2p_cfg80211_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac);
 #endif
 
 int mtk_p2p_cfg80211_set_channel(struct wiphy *wiphy,

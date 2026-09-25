@@ -1359,8 +1359,9 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	 * it. The kernel hangs somewhere in the core initcalls with no console, and the marker that
 	 * survives the watchdog reset names the one that never returned. Once ramoops has claimed the
 	 * buffer it is rendered on the tag page instead, so it cannot overwrite a real log.
+	 * cosmo-mark.c exists only on arm64; elsewhere (UML for KUnit) the call must not be emitted.
 	 */
-	{
+	if (IS_ENABLED(CONFIG_ARM64)) {
 		char name[64];
 		int n = snprintf(name, sizeof(name), "IC %ps", fn);
 

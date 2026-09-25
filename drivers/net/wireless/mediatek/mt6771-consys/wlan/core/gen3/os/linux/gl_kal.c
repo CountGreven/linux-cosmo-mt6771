@@ -3569,7 +3569,7 @@ UINT_32 kalRandomNumber(VOID)
 VOID kalTimeoutHandler(struct timer_list *t)
 {
 
-	P_GLUE_INFO_T prGlueInfo = from_timer(prGlueInfo, t, tickfn);
+	P_GLUE_INFO_T prGlueInfo = timer_container_of(prGlueInfo, t, tickfn);
 
 	ASSERT(prGlueInfo);
 

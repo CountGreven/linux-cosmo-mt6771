@@ -244,7 +244,10 @@ EXPORT_SYMBOL(connectivity_export_upmu_set_vcn35_on_ctrl_wifi);
 int connectivity_export_mmc_io_rw_direct(struct mmc_card *card, int write, unsigned fn,
 				unsigned addr, u8 in, u8 *out)
 {
-	return mmc_io_rw_direct(card, write, fn, addr, in, out);
+	/* STAND-IN: mmc_io_rw_direct() is MMC-core internal. Raw SDIO CMD52 is only for
+	 * external SDIO radios; the MT6771 CONSYS radio sits on AHB. */
+	pr_warn_once("mt6771-consys: %s: SDIO CMD52 not available on mainline (-ENOSYS)\n", __func__);
+	return -ENOSYS;
 }
 EXPORT_SYMBOL(connectivity_export_mmc_io_rw_direct);
 

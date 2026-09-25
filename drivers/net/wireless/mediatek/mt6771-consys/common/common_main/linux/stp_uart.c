@@ -345,9 +345,9 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const unsigned char *da
 	UINT32 how_much_put = 0;
 #if 0
 	{
-		struct timeval now;
+		struct __kernel_old_timeval now;
 
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 		pr_warn("[+STP][  ][R] %4d --> sec = %lu, --> usec --> %lu\n",
 			count, now.tv_sec, now.tv_usec);
 	}
@@ -370,9 +370,9 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const unsigned char *da
 
 #if 0
 	{
-		struct timeval now;
+		struct __kernel_old_timeval now;
 
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 		pr_warn("[-STP][  ][R] %4d --> sec = %lu, --> usec --> %lu\n",
 			count, now.tv_sec, now.tv_usec);
 	}
@@ -530,9 +530,9 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
 	}
 #if 0
 	{
-		struct timeval now;
+		struct __kernel_old_timeval now;
 
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 	}
 #endif
 
@@ -549,9 +549,9 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
 
 #if 0
 	{
-		struct timeval now;
+		struct __kernel_old_timeval now;
 
-		do_gettimeofday(&now);
+		mtk_gettimeofday(&now);
 	}
 #endif
 }

@@ -17,6 +17,9 @@
 
 	aliases {
 		serial0 = &uart0;
+		/* The SD card probes first and took mmcblk0; root= names the eMMC as mmcblk0p43. */
+		mmc0 = &mmc0;
+		mmc1 = &mmc1;
 	};
 
 	memory@40000000 {

@@ -56,6 +56,9 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # it. A read-only mount still proves the boot and still lets userspace talk to us through
            # pstore.
            "root=/dev/mmcblk0p43 rootwait ro "
+           # LK's own arguments carry init=/init (its Android initrd). The last init= wins, and the Debian
+           # root has no /init, so name systemd explicitly.
+           "init=/sbin/init "
            # Bring ramoops up as early as the driver allows, via its own module parameters.
            #
            # Configured through the device tree, ramoops cannot probe until

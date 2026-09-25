@@ -3467,9 +3467,7 @@ VOID kalOsTimerInitialize(IN P_GLUE_INFO_T prGlueInfo, IN PVOID prTimerHandler)
 
 	ASSERT(prGlueInfo);
 
-	init_timer(&(prGlueInfo->tickfn));
-	prGlueInfo->tickfn.function = prTimerHandler;
-	prGlueInfo->tickfn.data = (unsigned long)prGlueInfo;
+	timer_setup(&(prGlueInfo->tickfn), prTimerHandler, 0);
 }
 
 /* Todo */
@@ -3508,7 +3506,7 @@ BOOLEAN kalCancelTimer(IN P_GLUE_INFO_T prGlueInfo)
 
 	clear_bit(GLUE_FLAG_TIMEOUT_BIT, &prGlueInfo->ulFlag);
 
-	if (del_timer_sync(&(prGlueInfo->tickfn)) >= 0)
+	if (timer_delete_sync(&(prGlueInfo->tickfn)) >= 0)
 		return TRUE;
 	else
 		return FALSE;
@@ -3568,10 +3566,10 @@ UINT_32 kalRandomNumber(VOID)
  * \retval (none)
  */
 /*----------------------------------------------------------------------------*/
-VOID kalTimeoutHandler(unsigned long arg)
+VOID kalTimeoutHandler(struct timer_list *t)
 {
 
-	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) arg;
+	P_GLUE_INFO_T prGlueInfo = from_timer(prGlueInfo, t, tickfn);
 
 	ASSERT(prGlueInfo);
 

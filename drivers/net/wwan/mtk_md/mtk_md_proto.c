@@ -2,10 +2,10 @@
 /*
  * MediaTek MD generation 6293 (MT6771) host protocol helpers.
  *
- * Pure functions over buffers, so they can be tested without the hardware. The formats are the vendor's:
- * ccci_util/ccci_util_lib_fo.c for the LK information block, eccci/fsm/ccci_fsm.c for the control
- * messages and eccci/ccci_modem.c for the runtime feature negotiation (MT6771 4.4 BSP). Where the vendor
- * trusts the bootloader or the modem blindly, these check bounds instead.
+ * Pure functions over buffers, so they can be tested without the hardware. The formats are the
+ * vendor's: ccci_util/ccci_util_lib_fo.c for the LK information block, eccci/fsm/ccci_fsm.c for
+ * the control messages and eccci/ccci_modem.c for the runtime feature negotiation (MT6771 4.4
+ * BSP). Where the vendor trusts the bootloader or the modem blindly, these check bounds instead.
  */
 
 #include <linux/bitfield.h>
@@ -55,8 +55,8 @@ int mtk_md_lk_parse_hdr(const void *prop, size_t len, struct mtk_md_lk_hdr *hdr)
 EXPORT_SYMBOL_GPL(mtk_md_lk_parse_hdr);
 
 /*
- * Walk at most tag_num tags from the start of the list. next_tag_offset and data_offset both count from
- * the start of the list, and names are NUL-terminated and compared exactly.
+ * Walk at most tag_num tags from the start of the list. next_tag_offset and data_offset both count
+ * from the start of the list, and names are NUL-terminated and compared exactly.
  */
 int mtk_md_lk_find_tag(const struct mtk_md_lk_info *info, const char *name, const void **data,
 		       u32 *len)
@@ -194,8 +194,8 @@ enum mtk_md_ctrl mtk_md_ctrl_classify(const struct mtk_md_ccci_hdr *hdr)
 EXPORT_SYMBOL_GPL(mtk_md_ctrl_classify);
 
 /*
- * HS1 on generation 6293 is 240 bytes: the CCCI header, then the modem's feature query. A 16-byte HS1 is
- * the older handshake with no query, which this driver does not speak.
+ * HS1 on generation 6293 is 240 bytes: the CCCI header, then the modem's feature query. A 16-byte
+ * HS1 is the older handshake with no query, which this driver does not speak.
  */
 int mtk_md_hs1_check(const void *buf, size_t len, const struct mtk_md_md_query **query)
 {
@@ -218,9 +218,9 @@ int mtk_md_hs1_check(const void *buf, size_t len, const struct mtk_md_md_query *
 EXPORT_SYMBOL_GPL(mtk_md_hs1_check);
 
 /*
- * config_ap_side_feature() for MD_GENERATION >= 6293, all versions 0, with the build options the Cosmo's
- * vendor kernel was built without: no FEATURE_SCP_CCCI_SUPPORT, no ENABLE_32K_CLK_LESS, no
- * ENABLE_FAST_HEADER, no tier-1 customer features, and no MD phy capture region assumed.
+ * config_ap_side_feature() for MD_GENERATION >= 6293, all versions 0, assuming the build options
+ * are off: no FEATURE_SCP_CCCI_SUPPORT, no ENABLE_32K_CLK_LESS, no ENABLE_FAST_HEADER, no tier-1
+ * customer features, and no MD phy capture region.
  */
 const u8 mtk_md_ap_features_6293[MTK_MD_FEATURE_COUNT] = {
 	[MTK_MD_RT_BOOT_INFO]			= MTK_MD_FEATURE_MUST,
@@ -262,10 +262,10 @@ static u8 feature(unsigned int mask, unsigned int ver)
 }
 
 /*
- * ccci_md_prepare_runtime_data(), the negotiation half. The modem's MUST and NOT_EXIST are echoed as they
- * came; OPTIONAL is accepted when the versions agree and the AP supports it; BACKWARD_COMPAT when the
- * modem's version is at least the AP's. NOT_SUPPORT has no case in the vendor code, so its answer stays
- * zero. A MUST the AP cannot meet ends the handshake.
+ * ccci_md_prepare_runtime_data(), the negotiation half. The modem's MUST and NOT_EXIST are echoed
+ * as they came; OPTIONAL is accepted when the versions agree and the AP supports it;
+ * BACKWARD_COMPAT when the modem's version is at least the AP's. NOT_SUPPORT has no case in the
+ * vendor code, so its answer stays zero. A MUST the AP cannot meet ends the handshake.
  */
 int mtk_md_rt_negotiate(const u8 *md_set, const u8 *ap_set, u8 *out, unsigned int *bad_id)
 {
@@ -294,7 +294,8 @@ int mtk_md_rt_negotiate(const u8 *md_set, const u8 *ap_set, u8 *out, unsigned in
 				ok = md_ver == ap_ver && ap_mask >= MTK_MD_FEATURE_MUST;
 			else
 				ok = md_ver >= ap_ver;
-			out[i] = feature(ok ? MTK_MD_FEATURE_MUST : MTK_MD_FEATURE_NOT_SUPPORT, ap_ver);
+			out[i] = feature(ok ? MTK_MD_FEATURE_MUST : MTK_MD_FEATURE_NOT_SUPPORT,
+					 ap_ver);
 			break;
 		default:
 			out[i] = 0;
@@ -328,9 +329,9 @@ int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const
 EXPORT_SYMBOL_GPL(mtk_md_rt_append);
 
 /*
- * ccci_md_prepare_smem() in eccci/ccci_modem.c: "MD bank4 is remap to nearest 32M aligned address", so
- * the modem's view of a non-cacheable share memory address is its offset from the 32 MiB boundary below
- * it, plus 0x40000000.
+ * eccci/ccci_modem.c: "MD bank4 is remap to nearest 32M aligned address", so the modem's view of
+ * a non-cacheable share memory address is its offset from the 32 MiB boundary below it, plus
+ * 0x40000000.
  */
 u32 mtk_md_smem_md_view(u64 ap_phys)
 {

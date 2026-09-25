@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * MediaTek MD generation 6293 (MT6771) host protocol: the pieces that are pure data and can be tested
- * without hardware -- the LK information block, the CCCI header, the control-message classification and
- * the runtime feature negotiation.
+ * MediaTek MD generation 6293 (MT6771) host protocol: the pieces that are pure data and can be
+ * tested without hardware -- the LK information block, the CCCI header, the control-message
+ * classification and the runtime feature negotiation.
  *
- * Every layout here is the vendor's (drivers/misc/mediatek/eccci and ccci_util in the MT6771 4.4 BSP),
- * little-endian, and was cross-checked against the device where the device shows it.
+ * Every layout here is the vendor's (drivers/misc/mediatek/eccci and ccci_util in the MT6771 4.4
+ * BSP), little-endian, and was cross-checked against the device where the device shows it.
  */
 
 #ifndef __MTK_MD_PROTO_H__
@@ -15,9 +15,9 @@
 #include <linux/types.h>
 
 /*
- * LK describes what it loaded in /chosen "ccci,modem_info_v2": a C struct copied into the property as
- * raw CPU bytes, so little-endian, not the usual big-endian cells. The live Cosmo tree carries 48 bytes:
- * base 0x8c000000, size 0xbc8, version 2, 26 tags.
+ * LK describes what it loaded in /chosen "ccci,modem_info_v2": a C struct copied into the
+ * property as raw CPU bytes, so little-endian, not the usual big-endian cells. The live Cosmo tree
+ * carries 48 bytes: base 0x8c000000, size 0xbc8, version 2, 26 tags.
  */
 #define MTK_MD_LK_HDR_V2_LEN		44	/* fields; sizeof() is 48 with tail padding */
 #define MTK_MD_LK_INFO_MAX		0x10000	/* the vendor maps and accepts no more */
@@ -74,8 +74,8 @@ struct mtk_md_lk_smem {
 int mtk_md_lk_get_smem(const struct mtk_md_lk_info *info, struct mtk_md_lk_smem *smem);
 
 /*
- * The CCCI header that leads every message. The third word packs channel (15:0), sequence (30:16) and
- * an assert bit (31); the last word carries a check id on control messages.
+ * The CCCI header that leads every message. The third word packs channel (15:0), sequence
+ * (30:16) and an assert bit (31); the last word carries a check id on control messages.
  */
 struct mtk_md_ccci_hdr {
 	__le32 data[2];
@@ -104,9 +104,9 @@ enum mtk_md_ctrl {
 enum mtk_md_ctrl mtk_md_ctrl_classify(const struct mtk_md_ccci_hdr *hdr);
 
 /*
- * Runtime features. Each side states, per feature id, a support level in bits 3:0 and a version in bits
- * 7:4 of one byte. The MD sends its 64 in HS1; the AP answers with a negotiated level per feature and a
- * TLV list of what each accepted feature needs (mostly share memory addresses).
+ * Runtime features. Each side states, per feature id, a support level in bits 3:0 and a version
+ * in bits 7:4 of one byte. The MD sends its 64 in HS1; the AP answers with a negotiated level per
+ * feature and a TLV list of what each accepted feature needs (mostly share memory addresses).
  */
 #define MTK_MD_FEATURE_COUNT		64
 #define MTK_MD_FEATURE_QUERY_PATTERN	0x49434343	/* MD -> AP, head and tail */
@@ -186,9 +186,9 @@ int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const
 		     u32 data_len);
 
 /*
- * The runtime data lives in the AP/MD1 non-cacheable share memory: the AP's TLVs in the first 2 KiB of
- * a 4 KiB region at 58 KiB, the modem's answer in the second. The modem addresses that memory through
- * its own window at 0x40000000.
+ * The runtime data lives in the AP/MD1 non-cacheable share memory: the AP's TLVs in the first
+ * 2 KiB of a 4 KiB region at 58 KiB, the modem's answer in the second. The modem addresses that
+ * memory through its own window at 0x40000000.
  */
 #define MTK_MD_SMEM_RUNTIME_OFFSET	(58 * 1024)
 #define MTK_MD_SMEM_RUNTIME_AP_SIZE	0x800

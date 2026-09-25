@@ -3,9 +3,9 @@
  * KUnit tests for the MT6771 modem protocol helpers.
  *
  * The LK header is captured: the bytes of /chosen "ccci,modem_info_v2" read off a running Cosmo
- * (dtc -I fs, 2026-09-24). The tag list it points at cannot be captured the same way -- the vendor
- * kernel wipes it with memset_io() right after parsing -- so it is synthesised here from the vendor's
- * format, with the values the vendor kernel logged for this device where it logged any.
+ * (dtc -I fs, 2026-09-24). The tag list it points at cannot be captured the same way -- the
+ * vendor kernel wipes it with memset_io() right after parsing -- so it is synthesised here from
+ * the vendor's format, with the values the vendor kernel logged for this device where it did.
  */
 
 #include <kunit/test.h>
@@ -40,13 +40,13 @@ static void lk_hdr_captured(struct kunit *test)
 
 static void lk_hdr_fields_only(struct kunit *test)
 {
+	const u8 *p = cosmo_modem_info_v2;
 	struct mtk_md_lk_hdr hdr;
 
 	/* LK may omit the tail padding; the fields are all there is to read. */
-	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(cosmo_modem_info_v2, MTK_MD_LK_HDR_V2_LEN, &hdr), 0);
-	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(cosmo_modem_info_v2, MTK_MD_LK_HDR_V2_LEN - 1, &hdr),
-			-EINVAL);
-	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(cosmo_modem_info_v2, 16, &hdr), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(p, MTK_MD_LK_HDR_V2_LEN, &hdr), 0);
+	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(p, MTK_MD_LK_HDR_V2_LEN - 1, &hdr), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_lk_parse_hdr(p, 16, &hdr), -EINVAL);
 }
 
 static void lk_hdr_rejects(struct kunit *test)
@@ -130,10 +130,10 @@ static struct mtk_md_lk_info blob_info(struct blob *b, int version)
 }
 
 /*
- * The Cosmo's list as far as the vendor log shows it: MD1 at 0x66000000, 0x7e00000 bytes ("ccci_md0 at
- * LK"), share memory at 0x8c000000, 1 MiB ("ccci_share_mem at LK"), MD type 12 (CCCI_IOC_GET_MD_TYPE).
- * The AP/MD1 share starts at offset 0: the log remaps CCB control, 96 KiB into it, at 0x8c018000. Its
- * size and md1_phy_cap are not logged; those values are made up.
+ * The Cosmo's list as far as the vendor log shows it: MD1 at 0x66000000, 0x7e00000 bytes
+ * ("ccci_md0 at LK"), share memory at 0x8c000000, 1 MiB ("ccci_share_mem at LK"), MD type 12
+ * (CCCI_IOC_GET_MD_TYPE). The AP/MD1 share starts at offset 0: the log remaps CCB control, 96 KiB
+ * into it, at 0x8c018000. Its size and md1_phy_cap are not logged; those values are made up.
  */
 static void cosmo_blob(struct blob *b)
 {
@@ -382,10 +382,10 @@ static void rt_ap_features_6293(struct kunit *test)
 static void rt_append(struct kunit *test)
 {
 	u8 buf[24];
-	u32 boot[2] = { cpu_to_le32(0), cpu_to_le32(0x12345678) };
+	__le32 boot[2] = { cpu_to_le32(0), cpu_to_le32(0x12345678) };
 	size_t pos = 0;
 
-	KUNIT_ASSERT_EQ(test, mtk_md_rt_append(buf, sizeof(buf), &pos, 0, 2, boot, sizeof(boot)), 0);
+	KUNIT_ASSERT_EQ(test, mtk_md_rt_append(buf, sizeof(buf), &pos, 0, 2, boot, 8), 0);
 	KUNIT_EXPECT_EQ(test, pos, 16);
 	KUNIT_EXPECT_EQ(test, buf[0], 0);
 	KUNIT_EXPECT_EQ(test, buf[1], 2);
@@ -403,7 +403,7 @@ static void rt_append(struct kunit *test)
 
 static void smem_md_view(struct kunit *test)
 {
-	/* The modem sees its non-cacheable bank 4 at 0x40000000, remapped from the 32 MiB boundary. */
+	/* The modem sees its non-cacheable bank 4 at 0x40000000, from the 32 MiB boundary down. */
 	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8c000000), 0x40000000U);
 	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8c000000 + 58 * 1024), 0x4000e800U);
 	KUNIT_EXPECT_EQ(test, mtk_md_smem_md_view(0x8b000000), 0x41000000U);

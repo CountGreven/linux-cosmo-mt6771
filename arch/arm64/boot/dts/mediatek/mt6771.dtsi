@@ -92,13 +92,14 @@
 };
 
 /*
- * The modem (MD1, generation 6293) and the two blocks the AP talks to it through: CLDMA, a descriptor DMA
- * for the control and data queues, and CCIF, a mailbox with a small SRAM. MT8183 has no modem, so none of
- * this is in mt8183.dtsi. Addresses, interrupts and clocks are the vendor's mdcldma node (V:1281-1310),
- * identical in the live tree the bootloader hands the vendor kernel. The clock gates are the same bits in
- * mainline's MT8183 infracfg driver as in the vendor's MT6771 one, and the three resets are the bits the
- * vendor's md_cldma_hw_reset() and ccci_reset_ccif_hw() write by hand (infracfg 0x140 bit 6, 0x150 bits
- * 2 and 8). No power-domains yet: mainline's MT8183 SPM driver has no MD1 domain.
+ * The modem (MD1, generation 6293) and the two blocks the AP talks to it through: CLDMA, a
+ * descriptor DMA for the network queues, and CCIF, a mailbox with a small SRAM that carries the
+ * handshake and control path. MT8183 has no modem, so none of this is in mt8183.dtsi.
+ * Addresses, interrupts and clocks are the vendor's mdcldma node (V:1281-1310), identical in the
+ * live tree the bootloader hands the vendor kernel. The clock gates are the same bits in
+ * mainline's MT8183 infracfg driver as in the vendor's MT6771 one, and the three resets are the
+ * bits the vendor's md_cldma_hw_reset() and ccci_reset_ccif_hw() write by hand (infracfg 0x140
+ * bit 6, 0x150 bits 2 and 8). No power-domains yet: mainline's MT8183 SPM has no MD1 domain.
  *
  * Disabled: the driver has only been built, never run against the device.
  */

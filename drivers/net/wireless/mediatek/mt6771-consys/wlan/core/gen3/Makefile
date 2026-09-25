@@ -73,12 +73,6 @@ endif
 
 ccflags-y += -DDBG=0
 
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/emi/$(MTK_PLATFORM)
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/emi/submodule
-ccflags-y += -I$(srctree)/drivers/devfreq/
 
 ifeq ($(WLAN_CHIP_ID), MT6631)
 # temp disable emi_mpu on these platforms since it is not ready
@@ -95,18 +89,18 @@ ccflags-y += -D_HIF_SDIO=1
 ccflags-y += -I$(src)/os -I$(src)/os/linux/include -I$(src)/os/linux/hif/sdio/include
 endif
 
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys
 ccflags-y += -I$(src)/include -I$(src)/include/nic -I$(src)/include/mgmt
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/include
 
-WMT_ANDROID_MK := $(srctree)/drivers/misc/mediatek/connectivity/common/Android.mk
+WMT_ANDROID_MK := $(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/Android.mk
 ifeq (,$(wildcard $(WMT_ANDROID_MK)))
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/linux/include
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/include
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/linux/include
 else
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/linux/include
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/include
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/common_main/linux/include
 endif
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/
+ccflags-y += -I$(srctree)/drivers/net/wireless/mediatek/mt6771-consys/common/
 ccflags-y += -D MTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT
 
 MODULE_NAME := wlan_drv_gen3
@@ -239,7 +233,7 @@ HIF_OBJS += $(HIF_DIR)ahb_pdma.o
 else
 HIF_OBJS += $(HIF_DIR)ahb_cqdma.o
 endif
-ifneq ($(wildcard $(srctree)/drivers/misc/mediatek/connectivity/wlan/core/gen3/$(PLAT_DIR)plat_priv.c),)
+ifneq ($(wildcard $(srctree)/drivers/net/wireless/mediatek/mt6771-consys/wlan/core/gen3/$(PLAT_DIR)plat_priv.c),)
 PLAT_OBJS := $(PLAT_DIR)plat_priv.o
 endif
 $(MODULE_NAME)-objs  += $(PLAT_OBJS)

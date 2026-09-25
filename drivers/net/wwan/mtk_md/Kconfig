@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config MTK_MD
+	tristate "MediaTek MT6771 integrated modem"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on OF && HAS_IOMEM && COMMON_CLK
+	select MTK_MD_PROTO
+	help
+	  Host side of the modem built into the MediaTek MT6771 (Helio P60/P70),
+	  MD generation 6293. The bootloader loads the modem firmware; this
+	  driver maps the CLDMA and CCIF blocks the AP talks to the modem
+	  through, reads what the bootloader loaded, and performs the start
+	  handshake.
+
+	  This is a skeleton: it logs every step of the start sequence but
+	  does not yet power the modem on and offers no network interface.
+
+	  If unsure, say N.
+
+config MTK_MD_PROTO
+	tristate
+
+config MTK_MD_KUNIT_TEST
+	tristate "KUnit tests for the MT6771 modem protocol" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	select MTK_MD_PROTO
+	default KUNIT_ALL_TESTS
+	help
+	  Tests for the parts of the MT6771 modem driver that are pure data:
+	  the bootloader's information block, the CCCI header and the runtime
+	  feature negotiation. They run without hardware.
+
+	  If unsure, say N.

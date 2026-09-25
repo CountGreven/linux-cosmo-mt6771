@@ -180,7 +180,7 @@
 #include "wlan_oid.h"
 
 #if CFG_ENABLE_AEE_MSG
-#include <mt-plat/aee.h>
+#include <mtk_plat_shim.h>
 #endif
 
 extern BOOLEAN fgIsBusAccessFailed;

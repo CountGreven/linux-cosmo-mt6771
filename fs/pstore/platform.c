@@ -30,7 +30,7 @@
 
 /* DEBUG (Cosmo bring-up): arch/arm64/kernel/cosmo-mark.c */
 void cosmo_mark(const char *tag);
-void cosmo_note_pw(bool returned);
+void cosmo_note_pw(bool returned, size_t len);
 
 /*
  * We defer making "oops" entries appear in pstore - see
@@ -411,9 +411,9 @@ static void pstore_console_write(struct console *con, const char *s, unsigned c)
 	 * DEBUG (Cosmo bring-up): count console writes on the tag page. Entered-but-not-returned names the
 	 * write that hangs; returned-and-no-further says printk never handed us the next record.
 	 */
-	cosmo_note_pw(false);
+	cosmo_note_pw(false, c);
 	psinfo->write(&record);
-	cosmo_note_pw(true);
+	cosmo_note_pw(true, c);
 }
 
 static struct console pstore_console = {

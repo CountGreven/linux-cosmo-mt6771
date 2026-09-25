@@ -41,6 +41,8 @@
 #define COSMO_TAG_PAGE		0x544e0000UL
 /* Header of ramoops' console zone: base + (size - console - pmsg). Read back to see whether its writes land. */
 #define COSMO_CONSOLE_ZONE	0x544a0000UL
+#define COSMO_CONSOLE_SIZE	0x40000UL
+#define COSMO_CONSOLE_PAGES	(COSMO_CONSOLE_SIZE / PAGE_SIZE)
 
 /*
  * Every C-side marker is rendered onto ONE page: the first page of the pmsg zone, which the vendor
@@ -113,9 +115,12 @@ static void cosmo_render(void)
 	int n;
 
 	if (cosmo_mark_claimed && !cosmo_nc) {
-		struct page *pg = phys_to_page(COSMO_CONSOLE_ZONE);
+		struct page *pages[COSMO_CONSOLE_PAGES];
+		int i;
 
-		cosmo_nc = vmap(&pg, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+		for (i = 0; i < COSMO_CONSOLE_PAGES; i++)
+			pages[i] = phys_to_page(COSMO_CONSOLE_ZONE + i * PAGE_SIZE);
+		cosmo_nc = vmap(pages, COSMO_CONSOLE_PAGES, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
 		if (cosmo_nc)
 			cosmo_snapshot_prev();
 	}
@@ -215,12 +220,46 @@ void cosmo_mark(const char *tag)
 	cosmo_render();
 }
 
+/*
+ * Mirror [off, off + len) of the console zone through the cacheable linear map and clean it to PoC.
+ *
+ * Every run so far: what this kernel writes into the zone through ramoops' write-combined alias is
+ * complete in DRAM by the time the *next* run of this kernel looks (E4 snapshot), yet the vendor
+ * kernel booting in between reads a stale header and exposes nothing. What the vendor has read back
+ * correctly every single time is the tag page, written cacheably and cleaned to PoC. So give the
+ * console records the same treatment: read the bytes back through the write-combined alias, store
+ * them through the linear map, clean and invalidate. Same PA, same bytes; only the path differs.
+ */
+static void cosmo_mirror(size_t off, size_t len)
+{
+	u8 *lin = (u8 *)phys_to_virt(COSMO_CONSOLE_ZONE) + off;
+
+	memcpy_fromio(lin, cosmo_nc + off, len);
+	dcache_clean_inval_poc((unsigned long)lin, (unsigned long)lin + len);
+}
+
 /* Called around psinfo->write in pstore_console_write: false on entry, true when the write returned. */
-void cosmo_note_pw(bool returned)
+void cosmo_note_pw(bool returned, size_t len)
 {
 	if (!returned)
 		cosmo_pw_n++;
 	cosmo_pw_state = returned ? 'K' : 'E';
+	if (returned && cosmo_nc) {
+		/* persistent_ram_write: start is the write pointer after this record, wrapping at data size. */
+		size_t data = COSMO_CONSOLE_SIZE - 12;
+		size_t start = readl(cosmo_nc + 4) % data;
+		size_t from = (start + data - (len % data)) % data;
+
+		if (len > data)
+			len = data;
+		if (from + len <= data) {
+			cosmo_mirror(12 + from, len);
+		} else {
+			cosmo_mirror(12 + from, data - from);
+			cosmo_mirror(12, len - (data - from));
+		}
+		cosmo_mirror(0, 12);				/* sig, start, size */
+	}
 	cosmo_render();
 }
 

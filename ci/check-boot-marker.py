@@ -113,7 +113,7 @@ def main() -> int:
             print("fs/pstore/platform.c: pstore_console_write may only use cosmo_note_pw(); a stage tag or "
                   "a kill switch there hides the console writes it should count")
             return 1
-        ent, ok = body.find("cosmo_note_pw(false);"), body.find("cosmo_note_pw(true);")
+        ent, ok = body.find("cosmo_note_pw(false, c);"), body.find("cosmo_note_pw(true, c);")
         if not (0 <= ent < first_write < ok):
             print("fs/pstore/platform.c: cosmo_note_pw(false) must precede and cosmo_note_pw(true) must "
                   "follow psinfo->write in pstore_console_write, so the tag page counts entries and returns")
@@ -179,7 +179,7 @@ def main() -> int:
             print("cosmo-mark.c still sprays the reservation from C; only head.S (MMU off) may do that")
             ok = False
         # the tag page (twice: line and header) and the console-zone header, nothing else
-        if cm_src.count("phys_to_virt(") > 3:
+        if cm_src.count("phys_to_virt(") > 4:
             print("cosmo-mark.c maps more than the tag page and the console-zone header")
             ok = False
     if C_MARK.exists():

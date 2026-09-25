@@ -89,4 +89,12 @@ config MTK_SOCINFO
 	  information about the SoC to the userspace including the
 	  manufacturer name, marketing name and soc name.
 
+config MTK_MT6771_CPU_PM
+	bool "MediaTek MT6771 core power-down after hotplug"
+	depends on ARM64 && HOTPLUG_CPU
+	help
+	  On MT6771 the firmware's PSCI CPU_OFF does not cut a core's power; the kernel must ask
+	  for it with a SiP call once the core is dead, or the core can never be brought back
+	  (hotplug and kexec both lose it). Say Y on MT6771 boards.
+
 endmenu

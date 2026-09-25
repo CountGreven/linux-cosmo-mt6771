@@ -91,6 +91,49 @@
 	/delete-node/ cci;
 };
 
+/*
+ * The modem (MD1, generation 6293) and the two blocks the AP talks to it through: CLDMA, a descriptor DMA
+ * for the control and data queues, and CCIF, a mailbox with a small SRAM. MT8183 has no modem, so none of
+ * this is in mt8183.dtsi. Addresses, interrupts and clocks are the vendor's mdcldma node (V:1281-1310),
+ * identical in the live tree the bootloader hands the vendor kernel. The clock gates are the same bits in
+ * mainline's MT8183 infracfg driver as in the vendor's MT6771 one, and the three resets are the bits the
+ * vendor's md_cldma_hw_reset() and ccci_reset_ccif_hw() write by hand (infracfg 0x140 bit 6, 0x150 bits
+ * 2 and 8). No power-domains yet: mainline's MT8183 SPM driver has no MD1 domain.
+ *
+ * Disabled: the driver has only been built, never run against the device.
+ */
+/ {
+	soc {
+		modem: modem@10014000 {
+			compatible = "mediatek,mt6771-md";
+			reg = <0 0x10014000 0 0x1000>,
+			      <0 0x1021b000 0 0x1000>,
+			      <0 0x10209000 0 0x1000>,
+			      <0 0x1020a000 0 0x1000>;
+			reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif";
+			interrupts = <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 151 IRQ_TYPE_LEVEL_LOW>,
+				     <GIC_SPI 152 IRQ_TYPE_LEVEL_LOW>,
+				     <GIC_SPI 283 IRQ_TYPE_EDGE_FALLING>;
+			interrupt-names = "cldma", "ccif0", "ccif1", "wdt";
+			clocks = <&infracfg CLK_INFRA_CLDMA_BCLK>,
+				 <&infracfg CLK_INFRA_CCIF_AP>,
+				 <&infracfg CLK_INFRA_CCIF_MD>,
+				 <&infracfg CLK_INFRA_CCIF1_AP>,
+				 <&infracfg CLK_INFRA_CCIF1_MD>,
+				 <&infracfg CLK_INFRA_CCIF2_AP>,
+				 <&infracfg CLK_INFRA_CCIF2_MD>;
+			clock-names = "cldma", "ccif-ap", "ccif-md", "ccif1-ap",
+				      "ccif1-md", "ccif2-ap", "ccif2-md";
+			resets = <&infracfg MT8183_INFRACFG_AO_CLDMA_AO_SW_RST>,
+				 <&infracfg MT8183_INFRACFG_AO_CLDMA_SW_RST>,
+				 <&infracfg MT8183_INFRACFG_AO_AP_MD_CCIF_SW_RST>;
+			reset-names = "cldma-ao", "cldma-pd", "ccif";
+			status = "disabled";
+		};
+	};
+};
+
 /* mt8183.dtsi gives /cpus no label, so reach it by path. */
 / {
 	cpus {

@@ -12,7 +12,7 @@ KBUILD_MODPOST_FAIL_ON_WARNINGS := y
 # ---------------------------------------------------
 # Compile Options
 # ---------------------------------------------------
-ifneq ($(filter "CONSYS_6797" "CONSYS_6759" "CONSYS_6758" "CONSYS_6775" "CONSYS_6771", $(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter CONSYS_6797 CONSYS_6759 CONSYS_6758 CONSYS_6775 CONSYS_6771, $(CONFIG_MTK_COMBO_CHIP)),)
 WLAN_CHIP_ID=MT6631
 else
 WLAN_CHIP_ID=MT6630
@@ -76,7 +76,7 @@ ccflags-y += -DDBG=0
 
 ifeq ($(WLAN_CHIP_ID), MT6631)
 # temp disable emi_mpu on these platforms since it is not ready
-ifneq ($(filter "CONSYS_6775" "CONSYS_6771", $(CONFIG_MTK_COMBO_CHIP)),)
+ifneq ($(filter CONSYS_6775 CONSYS_6771, $(CONFIG_MTK_COMBO_CHIP)),)
 ccflags-y += -DCFG_ENABLE_EMI_MPU=0
 else
 ccflags-y += -DCFG_ENABLE_EMI_MPU=1

@@ -493,3 +493,18 @@
 &pmic {
 	interrupts-extended = <&pio 182 IRQ_TYPE_LEVEL_HIGH>;
 };
+
+/*
+ * The MFG power domains need their rails or the whole power controller fails to probe
+ * ("power-domain@2: failed to get power supply", console log 2026-09-25), which leaves every
+ * display block and the GPU waiting for it forever. Same rails as mt8183-kukui; the vendor's GPU
+ * DVFS log confirms VGPU and VSRAM_GPU (vendor-boot.log: "VGPU is enabled = 1 (900 mV), VSRAM_GPU
+ * is enabled = 1 (1000 mV)").
+ */
+&mfg_async {
+	domain-supply = <&mt6358_vsram_gpu_reg>;
+};
+
+&mfg {
+	domain-supply = <&mt6358_vgpu_reg>;
+};

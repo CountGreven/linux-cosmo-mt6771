@@ -1272,12 +1272,12 @@ BOOLEAN wmmAcmCanDequeue(P_ADAPTER_T prAdapter, UINT_8 ucAc, UINT_32 u4PktTxTime
 	struct SOFT_ACM_CTRL *prAcmCtrl = NULL;
 	struct WMM_INFO *prWmmInfo = &prAdapter->rWifiVar.rWmmInfo;
 	UINT_32 u4CurTime = 0;
-	struct timespec ts;
+	struct timespec64 ts;
 
 	prAcmCtrl = &prWmmInfo->arAcmCtrl[ucAc];
 	if (!prAcmCtrl->u4AdmittedTime)
 		return FALSE;
-	get_monotonic_boottime(&ts);
+	ktime_get_boottime_ts64(&ts);
 	u4CurTime = ts.tv_sec;
 	if (!TIME_BEFORE(u4CurTime, prAcmCtrl->u4IntervalEndSec)) {
 		u4CurTime++;
@@ -1317,7 +1317,7 @@ BOOLEAN wmmAcmCanDequeue(P_ADAPTER_T prAdapter, UINT_8 ucAc, UINT_32 u4PktTxTime
 	if (!timerPendingTimer(&prWmmInfo->rAcmDeqTimer)) {
 		UINT_32 u4EndMsec = prAcmCtrl->u4IntervalEndSec * 1000;
 
-		get_monotonic_boottime(&ts);
+		ktime_get_boottime_ts64(&ts);
 		u4CurTime = ts.tv_sec * MSEC_PER_SEC;
 		u4CurTime += ts.tv_nsec / NSEC_PER_MSEC;
 		/* It is impossible that u4EndMsec is less than u4CurTime */

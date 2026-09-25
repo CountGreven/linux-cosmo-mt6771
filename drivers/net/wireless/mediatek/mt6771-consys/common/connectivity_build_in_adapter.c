@@ -39,12 +39,12 @@
 #endif
 
 #ifdef CONNADP_HAS_CLOCK_BUF_CTRL
-#include <mtk_clkbuf_ctl.h>
+#include <mtk_plat_shim.h>
 #endif
 
 /* PMIC */
 #if defined(CONNADP_HAS_PMIC_API) || defined(CONNADP_HAS_UPMU_VCN_CTRL)
-#include <upmu_common.h>
+#include <mtk_plat_shim.h>
 #endif
 
 /* MMC */
@@ -52,8 +52,8 @@
 #include <linux/mmc/host.h>
 #include <sdio_ops.h>
 
-#include "mtk_spm_resource_req.h"
-#include <mtk_sleep.h>
+#include <mtk_plat_shim.h>
+#include <mtk_plat_shim.h>
 
 #ifdef CONFIG_ARCH_MT6570
 #define CPU_BOOST y

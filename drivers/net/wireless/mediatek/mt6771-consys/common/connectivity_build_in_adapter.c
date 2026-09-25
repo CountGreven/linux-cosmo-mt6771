@@ -103,7 +103,8 @@ EXPORT_SYMBOL(connectivity_export_show_stack);
 
 void connectivity_export_tracing_record_cmdline(struct task_struct *tsk)
 {
-	tracing_record_cmdline(tsk);
+	/* tracing_record_cmdline() is not exported: it only records the task name for ftrace output. */
+	(void)tsk;
 }
 EXPORT_SYMBOL(connectivity_export_tracing_record_cmdline);
 

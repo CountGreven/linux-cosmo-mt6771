@@ -676,10 +676,10 @@ static int wlanSetMacAddress(struct net_device *ndev, void *addr)
 	 **********************************************************************
 	 */
 	wdev = ndev->ieee80211_ptr;
-	if (wdev->ssid_len > 0 || (wdev->current_bss)) {
+	if (wdev->u.client.ssid_len > 0 || (wdev->connected)) {
 		DBGLOG(INIT, ERROR,
 		       "Reject mac addr change due to ssid_len(%d) & bss(%d)\n",
-		       wdev->ssid_len, wdev->current_bss);
+		       wdev->u.client.ssid_len, wdev->connected);
 		return WLAN_STATUS_NOT_ACCEPTED;
 	}
 

@@ -363,7 +363,7 @@ int mtk_p2p_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev);
 
 int mtk_p2p_cfg80211_set_txpower(struct wiphy *wiphy,
 				 struct wireless_dev *wdev,
-				 enum nl80211_tx_power_setting type, int mbm);
+				 int radio_idx, enum nl80211_tx_power_setting type, int mbm);
 
 int mtk_p2p_cfg80211_get_txpower(struct wiphy *wiphy,
 				 struct wireless_dev *wdev,

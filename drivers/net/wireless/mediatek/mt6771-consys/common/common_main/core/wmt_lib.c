@@ -1171,7 +1171,7 @@ static INT32 met_thread(void *pvData)
 	}
 	osal_memset(met_dump_buf, 0, MET_DUMP_SIZE);
 
-	emi_met_base = ioremap_nocache(emi_info->emi_ap_phy_addr + emi_met_offset, emi_met_size);
+	emi_met_base = ioremap(emi_info->emi_ap_phy_addr + emi_met_offset, emi_met_size);
 	if (!emi_met_base) {
 		osal_free(met_dump_buf);
 		WMT_ERR_FUNC("met emi ioremap fail\n");

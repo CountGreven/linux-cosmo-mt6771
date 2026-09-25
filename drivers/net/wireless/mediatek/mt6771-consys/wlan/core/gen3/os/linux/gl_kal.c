@@ -110,7 +110,6 @@ BOOLEAN wlan_perf_monitor_force_enable = FALSE;
 static struct file *filp;
 static uid_t orgfsuid;
 static gid_t orgfsgid;
-static mm_segment_t orgfs;
 
 static PUINT_8 apucFwPath[] = {
 	(PUINT_8) "/storage/sdcard0/",
@@ -206,9 +205,6 @@ WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo)
 
 	ASSERT(prGlueInfo);
 
-	orgfs = get_fs();
-	set_fs(get_ds());
-
 	/* Get FW name table */
 	if (ucMaxEcoVer < ucCurEcoVer)
 		apucNameTable = apucFwName;
@@ -264,7 +260,6 @@ WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo)
 
 error_open:
 	/* restore */
-	set_fs(orgfs);
 	cred->fsuid.val = orgfsuid;
 	cred->fsgid.val = orgfsgid;
 	put_cred(cred);
@@ -292,7 +287,6 @@ WLAN_STATUS kalFirmwareClose(IN P_GLUE_INFO_T prGlueInfo)
 		filp_close(filp, NULL);
 
 		/* restore */
-		set_fs(orgfs);
 		{
 			struct cred *cred = (struct cred *)get_current_cred();
 

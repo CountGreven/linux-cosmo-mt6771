@@ -3,6 +3,7 @@
 #
 #   ci/flash-test.sh --image boot-test.img              # the whole cycle
 #   ci/flash-test.sh --image boot-test.img --dry-run    # say what would happen
+#   ci/flash-test.sh --image boot-test.img --no-reboot  # write, verify, clear pstore; Fredrik reboots
 #   ci/flash-test.sh --collect                          # just read pstore from a device that came back
 #
 # The guards are in here rather than in a prompt, so a worker can run the cycle unattended:
@@ -26,11 +27,13 @@ wait_secs="${COSMO_WAIT:-180}"
 image=""
 dry=0
 collect_only=0
+no_reboot=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="${2:-}"; shift ;;
         --dry-run) dry=1 ;;
         --collect) collect_only=1 ;;
+        --no-reboot) no_reboot=1 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -103,7 +106,14 @@ say "verified: $local_hash"
 say "=== clearing old pstore records"
 ssh_ro "sudo -n rm -f /sys/fs/pstore/* 2>/dev/null; sudo -n ls /sys/fs/pstore/ | wc -l" | sed 's/^/  records left: /'
 
-# 6. Reboot and wait. The boot menu may need a human; say so rather than pretending.
+# 6. Since the kernel boots (2026-09-25), a successful attempt never "comes back": the reboot and the
+#    wait below only make sense for a kernel that dies. With --no-reboot the script stops here and
+#    Fredrik picks the slot himself.
+if [ "$no_reboot" = 1 ]; then
+    say "=== written and verified; not rebooting. Pick '$target_name' in the boot menu when ready."
+    exit 0
+fi
+# 6b. Reboot and wait. The boot menu may need a human; say so rather than pretending.
 say "=== rebooting into the menu; select '$target_name' to run the test kernel"
 ssh_ro "sudo -n systemctl reboot" >/dev/null 2>&1 || ssh_ro "sudo -n reboot" >/dev/null 2>&1 || true
 sleep 20

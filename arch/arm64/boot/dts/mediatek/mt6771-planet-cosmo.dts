@@ -331,7 +331,7 @@
 		tcpc {
 			compatible = "mediatek,mt6370-tcpc";
 			interrupts-extended = <&pio 41 IRQ_TYPE_LEVEL_LOW>;
-			status = "disabled";
+			status = "okay";
 		};
 
 		/*
@@ -382,8 +382,6 @@
 	 */
 	mt6370_otg_vbus: usb-otg-vbus-regulator {
 		regulator-name = "mt6370-usb-otg-vbus";
-		/* On at boot: mtu3 in plain host mode never enables its vbus-supply (only the role switch does). */
-		regulator-always-on;
 		regulator-min-microvolt = <4350000>;
 		regulator-max-microvolt = <5800000>;
 		regulator-min-microamp = <500000>;
@@ -772,18 +770,40 @@
 
 &ssusb {
 	/*
-	 * Host only for now: the Type-C controller (MT6370 TCPC) that would drive role switching is not
-	 * enabled yet, and what this port needs first is a network -- a USB Ethernet dongle, which
-	 * NetworkManager on the Debian root DHCPs by itself. VBUS: the vendor boosts it from the MT6370
-	 * (otg_vbus), not described yet; a powered hub or PD pass-through dongle does not need it.
+	 * Dual role under the MT6370's Type-C port controller, as the vendor runs it: TCPM presents Rp,
+	 * sees the attach, sources VBUS through the connector's vbus-supply and switches this controller
+	 * to host. Plain host mode with VBUS forced on got no attach from a PD-aware hub.
 	 */
-	dr_mode = "host";
 	pinctrl-names = "default";
 	pinctrl-0 = <&usb_default_pins>;	/* GPIO79 low: D+/D- to the left (MT6370) port */
 	vusb33-supply = <&mt6358_vusb_reg>;
-	/* 5 V for the dongle: the MT6370's OTG boost, which mtu3 switches on in host mode. */
-	vbus-supply = <&mt6370_otg_vbus>;
+	dr_mode = "otg";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
+	/* USB3 off: the SuperSpeed lane goes through the FUSB301A mux, which nothing drives yet. */
+	mediatek,u3p-dis-msk = <1>;
 	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+
+			ssusb_hs_ep: endpoint {
+				remote-endpoint = <&tcpc_hs_ep>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+
+			ssusb_ss_ep: endpoint {
+				remote-endpoint = <&tcpc_ss_ep>;
+			};
+		};
+	};
 };
 
 &usb_host {
@@ -802,6 +822,45 @@
 		pins-lr-switch {
 			pinmux = <PINMUX_GPIO79__FUNC_GPIO79>;
 			output-low;
+		};
+	};
+};
+
+/*
+ * The connector on the left port (live.dts:7298 type_c_port0: role_def 4 = dual role). The MT6370's TCPC
+ * is the port controller; its VBUS source is the charger's OTG boost. PDOs are STAND-INs at 5 V.
+ */
+&{/soc/i2c@11017000/pmic@34/tcpc} {
+	connector {
+		compatible = "usb-c-connector";
+		label = "USB-C";
+		vbus-supply = <&mt6370_otg_vbus>;
+		data-role = "dual";
+		power-role = "dual";
+		try-power-role = "sink";
+		source-pdos = <PDO_FIXED(5000, 500, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
+		sink-pdos = <PDO_FIXED(5000, 2000, PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
+		op-sink-microwatt = <10000000>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				tcpc_hs_ep: endpoint {
+					remote-endpoint = <&ssusb_hs_ep>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				tcpc_ss_ep: endpoint {
+					remote-endpoint = <&ssusb_ss_ep>;
+				};
+			};
 		};
 	};
 };

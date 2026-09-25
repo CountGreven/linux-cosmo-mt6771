@@ -16,7 +16,6 @@
 #define _WMT_GPIO_H_
 
 #include <linux/of.h>
-#include <linux/of_gpio.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/gpio.h>

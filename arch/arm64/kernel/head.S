@@ -106,8 +106,9 @@
 	// Only the pmsg zone (last 0x10000 of the reservation), never the console zone: the bytes these
 	// MMU-off stores wrote came back on top of ramoops' records after every reset, on exactly those
 	// 24 bytes per page. The vendor reads the pmsg zone back as pmsg-ramoops-0, so the stages still show.
-	movz	x5, #0x544e, lsl #16		// 0x544e0000, start of the pmsg zone
-	movz	x6, #0x544f, lsl #16		// one past the end of the reservation
+	movz	x5, #0x5446, lsl #16		// 0x54460000, the tag page (vendor console-ramoops)
+	movz	x6, #0x5446, lsl #16
+	movk	x6, #0x1000			// one page only
 	movz	w7, #0x4244
 	movk	w7, #0x4347, lsl #16		// PERSISTENT_RAM_SIG
 	mov	w8, #12				// payload length; start == size == 12

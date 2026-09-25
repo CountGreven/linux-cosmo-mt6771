@@ -37,11 +37,11 @@
 /* fs/pstore/ram_core.c in the vendor kernel: #define PERSISTENT_RAM_SIG (0x43474244) */
 #define PERSISTENT_RAM_SIG	0x43474244
 #define COSMO_MARK_LEN		12
-/* First page of the pmsg zone: base + size - pmsg_size, read back as pmsg-ramoops-0. */
-#define COSMO_TAG_PAGE		0x544e0000UL
+/* The vendor's first console zone (base + 0x50000), read back as console-ramoops. */
+#define COSMO_TAG_PAGE		0x54460000UL
 /* Header of ramoops' console zone: base + (size - console - pmsg). Read back to see whether its writes land. */
-#define COSMO_CONSOLE_ZONE	0x544a0000UL
-#define COSMO_CONSOLE_SIZE	0x40000UL
+#define COSMO_CONSOLE_ZONE	0x544e0000UL
+#define COSMO_CONSOLE_SIZE	0x10000UL
 #define COSMO_CONSOLE_PAGES	(COSMO_CONSOLE_SIZE / PAGE_SIZE)
 
 /*

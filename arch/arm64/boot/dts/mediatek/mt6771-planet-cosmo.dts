@@ -163,8 +163,9 @@
 			compatible = "ramoops";
 			reg = <0 0x54410000 0 0xe0000>;
 			record-size = <0x1000>;
-			console-size = <0x40000>;
-			pmsg-size = <0x10000>;
+			/* Console last, 64 KiB, no pmsg: that puts it at 0x544e0000, the one part of this
+			 * region the vendor kernel has read our writes back from every time (11-console-zone). */
+			console-size = <0x10000>;
 		};
 
 		/* Vendor ram_console (V:302-305) and minirdump (V:306-309). */

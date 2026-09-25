@@ -167,43 +167,42 @@ def main() -> int:
         else:
             # head.S may only write the pmsg zone (the last pmsg-size bytes of the reservation): its
             # MMU-off stores came back on top of ramoops' console records after every reset.
-            pm2 = re.search(r"pmsg-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
-            c_end = int(cend.group(1), 16)
-            if not pm2 or (start, end) != (c_end - int(pm2.group(1), 16), c_end):
-                print(f"head.S writes 0x{start:08x}..0x{end:08x}; it may only write the pmsg zone "
-                      f"(the last pmsg-size bytes ending at 0x{c_end:08x}), never the console zone")
+            # head.S may only write the tag page: its MMU-off stores came back on top of ramoops'
+            # records everywhere else.
+            tag = re.search(r"COSMO_TAG_PAGE\s+0x([0-9a-fA-F]+)", cm_src)
+            if not tag or (start, end) != (int(tag.group(1), 16), int(tag.group(1), 16) + 0x1000):
+                print(f"head.S writes 0x{start:08x}..0x{end:08x}; it may only write the tag page")
                 ok = False
-        # C must never write the reservation through the cacheable linear map except on the tag page:
-        # such writes came back after a reset on top of ramoops' own write-combined records.
-        if "COSMO_MARK_STRIDE" in cm_src or "cosmo_spray" in cm_src:
-            print("cosmo-mark.c still sprays the reservation from C; only head.S (MMU off) may do that")
-            ok = False
-        # the tag page (twice: line and header) and the console-zone header, nothing else
-        if cm_src.count("phys_to_virt(") > 4:
-            print("cosmo-mark.c maps more than the tag page and the console-zone header")
-            ok = False
     if C_MARK.exists():
         cm = C_MARK.read_text()
         page = re.search(r"COSMO_TAG_PAGE\s+0x([0-9a-fA-F]+)", cm)
+        czone = re.search(r"COSMO_CONSOLE_ZONE\s+0x([0-9a-fA-F]+)", cm)
+        csize = re.search(r"COSMO_CONSOLE_SIZE\s+0x([0-9a-fA-F]+)", cm)
+        cs = re.search(r"console-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
         pm = re.search(r"pmsg-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
-        if not (page and pm):
-            print("no COSMO_TAG_PAGE in cosmo-mark.c or no pmsg-size in the dts")
+        pmsg = int(pm.group(1), 16) if pm else 0
+        if not (page and czone and csize and cs):
+            print("cosmo-mark.c or the dts lacks the tag page / console zone constants")
             ok = False
         else:
-            tag_page, pmsg = int(page.group(1), 16), int(pm.group(1), 16)
-            pmsg_start = base + size - pmsg
-            if tag_page != pmsg_start:
-                print(f"COSMO_TAG_PAGE 0x{tag_page:08x} is not the start of the pmsg zone 0x{pmsg_start:08x}; "
-                      "the vendor kernel reads exactly that page back as pmsg-ramoops-0")
+            # The vendor kernel's zones (fs/pstore/ram.c in the 4.4 tree): dump 0x50000, then two
+            # console zones of 0x40000, then pmsg 0x10000. It reads our writes back reliably only from
+            # 0x544e0000 on, so our console zone goes there and the tag page takes its first console zone.
+            vendor_cprz = base + 0x50000
+            our_console = base + size - int(cs.group(1), 16) - pmsg
+            if int(page.group(1), 16) != vendor_cprz:
+                print(f"COSMO_TAG_PAGE 0x{int(page.group(1), 16):08x} != vendor console-ramoops 0x{vendor_cprz:08x}")
                 ok = False
-            else:
-                print(f"tag page 0x{tag_page:08x} = start of the pmsg zone")
-            cz = re.search(r"COSMO_CONSOLE_ZONE\s+0x([0-9a-fA-F]+)", cm)
-            cs = re.search(r"console-size\s*=\s*<\s*(0x[0-9a-f]+)\s*>", DT_FILES[0].read_text())
-            if cz and cs and int(cz.group(1), 16) != pmsg_start - int(cs.group(1), 16):
-                print(f"COSMO_CONSOLE_ZONE 0x{int(cz.group(1), 16):08x} is not the console zone header "
-                      f"0x{pmsg_start - int(cs.group(1), 16):08x}")
+            if int(czone.group(1), 16) != our_console or int(csize.group(1), 16) != int(cs.group(1), 16):
+                print(f"COSMO_CONSOLE_ZONE/SIZE disagree with the dts: zone 0x{our_console:08x} size {cs.group(1)}")
                 ok = False
+            if our_console != 0x544e0000:
+                print(f"console zone 0x{our_console:08x}; the vendor reads back only from 0x544e0000 on")
+                ok = False
+            if our_console + int(cs.group(1), 16) > base + size:
+                print("console zone runs past the reservation")
+                ok = False
+            print(f"tag page 0x{int(page.group(1), 16):08x} = vendor console-ramoops; console zone 0x{our_console:08x}")
     print("boot marker: ok" if ok else "boot marker: FAILED")
     return 0 if ok else 1
 

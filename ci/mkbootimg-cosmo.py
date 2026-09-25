@@ -49,6 +49,12 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # 270 degrees. Dynamic debug on the Type-C stack and the USB controller: every CC state, attach
            # and role change goes to the console/kern.log.
            "console=tty0 fbcon=rotate:3 panic=5 "
+           # The slot kernel is the launcher, single core on purpose. On this firmware a core that has
+           # been through PSCI CPU_OFF never comes back (hotplug off/on of cpu1 fails on an LK boot,
+           # 2026-09-25, 19-kexec.org), and kexec must offline every secondary. Cores the firmware has
+           # never started do come up, so the launcher leaves them untouched and the kexec'd test kernel
+           # (ci/kexec-test.sh --set maxcpus=8) is the one that gets all eight.
+           "maxcpus=1 "
            "dyndbg=\"module tcpm +p; module tcpci +p; module tcpci_mt6370 +p; module mtu3 +p; module xhci_mtk +p; module xhci_hcd +p; module usbcore +p; file drivers/base/dd.c +p\" "
            # The Type-C connector sits under the tcpc under the MT6370 on i2c11 and links to the USB
            # controller both ways; fw_devlink reported the cycle as fixed and still left

@@ -831,7 +831,7 @@ static int connlog_emi_init(phys_addr_t emiaddr)
 	}
 
 	gDev.phyAddrEmiBase = emiaddr;
-	gDev.virAddrEmiLogBase = ioremap_nocache(gDev.phyAddrEmiBase +
+	gDev.virAddrEmiLogBase = ioremap(gDev.phyAddrEmiBase +
 		CONNLOG_EMI_LOG_BASE_OFFSET, CONNLOG_EMI_SIZE);
 	if (gDev.virAddrEmiLogBase) {
 		pr_info("EMI mapping OK virtual(0x%p) physical(0x%x)\n",

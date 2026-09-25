@@ -47,7 +47,7 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # rotate:3 drew a narrow strip; try the other direction. Dynamic debug on the Type-C stack and
            # the USB controller: every CC state, attach and role change goes to the console/kern.log.
            "console=tty0 fbcon=rotate:1 panic=5 "
-           "dyndbg=\"module tcpm +p; module tcpci +p; module tcpci_mt6370 +p; module mtu3 +p; module xhci_mtk +p\" "
+           "dyndbg=\"module tcpm +p; module tcpci +p; module tcpci_mt6370 +p; module mtu3 +p; module xhci_mtk +p; file drivers/base/dd.c +p\" "
            # The Type-C connector sits under the tcpc under the MT6370 on i2c11 and links to the USB
            # controller both ways; fw_devlink reported the cycle as fixed and still left
            # 11017000.i2c "deferred probe pending: (reason unknown)", so the MT6370 never probed.

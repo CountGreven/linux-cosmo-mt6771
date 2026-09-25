@@ -21,7 +21,10 @@
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/printk.h>
+#include <linux/ktime.h>
 #include <linux/string.h>
+#include <linux/time64.h>
+#include <linux/timekeeping.h>
 #include <linux/types.h>
 
 #define MTK_SHIM_STUB() \
@@ -40,6 +43,20 @@ static inline char *strncpy(char *dest, const char *src, size_t count)
 	for (; i < count; i++)
 		dest[i] = '\0';
 	return dest;
+}
+
+/*
+ * do_gettimeofday() and struct timeval are gone. The vendor keeps its
+ * struct timeval variables (as struct __kernel_old_timeval, same two
+ * fields) and reads the wall clock through this.
+ */
+static inline void mtk_gettimeofday(struct __kernel_old_timeval *tv)
+{
+	struct timespec64 ts;
+
+	ktime_get_real_ts64(&ts);
+	tv->tv_sec = ts.tv_sec;
+	tv->tv_usec = ts.tv_nsec / NSEC_PER_USEC;
 }
 
 /*

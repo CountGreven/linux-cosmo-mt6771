@@ -1433,7 +1433,7 @@ static _osal_inline_ INT32 stp_dbg_fill_hdr(STP_DBG_HDR_T *hdr, INT32 type, INT3
 			      INT32 crc, INT32 dir, INT32 len, INT32 dbg_type)
 {
 
-	struct timeval now;
+	struct __kernel_old_timeval now;
 	UINT64 ts;
 	ULONG nsec;
 
@@ -1442,7 +1442,7 @@ static _osal_inline_ INT32 stp_dbg_fill_hdr(STP_DBG_HDR_T *hdr, INT32 type, INT3
 		return -EINVAL;
 	}
 
-	do_gettimeofday(&now);
+	mtk_gettimeofday(&now);
 	osal_get_local_time(&ts, &nsec);
 	hdr->last_dbg_type = gStpDbgDumpType;
 	gStpDbgDumpType = dbg_type;

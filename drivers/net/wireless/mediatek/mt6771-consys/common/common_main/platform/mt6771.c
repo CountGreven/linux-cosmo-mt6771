@@ -39,6 +39,7 @@
 #include <linux/delay.h>
 #include <linux/memblock.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include "osal_typedef.h"
 #include "mt6771.h"
 #include "mtk_wcn_consys_hw.h"
@@ -114,6 +115,7 @@ struct bt_wifi_v33_status gBtWifiV33;
 
 /* CCF part */
 struct clk *clk_scp_conn_main;	/*ctrl conn_power_on/off */
+static struct device *consys_pm_dev;	/* CONN genpd owner when there is no conn clock */
 
 /* PMIC part */
 #if CONSYS_PMIC_CTRL_ENABLE
@@ -369,8 +371,22 @@ static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
 		WMT_PLAT_PR_ERR("[CCF]cannot get clk_scp_conn_main clock.\n");
 		return PTR_ERR(clk_scp_conn_main);
 	}
-	if (!clk_scp_conn_main)
-		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; relying on the CONN power domain\n");
+	if (!clk_scp_conn_main) {
+		/*
+		 * No clock: drive the genpd instead. The platform bus attached it powered on, so mark
+		 * the device active, enable runtime PM and suspend it once, which powers the domain off.
+		 * consys_hw_power_ctrl() then cycles it with pm_runtime, matching the vendor's
+		 * spm_mtcmos_ctrl_conn() sequence: the MCU must come out of a real domain power-up
+		 * after VCN18/VCN28 and the crystal buffer are on, not run since boot.
+		 */
+		consys_pm_dev = &pdev->dev;
+		pm_runtime_set_active(consys_pm_dev);
+		if (devm_pm_runtime_enable(consys_pm_dev))
+			WMT_PLAT_PR_ERR("[CCF]pm_runtime enable failed\n");
+		pm_runtime_suspend(consys_pm_dev);
+		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; CONN domain via runtime PM, ack=0x%x\n",
+				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
+	}
 	WMT_PLAT_PR_DBG("[CCF]clk_scp_conn_main=%p\n", clk_scp_conn_main);
 
 	return 0;
@@ -516,10 +532,16 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
 
 	if (enable) {
 #if CONSYS_PWR_ON_OFF_API_AVAILABLE
-		iRet = clk_prepare_enable(clk_scp_conn_main);
-		if (iRet)
-			WMT_PLAT_PR_ERR("clk_prepare_enable(clk_scp_conn_main) fail(%d)\n", iRet);
-		WMT_PLAT_PR_DBG("clk_prepare_enable(clk_scp_conn_main) ok\n");
+		if (clk_scp_conn_main) {
+			iRet = clk_prepare_enable(clk_scp_conn_main);
+			if (iRet)
+				WMT_PLAT_PR_ERR("clk_prepare_enable(clk_scp_conn_main) fail(%d)\n", iRet);
+			WMT_PLAT_PR_DBG("clk_prepare_enable(clk_scp_conn_main) ok\n");
+		} else if (consys_pm_dev) {
+			iRet = pm_runtime_resume_and_get(consys_pm_dev);
+			WMT_PLAT_PR_INFO("CONN domain on via runtime PM (%d), ack=0x%x\n", iRet,
+					CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
+		}
 #else
 		/*2.write conn_top1_pwr_on=1, power on conn_top1 0x1000632C [2]  1'b1 */
 		CONSYS_REG_WRITE(conn_reg.spm_base + CONSYS_TOP1_PWR_CTRL_OFFSET,
@@ -574,8 +596,14 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
 #endif /* CONSYS_PWR_ON_OFF_API_AVAILABLE */
 	} else {
 #if CONSYS_PWR_ON_OFF_API_AVAILABLE
-		clk_disable_unprepare(clk_scp_conn_main);
-		WMT_PLAT_PR_DBG("clk_disable_unprepare(clk_scp_conn_main) calling\n");
+		if (clk_scp_conn_main) {
+			clk_disable_unprepare(clk_scp_conn_main);
+			WMT_PLAT_PR_DBG("clk_disable_unprepare(clk_scp_conn_main) calling\n");
+		} else if (consys_pm_dev) {
+			iRet = pm_runtime_put_sync(consys_pm_dev);
+			WMT_PLAT_PR_INFO("CONN domain off via runtime PM (%d), ack=0x%x\n", iRet,
+					CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
+		}
 #else
 		/*disable AXI BUS protect 0x100012a0 [13][14] */
 		CONSYS_REG_WRITE(conn_reg.topckgen_base + CONSYS_TOPAXI_PROT_EN_OFFSET,

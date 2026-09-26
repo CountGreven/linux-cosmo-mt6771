@@ -243,3 +243,12 @@ config FW_DEVLINK_SYNC_STATE_TIMEOUT
 	  work on.
 
 endmenu
+
+config SHUTDOWN_TRACE
+	bool "Trace device shutdown hooks to a raw block device"
+	help
+	  Debug aid for reboots that never come back: with shutdown_trace=<path>@<offset> on the
+	  command line, device_shutdown() writes one line per device, synchronously, to that block
+	  device before and after calling its shutdown hook. The last "pre" line without a matching
+	  "post" names the hook that hung. Read it back with dd and strings.
+

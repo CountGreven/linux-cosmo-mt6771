@@ -54,6 +54,9 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # controller both ways; fw_devlink reported the cycle as fixed and still left
            # 11017000.i2c "deferred probe pending: (reason unknown)", so the MT6370 never probed.
            "fw_devlink=permissive "
+           # Debug: device_shutdown() trace into the last MiB of the UBPORTS test slot (p42, 32 MiB; the image
+           # never reaches it and expdb's tail is in use). Read with dd bs=1M skip=31 + strings.
+           "shutdown_trace=/dev/mmcblk0p42@32505856 "
            # The real Debian root, mounted READ-ONLY.
            #
            # Gemian roots from /dev/mmcblk0p43, plain ext4 -- the root=/dev/dm-0 that LK puts on the

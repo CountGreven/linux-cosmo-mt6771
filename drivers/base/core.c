@@ -13,6 +13,7 @@
 #include <linux/cleanup.h>
 #include <linux/cpufreq.h>
 #include <linux/device.h>
+#include <linux/shutdown_trace.h>
 #include <linux/dma-map-ops.h> /* for dma_default_coherent */
 #include <linux/err.h>
 #include <linux/fwnode.h>
@@ -4877,6 +4878,7 @@ void device_shutdown(void)
 	struct device *dev, *parent;
 
 	wait_for_device_probe();
+	shutdown_trace_begin();
 	device_block_probing();
 
 	cpufreq_suspend();
@@ -4913,6 +4915,7 @@ void device_shutdown(void)
 		/* Don't allow any more runtime suspends */
 		pm_runtime_get_noresume(dev);
 		pm_runtime_barrier(dev);
+		shutdown_trace_pre(dev);
 
 		if (dev->class && dev->class->shutdown_pre) {
 			if (initcall_debug)
@@ -4933,11 +4936,13 @@ void device_shutdown(void)
 		if (parent)
 			device_unlock(parent);
 
+		shutdown_trace_post(dev);
 		put_device(dev);
 		put_device(parent);
 
 		spin_lock(&devices_kset->list_lock);
 	}
+	shutdown_trace_end();
 	spin_unlock(&devices_kset->list_lock);
 }
 

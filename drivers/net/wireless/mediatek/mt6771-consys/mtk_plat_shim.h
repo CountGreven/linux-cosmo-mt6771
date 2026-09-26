@@ -351,118 +351,40 @@ static inline int emi_mpu_set_protection(struct emi_region_info_t *region_info)
 }
 
 /*
- * mtk_btif_exp.h -- the BTIF UART-like block at 0x1100c000 that carries
- * STP to the combo chip. It is a MediaTek IP with its own vendor driver
- * (drivers/misc/mediatek/btif); mainline has none.
- * STAND-IN: every call fails with -ENOSYS, so stp_btif cannot open.
+ * BTIF: the real driver now lives in btif/ (vendor drivers/misc/mediatek/btif adapted); the STP layer
+ * calls it through the vendor's own exported header. No stubs.
  */
-#define BTIF_MAX_LEN_PER_PKT	2048
+#include "btif/common/inc/mtk_btif_exp.h"
 
-typedef enum _ENUM_BTIF_DPIDLE_ {
-	BTIF_DPIDLE_DISABLE = 0,
-	BTIF_DPIDLE_ENABLE,
-	BTIF_DPIDLE_MAX,
-} ENUM_BTIF_DPIDLE_CTRL;
+/* What the BTIF driver took from mach/mt_reg_base.h, mtk_io.h, mtk_lpae.h and mach/mt_irq.h: raw
+ * register access with a completion barrier, the LPAE "4G mode" DMA flag (off: the rings come from
+ * dma_alloc_coherent under a 32-bit mask), and the no-DT fallback addresses, which the DT path never
+ * reads. */
+#include <linux/io.h>
+#ifndef mt_reg_sync_writel
+#define mt_reg_sync_writel(v, a)	do { writel((v), (void __iomem *)(unsigned long)(a)); dsb(sy); } while (0)
+#endif
+#ifndef mt65xx_reg_sync_writel
+#define mt65xx_reg_sync_writel(v, a)	mt_reg_sync_writel(v, a)
+#endif
+#ifndef enable_4G
+#define enable_4G()			0
+#endif
+#ifndef AP_DMA_BASE
+#define AP_DMA_BASE			0UL
+#endif
+#ifndef BTIF_BASE
+#define BTIF_BASE			0UL
+#endif
+#ifndef MT_BTIF_IRQ_ID
+#define MT_BTIF_IRQ_ID			0
+#endif
+/* mtk-gic-extend.h: a GIC register dump for debugging; nothing to dump on the mainline GIC driver. */
+#ifndef mt_irq_dump_status
+#define mt_irq_dump_status(irq)		do { (void)(irq); } while (0)
+#endif
 
-typedef enum _ENUM_BTIF_LPBK_MODE_ {
-	BTIF_LPBK_DISABLE = 0,
-	BTIF_LPBK_ENABLE,
-	BTIF_LPBK_MAX,
-} ENUM_BTIF_LPBK_MODE;
 
-typedef enum _ENUM_BTIF_DBG_ID_ {
-	BTIF_DISABLE_LOGGER = 0,
-	BTIF_ENABLE_LOGGER,
-	BTIF_DUMP_LOG,
-	BTIF_CLR_LOG,
-	BTIF_DUMP_BTIF_REG,
-	BTIF_ENABLE_RT_LOG,
-	BTIF_DISABLE_RT_LOG,
-	BTIF_DUMP_BTIF_IRQ,
-	BTIF_DBG_MAX,
-} ENUM_BTIF_DBG_ID;
 
-typedef int (*MTK_WCN_BTIF_RX_CB)(const unsigned char *p_buf, unsigned int len);
-
-struct task_struct;
-
-static inline int mtk_wcn_btif_open(char *p_owner, unsigned long *p_id)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_close(unsigned long u_id)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_write(unsigned long u_id, const unsigned char *p_buf, unsigned int len)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_read(unsigned long u_id, unsigned char *p_buf, unsigned int max_len)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_dpidle_ctrl(unsigned long u_id, ENUM_BTIF_DPIDLE_CTRL en_flag)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_rx_cb_register(unsigned long u_id, MTK_WCN_BTIF_RX_CB rx_cb)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_wakeup_consys(unsigned long u_id)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_loopback_ctrl(unsigned long u_id, ENUM_BTIF_LPBK_MODE enable)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline int mtk_wcn_btif_dbg_ctrl(unsigned long u_id, ENUM_BTIF_DBG_ID flag)
-{
-	MTK_SHIM_STUB();
-	return -ENOSYS;
-}
-
-static inline bool mtk_wcn_btif_parser_wmt_evt(unsigned long u_id, const char *sub_str,
-					       unsigned int str_len)
-{
-	MTK_SHIM_STUB();
-	return false;
-}
-
-static inline int mtk_btif_exp_rx_has_pending_data(unsigned long u_id)
-{
-	MTK_SHIM_STUB();
-	return 0;
-}
-
-static inline int mtk_btif_exp_tx_has_pending_data(unsigned long u_id)
-{
-	MTK_SHIM_STUB();
-	return 0;
-}
-
-static inline struct task_struct *mtk_btif_exp_rx_thread_get(unsigned long u_id)
-{
-	MTK_SHIM_STUB();
-	return NULL;
-}
 
 #endif /* MTK_PLAT_SHIM_H */

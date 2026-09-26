@@ -563,6 +563,8 @@ static void mtk_i2c_writew(struct mtk_i2c *i2c, u16 val,
  */
 #define I2C_FIFO_ADDR_CLR_MCH		0x0004
 #define I2C_RESUME_ARBIT		0x0002
+#define I2C_V2_OFFSET_MCU_INTR		0x40
+#define I2C_MCU_INTR_EN			0x0001
 #define I2C_V2_OFFSET_MULTI_DMA		0xf8c
 #define I2C_V2_OFFSET_ROLLBACK		0xf98
 #define I2C_SHADOW_REG_MODE		0x0002
@@ -585,8 +587,56 @@ static void mtk_i2c_multi_channel_setup(struct mtk_i2c *i2c)
 		      0, 0, 0, 0, &res);
 	arm_smccc_smc(MTK_SIP_KERNEL_I2C_SEC_WRITE, i2c->hw_id, I2C_V2_OFFSET_MULTI_DMA,
 		      I2C_SHADOW_REG_MODE, 0, 0, 0, 0, &res);
-	dev_info(i2c->dev, "multi-channel: AP channel at +%#x, controller %d, sip %ld\n",
+	dev_dbg(i2c->dev, "multi-channel: AP channel at +%#x, controller %d, sip %ld\n",
 		 i2c->ch_offset, i2c->hw_id, (long)res.a0);
+}
+
+/*
+ * The vendor driver programs the bus setup twice on a multi-channel controller: into the shadow
+ * registers at init, and into the AP channel's own window before every transfer.
+ */
+static void mtk_i2c_multi_channel_shadow_init(struct mtk_i2c *i2c)
+{
+	u16 stat;
+
+	if (!i2c->ch_offset)
+		return;
+	mtk_i2c_writew_shadow(i2c, 0, OFFSET_INTR_MASK);
+	stat = readw(i2c->base + i2c->dev_comp->regs[OFFSET_INTR_STAT]);
+	mtk_i2c_writew_shadow(i2c, stat, OFFSET_INTR_STAT);
+	mtk_i2c_writew_shadow(i2c, I2C_SOFT_RST, OFFSET_SOFTRESET);
+	mtk_i2c_writew_shadow(i2c, i2c->use_push_pull ? I2C_IO_CONFIG_PUSH_PULL :
+			      I2C_IO_CONFIG_OPEN_DRAIN, OFFSET_IO_CONFIG);
+	mtk_i2c_writew_shadow(i2c, i2c->ac_timing.htiming, OFFSET_TIMING);
+	mtk_i2c_writew_shadow(i2c, i2c->ac_timing.ltiming, OFFSET_LTIMING);
+	mtk_i2c_writew_shadow(i2c, i2c->ac_timing.hs, OFFSET_HS);
+}
+
+static void mtk_i2c_multi_channel_dump(struct mtk_i2c *i2c, const char *what, u16 addr)
+{
+	static const enum I2C_REGS_OFFSET regs[] = {
+		OFFSET_SLAVE_ADDR, OFFSET_INTR_MASK, OFFSET_INTR_STAT, OFFSET_CONTROL,
+		OFFSET_TRANSFER_LEN, OFFSET_TRANSAC_LEN, OFFSET_TIMING, OFFSET_START,
+		OFFSET_EXT_CONF, OFFSET_LTIMING, OFFSET_HS, OFFSET_IO_CONFIG,
+		OFFSET_TRANSFER_LEN_AUX, OFFSET_CLOCK_DIV, OFFSET_DEBUGSTAT, OFFSET_FIFO_STAT,
+	};
+	static int budget = 8;
+	char ch[120], sh[120];
+	int i, n = 0, m = 0;
+
+	if (!i2c->ch_offset || budget <= 0)
+		return;
+	budget--;
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		n += scnprintf(ch + n, sizeof(ch) - n, " %04x", mtk_i2c_readw(i2c, regs[i]));
+		m += scnprintf(sh + m, sizeof(sh) - m, " %04x",
+			       readw(i2c->base + i2c->dev_comp->regs[regs[i]]));
+	}
+	dev_info(i2c->dev, "%s addr %#x irq_stat %#x mcu_intr %#x dma en %#x con %#x\n", what, addr,
+		 i2c->irq_stat, readw(i2c->base + i2c->ch_offset + I2C_V2_OFFSET_MCU_INTR),
+		 readl(i2c->pdmabase + OFFSET_EN), readl(i2c->pdmabase + OFFSET_CON));
+	dev_info(i2c->dev, " channel:%s\n", ch);
+	dev_info(i2c->dev, " shadow: %s\n", sh);
 }
 
 static void mtk_i2c_init_hw(struct mtk_i2c *i2c)
@@ -596,6 +646,7 @@ static void mtk_i2c_init_hw(struct mtk_i2c *i2c)
 	u16 ext_conf_val;
 
 	mtk_i2c_multi_channel_setup(i2c);
+	mtk_i2c_multi_channel_shadow_init(i2c);
 	mtk_i2c_writew(i2c, I2C_CHN_CLR_FLAG, OFFSET_START);
 	intr_stat_reg = mtk_i2c_readw(i2c, OFFSET_INTR_STAT);
 	mtk_i2c_writew(i2c, intr_stat_reg, OFFSET_INTR_STAT);
@@ -1237,6 +1288,8 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
 		if (left_num >= 1)
 			start_reg |= I2C_RS_MUL_CNFG;
 	}
+	if (i2c->ch_offset)
+		writew(I2C_MCU_INTR_EN, i2c->base + i2c->ch_offset + I2C_V2_OFFSET_MCU_INTR);
 	mtk_i2c_writew(i2c, start_reg, OFFSET_START);
 
 	ret = wait_for_completion_timeout(&i2c->msg_complete,
@@ -1272,6 +1325,7 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
 
 	if (ret == 0) {
 		dev_dbg(i2c->dev, "addr: %x, transfer timeout\n", msgs->addr);
+		mtk_i2c_multi_channel_dump(i2c, "timeout", msgs->addr);
 		i2c_dump_register(i2c);
 		mtk_i2c_init_hw(i2c);
 		return -ETIMEDOUT;
@@ -1279,6 +1333,7 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
 
 	if (i2c->irq_stat & (I2C_HS_NACKERR | I2C_ACKERR)) {
 		dev_dbg(i2c->dev, "addr: %x, transfer ACK error\n", msgs->addr);
+		mtk_i2c_multi_channel_dump(i2c, "ack error", msgs->addr);
 		mtk_i2c_init_hw(i2c);
 		return -ENXIO;
 	}

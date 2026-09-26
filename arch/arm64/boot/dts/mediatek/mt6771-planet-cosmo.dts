@@ -269,7 +269,9 @@
  */
 /*
  * I2C on MT6771 vs the inherited MT8183 description (vendor mt6771.dts, dtbo fragment@40):
- * - every controller has a fixed /5 in front of its source clock: clock-div = <5>, not 1;
+ * - the vendor's clk_src_div = 5 is a value it programs into the CLOCK_DIV register, not a fixed
+ *   divider: mainline's clock-div means the opposite (already divided), and setting it to 5 ran the
+ *   buses five times too fast. The inherited clock-div = <1> lets the driver pick the divider;
  * - i2c2 and i2c4 (the camera buses, shared with the CCU) are multi-channel controllers and the AP
  *   channel's registers start at +0x100 (vendor ch_offset_default, here mediatek,ch-offset), the
  *   arbitration/shadow registers stay at the base and the DMA channel at +0;
@@ -277,17 +279,15 @@
  *   GPIO175, INTN on GPIO12), which nothing else declares: LK drives it for its boot menu.
  * Controllers without known clients are left on for now so peripherals can be located from Linux.
  */
-&i2c0 { clock-div = <5>; status = "okay"; };
-&i2c1 { clock-div = <5>; status = "okay"; };
+&i2c0 { status = "okay"; };
+&i2c1 { status = "okay"; };
 &i2c2 {
 	mediatek,ch-offset = <0x100>;
-	clock-div = <5>;
 	status = "okay";
 };
-&i2c3 { clock-div = <5>; status = "okay"; };
+&i2c3 { status = "okay"; };
 &i2c4 {
 	mediatek,ch-offset = <0x100>;
-	clock-div = <5>;
 	status = "okay";
 
 	aw9523: gpio-expander@5b {
@@ -307,16 +307,15 @@
 		reset-gpios = <&pio 175 GPIO_ACTIVE_HIGH>;
 	};
 };
-&i2c5 { clock-div = <5>; status = "okay"; };
-&i2c6 { clock-div = <5>; status = "okay"; };
-&i2c7 { clock-div = <5>; status = "okay"; };
-&i2c8 { clock-div = <5>; status = "okay"; };
-&i2c9 { clock-div = <5>; status = "okay"; };
-&i2c10 { clock-div = <5>; status = "okay"; };
+&i2c5 { status = "okay"; };
+&i2c6 { status = "okay"; };
+&i2c7 { status = "okay"; };
+&i2c8 { status = "okay"; };
+&i2c9 { status = "okay"; };
+&i2c10 { status = "okay"; };
 
 &i2c11 {
 	/* On: the MT6370 lives here, and its OTG boost is the only 5 V for USB host mode. */
-	clock-div = <5>;
 	status = "okay";
 	/*
 	 * The controller driver asks for an optional "vbus" (bus pull-up) regulator. With none on this node,

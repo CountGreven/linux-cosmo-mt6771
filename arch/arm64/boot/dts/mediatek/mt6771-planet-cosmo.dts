@@ -8,6 +8,7 @@
 #include <dt-bindings/iio/adc/mediatek,mt6370_adc.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/power/mt8183-power.h>
+#include <dt-bindings/clock/mt8183-clk.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/usb/pd.h>
 #include "mt6771.dtsi"
@@ -906,6 +907,21 @@
 		vcn28-supply = <&mt6358_vcn28_reg>;
 		vcn33_bt-supply = <&mt6358_vcn33_reg>;
 		vcn33_wifi-supply = <&mt6358_vcn33_reg>;
+		status = "okay";
+	};
+
+	/* BTIF: the AP <-> connectivity MCU link the WMT/STP transport rides on. Vendor node
+	 * (live.dts:4115): the BTIF block plus its two APDMA channels (tx, rx); clocks btifc, apdmac. */
+	btif_hw: btif@1100c000 {
+		compatible = "mediatek,btif";
+		reg = <0 0x1100c000 0 0x1000>,
+		      <0 0x11000a80 0 0x80>,
+		      <0 0x11000b00 0 0x80>;
+		interrupts = <GIC_SPI 114 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 139 IRQ_TYPE_LEVEL_HIGH>,
+			     <GIC_SPI 140 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&infracfg CLK_INFRA_BTIF>, <&infracfg CLK_INFRA_AP_DMA>;
+		clock-names = "btifc", "apdmac";
 		status = "okay";
 	};
 

@@ -108,9 +108,14 @@ BOOLEAN wlan_perf_monitor_force_enable = FALSE;
 */
 #if CFG_ENABLE_FW_DOWNLOAD
 
-static struct file *filp;
-static uid_t orgfsuid;
-static gid_t orgfsgid;
+/*
+ * Mainline: the RAM code is fetched with request_firmware() instead of filp_open(). The probe runs on
+ * the WMT kernel thread, and kernel threads keep the boot-time root, so absolute paths such as
+ * /vendor/firmware/... fail with -ENOENT there, while the firmware loader resolves them in the init
+ * namespace (firmware_class.path=/vendor/firmware), the way the WMT patches already load.
+ */
+#include <linux/firmware.h>
+static const struct firmware *fw_image;
 
 static PUINT_8 apucFwPath[] = {
 	(PUINT_8) "/storage/sdcard0/",
@@ -179,7 +184,7 @@ static PPUINT_8 appucFwNameTable[] = {
 /*----------------------------------------------------------------------------*/
 WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo)
 {
-	UINT_8 ucPathIdx, ucNameIdx;
+	UINT_8 ucNameIdx;
 	PPUINT_8 apucNameTable;
 	UINT_8 ucMaxEcoVer = (sizeof(appucFwNameTable) / sizeof(PPUINT_8));
 	UINT_8 ucCurEcoVer = wlanGetEcoVersion(prGlueInfo->prAdapter);
@@ -187,22 +192,7 @@ WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo)
 	UINT_16 u2ChipID = nicGetChipID(prGlueInfo->prAdapter);
 #endif
 	UINT_8 aucFwName[128];
-	BOOLEAN fgResult = FALSE;
-
-	/*
-	 * FIX ME: since we don't have hotplug script in the filesystem,
-	 * so the request_firmware() KAPI can not work properly
-	 */
-
-	/*
-	 * save uid and gid used for filesystem access.
-	 * set user and group to 0(root)
-	 */
-	struct cred *cred = (struct cred *)get_current_cred();
-
-	orgfsuid = cred->fsuid.val;
-	orgfsgid = cred->fsgid.val;
-	cred->fsuid.val = cred->fsgid.val = 0;
+	int ret = -ENOENT;
 
 	ASSERT(prGlueInfo);
 
@@ -212,92 +202,47 @@ WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo)
 	else
 		apucNameTable = appucFwNameTable[ucCurEcoVer - 1];
 
-	/* Try to open FW binary */
-	for (ucPathIdx = 0; apucFwPath[ucPathIdx]; ucPathIdx++) {
-		for (ucNameIdx = 0; apucNameTable[ucNameIdx]; ucNameIdx++) {
-
-			kalSnprintf(aucFwName, sizeof(aucFwName), "%s%s",
-				    apucFwPath[ucPathIdx], apucNameTable[ucNameIdx]);
+	if (fw_image) {
+		release_firmware(fw_image);
+		fw_image = NULL;
+	}
+	for (ucNameIdx = 0; apucNameTable[ucNameIdx]; ucNameIdx++) {
+		kalSnprintf(aucFwName, sizeof(aucFwName), "%s", apucNameTable[ucNameIdx]);
 #if defined(MT6631)
-			switch (u2ChipID) {
-			case 0x6758:
-			/* fall through */
-			case 0x6771:
-			/* fall through */
-			case 0x6775:
-				u2ChipID = 0x6759;
-				break;
-			default:
-				break;
-			}
-			kalSnprintf(aucFwName + strlen(aucFwName), sizeof(aucFwName) - strlen(aucFwName),
-				    "%x", u2ChipID);
-#endif
-
-			filp = filp_open(aucFwName, O_RDONLY, 0);
-			if (IS_ERR(filp)) {
-				DBGLOG(INIT, TRACE, "Open FW image %s failed, filp[%p]\n",
-				       aucFwName, filp);
-				continue;
-			} else {
-				DBGLOG(INIT, INFO, "Open FW image %s success\n", aucFwName);
-				fgResult = TRUE;
-				break;
-			}
-		}
-
-		if (fgResult)
+		switch (u2ChipID) {
+		case 0x6758:
+		/* fall through */
+		case 0x6771:
+		/* fall through */
+		case 0x6775:
+			u2ChipID = 0x6759;
 			break;
+		default:
+			break;
+		}
+		kalSnprintf(aucFwName + strlen(aucFwName), sizeof(aucFwName) - strlen(aucFwName),
+			    "%x", u2ChipID);
+#endif
+		ret = request_firmware(&fw_image, aucFwName, prGlueInfo->rHifInfo.Dev);
+		if (ret) {
+			DBGLOG(INIT, ERROR, "request_firmware %s failed, err %d\n", aucFwName, ret);
+			fw_image = NULL;
+			continue;
+		}
+		DBGLOG(INIT, INFO, "Open FW image %s success, %zu bytes\n", aucFwName, fw_image->size);
+		return WLAN_STATUS_SUCCESS;
 	}
-
-	/* Check result */
-	if (!fgResult) {
-		DBGLOG(INIT, ERROR, "Open FW image failed! Cur/Max ECO Ver[E%u/E%u]\n",
-		       ucCurEcoVer, ucMaxEcoVer);
-		goto error_open;
-	}
-
-	return WLAN_STATUS_SUCCESS;
-
-error_open:
-	/* restore */
-	cred->fsuid.val = orgfsuid;
-	cred->fsgid.val = orgfsgid;
-	put_cred(cred);
+	DBGLOG(INIT, ERROR, "Open FW image failed! Cur/Max ECO Ver[E%u/E%u]\n", ucCurEcoVer, ucMaxEcoVer);
 	return WLAN_STATUS_FAILURE;
 }
 
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        release firmware image in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
 WLAN_STATUS kalFirmwareClose(IN P_GLUE_INFO_T prGlueInfo)
 {
 	ASSERT(prGlueInfo);
-
-	if ((filp != NULL) && !IS_ERR(filp)) {
-		/* close firmware file */
-		filp_close(filp, NULL);
-
-		/* restore */
-		{
-			struct cred *cred = (struct cred *)get_current_cred();
-
-			cred->fsuid.val = orgfsuid;
-			cred->fsgid.val = orgfsgid;
-			put_cred(cred);
-		}
-		filp = NULL;
+	if (fw_image) {
+		release_firmware(fw_image);
+		fw_image = NULL;
 	}
-
 	return WLAN_STATUS_SUCCESS;
 }
 
@@ -318,31 +263,12 @@ WLAN_STATUS kalFirmwareLoad(IN P_GLUE_INFO_T prGlueInfo, OUT PVOID prBuf, IN UIN
 	ASSERT(prGlueInfo);
 	ASSERT(pu4Size);
 	ASSERT(prBuf);
-
-	/* l = filp->f_path.dentry->d_inode->i_size; */
-
-	/* the object must have a read method */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-	if ((filp == NULL) || IS_ERR(filp) || (filp->f_op == NULL)) {
-#else
-	if ((filp == NULL) || IS_ERR(filp) || (filp->f_op == NULL) || (filp->f_op->read == NULL)) {
-#endif
-		goto error_read;
-	} else {
-		filp->f_pos = u4Offset;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
-		*pu4Size = kernel_read(filp, (__force void __user *)prBuf, *pu4Size, &filp->f_pos);
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-		*pu4Size = __vfs_read(filp, (__force void __user *)prBuf, *pu4Size, &filp->f_pos);
-#else
-		*pu4Size = filp->f_op->read(filp, prBuf, *pu4Size, &filp->f_pos);
-#endif
-	}
-
+	if (!fw_image || u4Offset > fw_image->size)
+		return WLAN_STATUS_FAILURE;
+	if (*pu4Size > fw_image->size - u4Offset)
+		*pu4Size = fw_image->size - u4Offset;
+	kalMemCopy(prBuf, fw_image->data + u4Offset, *pu4Size);
 	return WLAN_STATUS_SUCCESS;
-
-error_read:
-	return WLAN_STATUS_FAILURE;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -362,9 +288,9 @@ WLAN_STATUS kalFirmwareSize(IN P_GLUE_INFO_T prGlueInfo, OUT PUINT_32 pu4Size)
 {
 	ASSERT(prGlueInfo);
 	ASSERT(pu4Size);
-
-	*pu4Size = filp->f_path.dentry->d_inode->i_size;
-
+	if (!fw_image)
+		return WLAN_STATUS_FAILURE;
+	*pu4Size = fw_image->size;
 	return WLAN_STATUS_SUCCESS;
 }
 
@@ -635,7 +561,7 @@ VOID kalUpdateMACAddress(IN P_GLUE_INFO_T prGlueInfo, IN PUINT_8 pucMacAddr)
 	ASSERT(pucMacAddr);
 
 	if (UNEQUAL_MAC_ADDR(prGlueInfo->prDevHandler->dev_addr, pucMacAddr))
-		memcpy(prGlueInfo->prDevHandler->dev_addr, pucMacAddr, PARAM_MAC_ADDR_LEN);
+		eth_hw_addr_set(prGlueInfo->prDevHandler, pucMacAddr);	/* mainline: dev_addr is read-only */
 
 }
 

@@ -176,8 +176,11 @@ VOID HifDmaInit(GL_HIF_INFO_T *HifInfo)
 #ifdef CONFIG_OF
 	HifInfo->clk_wifi_dma = devm_clk_get(HifInfo->Dev, "wifi-dma");
 	if (IS_ERR(HifInfo->clk_wifi_dma)) {
-		DBGLOG(INIT, ERROR, "[CCF]Cannot get HIF DMA clock\n");
-		/* return PTR_ERR(HifInfo->clk_wifi_dma); */
+		DBGLOG(INIT, ERROR, "[CCF]Cannot get HIF DMA clock; running the HIF in PIO mode\n");
+		/* Mainline: without the gate the DMA engine never completes and the first port write
+		 * is fatal (kalDevPortWrite "reset DMA"). PIO is the documented fallback. */
+		HifInfo->fgDmaEnable = FALSE;
+		return;
 	}
 	DBGLOG(INIT, INFO, "[CCF]HIF DMA clock = %p\n", HifInfo->clk_wifi_dma);
 #endif

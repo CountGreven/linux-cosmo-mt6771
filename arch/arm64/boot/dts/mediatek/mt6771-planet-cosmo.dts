@@ -888,7 +888,8 @@
  * drivers/net/wireless/mediatek/mt6771-consys (17-consys-port). Registers, interrupts and the second
  * to fourth reg ranges (RGU, infracfg, SPM) are the vendor's (live.dts consys@18070000, wifi@180f0000).
  * The vendor's "conn" clock is its power-domain wrapper; here the CONN domain is attached by the
- * platform bus. The wifi node's "wifi-dma" clock has no mainline provider yet: STAND-IN, omitted.
+ * platform bus. The wifi node's "wifi-dma" clock is the vendor's INFRACFG_AO_CQ_DMA_CG, which mainline
+ * provides as CLK_INFRA_CQ_DMA (infra_cqdma, INFRA2 bit 27).
  * Bring-up state: the stack is loaded from Debian as modules; nothing here is verified on hardware.
  */
 /* All connectivity interrupts are level-low in the vendor tree (0x08); sysirq inverts them. Level-high
@@ -935,6 +936,8 @@
 		      <0 0x180e0000 0 0x70>;
 		interrupts = <GIC_SPI 290 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_SPI 118 IRQ_TYPE_LEVEL_LOW>;
+		clocks = <&infracfg CLK_INFRA_CQ_DMA>;
+		clock-names = "wifi-dma";
 		hardware-values = <0x788 0xa5800 0xa5800>;
 		status = "okay";
 	};

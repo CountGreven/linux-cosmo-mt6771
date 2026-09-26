@@ -21,6 +21,7 @@
 #include "btif_pub.h"
 #include "btif_priv.h"
 #include "mtk_btif.h"
+#include <linux/clk-provider.h>
 
 #define BTIF_USER_ID "btif_driver"
 
@@ -318,6 +319,14 @@ int hal_btif_clk_get_and_prepare(struct platform_device *pdev)
 *****************************************************************************/
 int hal_btif_clk_unprepare(void)
 {
+	/*
+	 * Module exit can arrive with the port still open (the WMT side tears down after us), so the
+	 * gates may still be enabled; unpreparing an enabled clock is a WARN in the clk core.
+	 */
+	if (__clk_is_enabled(clk_btif))
+		clk_disable(clk_btif);
+	if (__clk_is_enabled(clk_btif_apdma))
+		clk_disable(clk_btif_apdma);
 	clk_unprepare(clk_btif);
 	clk_unprepare(clk_btif_apdma);
 	return 0;

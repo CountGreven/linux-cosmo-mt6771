@@ -39,7 +39,6 @@
 #include <linux/delay.h>
 #include <linux/memblock.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include "osal_typedef.h"
 #include "mt6771.h"
 #include "mtk_wcn_consys_hw.h"
@@ -115,7 +114,6 @@ struct bt_wifi_v33_status gBtWifiV33;
 
 /* CCF part */
 struct clk *clk_scp_conn_main;	/*ctrl conn_power_on/off */
-static struct device *consys_pm_dev;	/* CONN genpd owner when there is no conn clock */
 
 /* PMIC part */
 #if CONSYS_PMIC_CTRL_ENABLE
@@ -371,22 +369,9 @@ static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
 		WMT_PLAT_PR_ERR("[CCF]cannot get clk_scp_conn_main clock.\n");
 		return PTR_ERR(clk_scp_conn_main);
 	}
-	if (!clk_scp_conn_main) {
-		/*
-		 * No clock: drive the genpd instead. The platform bus attached it powered on, so mark
-		 * the device active, enable runtime PM and suspend it once, which powers the domain off.
-		 * consys_hw_power_ctrl() then cycles it with pm_runtime, matching the vendor's
-		 * spm_mtcmos_ctrl_conn() sequence: the MCU must come out of a real domain power-up
-		 * after VCN18/VCN28 and the crystal buffer are on, not run since boot.
-		 */
-		consys_pm_dev = &pdev->dev;
-		pm_runtime_set_active(consys_pm_dev);
-		if (devm_pm_runtime_enable(consys_pm_dev))
-			WMT_PLAT_PR_ERR("[CCF]pm_runtime enable failed\n");
-		pm_runtime_suspend(consys_pm_dev);
-		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; CONN domain via runtime PM, ack=0x%x\n",
+	if (!clk_scp_conn_main)
+		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; CONN domain driven through SPM directly, PWR_STATUS=0x%x\n",
 				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
-	}
 	WMT_PLAT_PR_DBG("[CCF]clk_scp_conn_main=%p\n", clk_scp_conn_main);
 
 	return 0;
@@ -522,6 +507,67 @@ static VOID consys_hw_spm_clk_gating_enable(VOID)
 	/*turn on SPM clock gating enable PWRON_CONFG_EN 0x10006000 32'h0b160001 */
 }
 
+/*
+ * Mainline: the vendor's "conn" clock is scpsys' spm_mtcmos_ctrl_conn(). The mt8183 genpd runs the
+ * same register sequence, but it refuses to power a boot-on domain off until every consumer of the
+ * power controller has probed (genpd stay_on / sync_state), and on this board several never will.
+ * So drive the SPM registers directly: PWR_ON, PWR_ON_2ND, wait for both acks, release CLK_DIS,
+ * ISO and reset, then drop the bus protection; power off is the mirror image. genpd never touches
+ * the domain (stay_on) and we always leave it powered after an on, so its view stays consistent.
+ */
+#define CONSYS_INFRA_PROT_EN_SET	0x2a0
+#define CONSYS_INFRA_PROT_EN_CLR	0x2a4
+#define CONSYS_INFRA_PROT_EN_STA1	0x228
+
+static INT32 consys_spm_wait(SIZE_T addr, UINT32 mask, UINT32 want)
+{
+	INT32 i;
+
+	for (i = 0; i < 1000; i++) {
+		if ((CONSYS_REG_READ(addr) & mask) == want)
+			return 0;
+		udelay(10);
+	}
+	WMT_PLAT_PR_ERR("SPM wait timeout: %zx & 0x%x != 0x%x (0x%x)\n", addr, mask, want, CONSYS_REG_READ(addr));
+	return -ETIMEDOUT;
+}
+
+static INT32 consys_spm_conn_power(MTK_WCN_BOOL on)
+{
+	SIZE_T con = conn_reg.spm_base + CONSYS_TOP1_PWR_CTRL_OFFSET;
+	SIZE_T sta = conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET;
+	SIZE_T sta2 = conn_reg.spm_base + CONSYS_PWR_CONN_ACK_S_OFFSET;
+	SIZE_T infra = conn_reg.topckgen_base;	/* reg index 2 is INFRACFG_AO */
+	INT32 ret = 0;
+
+	WMT_PLAT_PR_INFO("CONN domain %s: CON=0x%x STATUS=0x%x/0x%x PROT=0x%x\n", on ? "on" : "off",
+			CONSYS_REG_READ(con), CONSYS_REG_READ(sta), CONSYS_REG_READ(sta2),
+			CONSYS_REG_READ(infra + CONSYS_INFRA_PROT_EN_STA1));
+	if (on) {
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) | CONSYS_SPM_PWR_ON_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) | CONSYS_SPM_PWR_ON_S_BIT);
+		ret |= consys_spm_wait(sta, CONSYS_PWR_ON_ACK_BIT, CONSYS_PWR_ON_ACK_BIT);
+		ret |= consys_spm_wait(sta2, CONSYS_PWR_ON_ACK_S_BIT, CONSYS_PWR_ON_ACK_S_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) & ~CONSYS_CLK_CTRL_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) & ~CONSYS_SPM_PWR_ISO_S_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) | CONSYS_SPM_PWR_RST_BIT);
+		CONSYS_REG_WRITE(infra + CONSYS_INFRA_PROT_EN_CLR, CONSYS_PROT_MASK);
+	} else {
+		CONSYS_REG_WRITE(infra + CONSYS_INFRA_PROT_EN_SET, CONSYS_PROT_MASK);
+		ret |= consys_spm_wait(infra + CONSYS_INFRA_PROT_EN_STA1, CONSYS_PROT_MASK, CONSYS_PROT_MASK);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) | CONSYS_SPM_PWR_ISO_S_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) | CONSYS_CLK_CTRL_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) & ~CONSYS_SPM_PWR_RST_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) & ~CONSYS_SPM_PWR_ON_BIT);
+		CONSYS_REG_WRITE(con, CONSYS_REG_READ(con) & ~CONSYS_SPM_PWR_ON_S_BIT);
+		ret |= consys_spm_wait(sta, CONSYS_PWR_ON_ACK_BIT, 0);
+		ret |= consys_spm_wait(sta2, CONSYS_PWR_ON_ACK_S_BIT, 0);
+	}
+	WMT_PLAT_PR_INFO("CONN domain %s done(%d): CON=0x%x STATUS=0x%x/0x%x\n", on ? "on" : "off", ret,
+			CONSYS_REG_READ(con), CONSYS_REG_READ(sta), CONSYS_REG_READ(sta2));
+	return ret;
+}
+
 static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
 {
 #if CONSYS_PWR_ON_OFF_API_AVAILABLE
@@ -537,10 +583,8 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
 			if (iRet)
 				WMT_PLAT_PR_ERR("clk_prepare_enable(clk_scp_conn_main) fail(%d)\n", iRet);
 			WMT_PLAT_PR_DBG("clk_prepare_enable(clk_scp_conn_main) ok\n");
-		} else if (consys_pm_dev) {
-			iRet = pm_runtime_resume_and_get(consys_pm_dev);
-			WMT_PLAT_PR_INFO("CONN domain on via runtime PM (%d), ack=0x%x\n", iRet,
-					CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
+		} else {
+			iRet = consys_spm_conn_power(MTK_WCN_BOOL_TRUE);
 		}
 #else
 		/*2.write conn_top1_pwr_on=1, power on conn_top1 0x1000632C [2]  1'b1 */
@@ -599,10 +643,8 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
 		if (clk_scp_conn_main) {
 			clk_disable_unprepare(clk_scp_conn_main);
 			WMT_PLAT_PR_DBG("clk_disable_unprepare(clk_scp_conn_main) calling\n");
-		} else if (consys_pm_dev) {
-			iRet = pm_runtime_put_sync(consys_pm_dev);
-			WMT_PLAT_PR_INFO("CONN domain off via runtime PM (%d), ack=0x%x\n", iRet,
-					CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
+		} else {
+			iRet = consys_spm_conn_power(MTK_WCN_BOOL_FALSE);
 		}
 #else
 		/*disable AXI BUS protect 0x100012a0 [13][14] */

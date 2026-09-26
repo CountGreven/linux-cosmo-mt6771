@@ -390,6 +390,8 @@ INT32 wmt_plat_deinit(VOID)
 		iret += mtk_wcn_consys_hw_deinit();
 	else
 		iret = mtk_wcn_cmb_hw_deinit();
+	/* 1b. the BGF interrupt outlives a failed power-on; free it before the handler code goes away */
+	wmt_plat_eirq_ctrl(PIN_BGF_EINT, PIN_STA_DEINIT);
 	/* 2. unreg to cmb_stub */
 	iret += mtk_wcn_cmb_stub_unreg();
 	/*3. wmt wakelock deinit */
@@ -592,6 +594,12 @@ INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 	INT32 iret;
 	static UINT32 bgf_irq_num = -1;
 	static UINT32 bgf_irq_flag;
+	/*
+	 * Mainline: the vendor never unloads, so a power-on that ended in a failure left the BGF
+	 * interrupt requested for good, and the next request_irq() got -EBUSY. Track it, free it on
+	 * deinit, and treat a repeated init as a no-op.
+	 */
+	static bool bgf_irq_registered;
 
 	/* TODO: [ChangeFeature][GeorgeKuo]: use another function to handle this, as done in gpio_ctrls */
 
@@ -614,12 +622,18 @@ INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 				bgf_irq_num = MT_CONN2AP_BTIF_WAKEUP_IRQ_ID;
 				bgf_irq_flag = IRQF_TRIGGER_LOW;
 #endif
-				iret = request_irq(bgf_irq_num, wmt_plat_bgf_irq_isr, bgf_irq_flag,
-						   "BTIF_WAKEUP_IRQ", NULL);
-				if (iret) {
-					WMT_PLAT_PR_ERR("request_irq fail,irq_no(%d),iret(%d)\n",
-							  bgf_irq_num, iret);
-					return iret;
+				if (bgf_irq_registered) {
+					WMT_PLAT_PR_INFO("BGF irq %d already requested; keeping it\n", bgf_irq_num);
+					disable_irq_nosync(bgf_irq_num);
+				} else {
+					iret = request_irq(bgf_irq_num, wmt_plat_bgf_irq_isr, bgf_irq_flag,
+							   "BTIF_WAKEUP_IRQ", NULL);
+					if (iret) {
+						WMT_PLAT_PR_ERR("request_irq fail,irq_no(%d),iret(%d)\n",
+								  bgf_irq_num, iret);
+						return iret;
+					}
+					bgf_irq_registered = true;
 				}
 			} else {
 				struct device_node *node;
@@ -665,7 +679,11 @@ INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 			}
 			spin_unlock_irqrestore(&g_bgf_irq_lock.lock, g_bgf_irq_lock.flags);
 		} else {
-			free_irq(bgf_irq_num, NULL);
+			if (bgf_irq_registered) {
+				free_irq(bgf_irq_num, NULL);
+				bgf_irq_registered = false;
+				g_bgf_irq_lock.counter = 0;
+			}
 			WMT_DBG_FUNC("WMT-PLAT:BGFInt (free)\n");
 			/* de-init: nothing to do in ALPS, such as un-registration... */
 		}

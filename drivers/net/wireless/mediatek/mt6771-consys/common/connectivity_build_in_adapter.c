@@ -120,6 +120,13 @@ static int __init connadp_consys_emi_init(void)
 }
 module_init(connadp_consys_emi_init);
 
+static void __exit connadp_consys_emi_exit(void)
+{
+	/* Nothing to undo: the EMI window is a lookup, not an allocation. Without an exit hook the
+	 * module cannot be removed at all (-EBUSY), which blocks the load/unload loop. */
+}
+module_exit(connadp_consys_emi_exit);
+
 
 void connectivity_export_show_stack(struct task_struct *tsk, unsigned long *sp)
 {

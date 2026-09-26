@@ -302,7 +302,7 @@
 		/* the vendor's "shdn" pin: low holds the chip in reset, LK leaves it low */
 		reset-gpios = <&pio 175 GPIO_ACTIVE_LOW>;
 	};
-};
+
 	/*
 	 * The keyboard matrix itself, from the vendor key_map[] (aw9523_key.c): P0_0..7 are the rows
 	 * (inputs, interrupt on change), P1_0..6 the columns, driven low one at a time. Four positions
@@ -377,6 +377,7 @@
 			MATRIX_KEY(7, 2, KEY_I)
 		>;
 	};
+};
 &i2c5 { clock-div = <5>; status = "okay"; };
 &i2c6 { clock-div = <5>; status = "okay"; };
 &i2c7 { clock-div = <5>; status = "okay"; };

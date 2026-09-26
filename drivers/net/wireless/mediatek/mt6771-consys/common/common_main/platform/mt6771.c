@@ -400,14 +400,59 @@ static INT32 consys_co_clock_type(VOID)
 	return 0;
 }
 
+/*
+ * Mainline: the 26 MHz crystal buffer feeding the connectivity block (XO_WCN, PMIC MT6358 DCXO
+ * EXTBUF2) has no clock provider, and the vendor's clkbuf driver is not ported. This does what that
+ * driver does for CLK_BUF_CONN in its default manual mode: on = EXTBUF2_MODE (DCXO_CW00 bits 4:3) := 0
+ * (WCN_EN_M) and EXTBUF2_EN_M (bit 5) := 1; off = EN_M := 0. The PMIC is reached through the pwrap
+ * register map, the same one the mt6358 core uses. The pwrap DCXO_ENABLE forward bit for CONN is
+ * already set by the bootloader (read 0x3 on 2026-09-26).
+ */
+#include <linux/of_platform.h>
+#include <linux/regmap.h>
+#define MT6358_DCXO_CW00		0x0788
+#define DCXO_CW00_EXTBUF2_MODE_MASK	(0x3 << 3)
+#define DCXO_CW00_EXTBUF2_EN_M		BIT(5)
+
+static struct regmap *consys_pmic_regmap(void)
+{
+	static struct regmap *map;
+	struct device_node *np;
+	struct platform_device *pdev;
+
+	if (map)
+		return map;
+	np = of_find_compatible_node(NULL, NULL, "mediatek,mt6358");
+	if (!np)
+		return NULL;
+	pdev = of_find_device_by_node(np);
+	of_node_put(np);
+	if (!pdev)
+		return NULL;
+	map = dev_get_regmap(pdev->dev.parent, NULL);	/* the pwrap's map, as mt6397-core does */
+	put_device(&pdev->dev);
+	return map;
+}
+
 static INT32 consys_clock_buffer_ctrl(MTK_WCN_BOOL enable)
 {
-	if (enable)
-		KERNEL_clk_buf_ctrl(CLK_BUF_CONN, true);	/*open XO_WCN*/
-	else
-		KERNEL_clk_buf_ctrl(CLK_BUF_CONN, false);	/*close XO_WCN*/
+	struct regmap *map = consys_pmic_regmap();
+	unsigned int before = 0, after = 0;
+	int ret;
 
-	return 0;
+	if (!map) {
+		WMT_PLAT_PR_ERR("XO_WCN: no PMIC regmap; crystal buffer left as the bootloader set it\n");
+		return -ENODEV;
+	}
+	regmap_read(map, MT6358_DCXO_CW00, &before);
+	if (enable)
+		ret = regmap_update_bits(map, MT6358_DCXO_CW00, DCXO_CW00_EXTBUF2_MODE_MASK | DCXO_CW00_EXTBUF2_EN_M,
+					 DCXO_CW00_EXTBUF2_EN_M);
+	else
+		ret = regmap_update_bits(map, MT6358_DCXO_CW00, DCXO_CW00_EXTBUF2_EN_M, 0);
+	regmap_read(map, MT6358_DCXO_CW00, &after);
+	WMT_PLAT_PR_INFO("XO_WCN %s: DCXO_CW00 %#x -> %#x (%d)\n", enable ? "on" : "off", before, after, ret);
+	return ret;
 }
 
 static VOID consys_set_if_pinmux(MTK_WCN_BOOL enable)

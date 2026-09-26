@@ -110,14 +110,15 @@ static struct cfg80211_ops mtk_p2p_ops = {
 #endif
 };
 
-static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {
+static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {	/* .policy: cfg80211 refuses NULL (core.c:1130) */
 	{
 		{
 			.vendor_id = GOOGLE_OUI,
 			.subcmd = WIFI_SUBCMD_GET_CHANNEL_LIST
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
-		.doit = mtk_cfg80211_vendor_get_channel_list
+		.doit = mtk_cfg80211_vendor_get_channel_list,
+		.policy = VENDOR_CMD_RAW_DATA
 	},
 	{
 		{
@@ -125,7 +126,8 @@ static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {
 			.subcmd = WIFI_SUBCMD_SET_COUNTRY_CODE
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
-		.doit = mtk_cfg80211_vendor_set_country_code
+		.doit = mtk_cfg80211_vendor_set_country_code,
+		.policy = VENDOR_CMD_RAW_DATA
 	},
 };
 
@@ -905,6 +907,10 @@ free_wdev:
 void glP2pDestroyWirelessDevice(void)
 {
 #if CFG_ENABLE_WIFI_DIRECT_CFG_80211
+	/* Creation can fail (wiphy_register refused) and the driver carries on; unloading then dereferenced
+	 * NULL here (Cosmo 2026-09-26, rmmod oops in glP2pDestroyWirelessDevice). */
+	if (!gprP2pWdev)
+		return;
 	wiphy_unregister(gprP2pWdev->wiphy);
 	wiphy_free(gprP2pWdev->wiphy);
 	kfree(gprP2pWdev);

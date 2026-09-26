@@ -900,6 +900,12 @@
 		interrupts = <GIC_SPI 289 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 291 IRQ_TYPE_LEVEL_HIGH>;
 		power-domains = <&spm MT8183_POWER_DOMAIN_CONN>;
+		/* The vendor driver asks for vcn18, vcn28, vcn33_bt and vcn33_wifi; the MT6358 has one
+		 * VCN33 LDO, which the vendor exposes as two enable bits, so both names map to ldo_vcn33. */
+		vcn18-supply = <&mt6358_vcn18_reg>;
+		vcn28-supply = <&mt6358_vcn28_reg>;
+		vcn33_bt-supply = <&mt6358_vcn33_reg>;
+		vcn33_wifi-supply = <&mt6358_vcn33_reg>;
 		status = "okay";
 	};
 

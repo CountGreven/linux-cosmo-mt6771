@@ -93,6 +93,33 @@ int reserve_memory_consys_fn(struct reserved_mem *rmem)
 
 RESERVEDMEM_OF_DECLARE(reserve_memory_test, "mediatek,consys-reserve-memory", reserve_memory_consys_fn);
 
+/*
+ * Mainline, as a module: RESERVEDMEM_OF_DECLARE only runs for built-in code, so gConEmiPhyBase stayed 0
+ * and mtk_wmt_probe refused to power the block on ("EMI base address is invalid"). Look the node up at
+ * init instead; the reserved-memory core has already placed the dynamic no-map region by then.
+ */
+static int __init connadp_consys_emi_init(void)
+{
+	struct device_node *np;
+	struct reserved_mem *rmem;
+
+	if (gConEmiPhyBase)
+		return 0;
+	np = of_find_compatible_node(NULL, NULL, "mediatek,consys-reserve-memory");
+	if (!np) {
+		pr_warn(DFT_TAG "no mediatek,consys-reserve-memory node; CONSYS EMI base unknown\n");
+		return 0;
+	}
+	rmem = of_reserved_mem_lookup(np);
+	of_node_put(np);
+	if (!rmem) {
+		pr_warn(DFT_TAG "consys reserved memory node has no region\n");
+		return 0;
+	}
+	return reserve_memory_consys_fn(rmem);
+}
+module_init(connadp_consys_emi_init);
+
 
 void connectivity_export_show_stack(struct task_struct *tsk, unsigned long *sp)
 {

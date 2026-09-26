@@ -3402,10 +3402,25 @@ static void BTIF_exit(void)
 	BTIF_DBG_FUNC("++\n");
 
 	for (index = 0; index < BTIF_PORT_NR; index++) {
-		g_btif[index].open_counter = 0;
-		g_btif[index].enable = false;
 		p_tx_dma = &g_dma[index][BTIF_TX];
 		p_rx_dma = &g_dma[index][BTIF_RX];
+		/*
+		 * Mainline: the vendor never unloads. A WMT power-on that failed leaves the port open, and
+		 * its three interrupts stayed requested with handlers in freed module memory: the next load
+		 * got "Flags mismatch irq 377" and -EBUSY, and a shutdown with such a handler installed hangs.
+		 * Close the port properly, then free whatever is still registered.
+		 */
+		if (g_btif[index].enable) {
+			BTIF_WARN_FUNC("port %d still open at exit; closing it\n", index);
+			btif_close(&g_btif[index]);
+		}
+		_btif_irq_free(g_btif[index].p_btif_info->p_irq, &g_btif[index]);
+		if (p_tx_dma->p_dma_info)
+			_btif_irq_free(p_tx_dma->p_dma_info->p_irq, &g_btif[index]);
+		if (p_rx_dma->p_dma_info)
+			_btif_irq_free(p_rx_dma->p_dma_info->p_irq, &g_btif[index]);
+		g_btif[index].open_counter = 0;
+		g_btif[index].enable = false;
 #if ENABLE_BTIF_TX_DMA
 		_btif_vfifo_deinit(p_tx_dma);
 #endif

@@ -40,7 +40,7 @@
 #define DFT_TAG         "[WMT-DFT]"
 #endif
 
-//#define DEBUG_LOGGING
+#define DEBUG_LOGGING	/* mainline: the vendor ships the WMT core silent; we need its log while bringing it up */
 #ifdef DEBUG_LOGGING
 
 #define WMT_LOUD_FUNC(fmt, arg...) \

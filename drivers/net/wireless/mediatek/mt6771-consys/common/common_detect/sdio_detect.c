@@ -222,18 +222,29 @@ static void sdio_detect_remove(struct sdio_func *func)
 	WMT_DETECT_PR_INFO("do sdio remove\n");
 }
 
+/*
+ * The loader's COMBO_IOCTL_MODULE_CLEANUP calls sdio_detect_exit() and module exit calls it again.
+ * With MTK_WCN_REMOVE_KO the vendor never unloads, so the double driver_unregister() (a
+ * use-after-free of the freed driver private data) never showed. Track the registration.
+ */
+static bool sdio_detect_registered;
+
 int sdio_detect_init(void)
 {
 	int ret = -1;
 	/* register to mmc driver */
 	ret = sdio_register_driver(&mtk_sdio_client_drv);
 	WMT_DETECT_PR_INFO("sdio_register_driver() ret=%d\n", ret);
+	sdio_detect_registered = !ret;
 	return 0;
 }
 
 int sdio_detect_exit(void)
 {
 	g_func = NULL;
+	if (!sdio_detect_registered)
+		return 0;
+	sdio_detect_registered = false;
 	/* register to mmc driver */
 	sdio_unregister_driver(&mtk_sdio_client_drv);
 	WMT_DETECT_PR_INFO("sdio_unregister_driver\n");

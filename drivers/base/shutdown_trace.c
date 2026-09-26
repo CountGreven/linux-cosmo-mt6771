@@ -6,9 +6,13 @@
  * Enable with shutdown_trace=<block device path>@<byte offset>, for example
  * shutdown_trace=/dev/mmcblk0p42@32505856 (the last MiB of the Cosmo test boot slot). The log is
  * plain text: a header, "pre <device> <driver>" before each hook, "post <device>" after it, and
- * "done" when device_shutdown() finished. Read it back with dd + strings. Writes stop, harmlessly,
- * once the block device's own controller has been shut down.
+ * "done" when device_shutdown() finished. Read it back with dd + strings.
+ *
+ * The log cannot outlive its own storage: a write after the card or its host controller has been
+ * shut down never completes. So the file log ends with "console <device>" at the first ancestor
+ * of the block device, and from there the same lines go to the console at KERN_EMERG instead.
  */
+#include <linux/blkdev.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
@@ -21,7 +25,8 @@
 static char st_spec[96];
 static struct file *st_file;
 static loff_t st_start, st_pos;
-static bool st_failed;
+static bool st_failed, st_console;
+static struct device *st_disk;
 
 static int __init shutdown_trace_setup(char *str)
 {
@@ -75,14 +80,35 @@ void shutdown_trace_begin(void)
 	}
 	st_file = f;
 	st_pos = st_start;
+	if (S_ISBLK(file_inode(f)->i_mode))
+		st_disk = disk_to_dev(file_bdev(f)->bd_disk);
 	st_printf("shutdown_trace v1 uptime=%llu ms\n", ktime_get_boottime_ns() / NSEC_PER_MSEC);
 	pr_info("shutdown_trace: logging device shutdown to %s@%lld\n", path, st_start);
+}
+
+static bool st_holds_log(struct device *dev)
+{
+	struct device *p;
+
+	for (p = st_disk ? st_disk->parent : NULL; p; p = p->parent)
+		if (p == dev)
+			return true;
+	return false;
 }
 
 void shutdown_trace_pre(struct device *dev)
 {
 	if (!st_file)
 		return;
+	if (!st_console && st_holds_log(dev)) {
+		st_printf("console %s\n", dev_name(dev));
+		st_console = true;
+	}
+	if (st_console) {
+		pr_emerg("shutdown_trace: pre %s %s\n", dev_name(dev),
+			 dev->driver ? dev->driver->name : "-");
+		return;
+	}
 	st_printf("pre %s %s\n", dev_name(dev), dev->driver ? dev->driver->name : "-");
 }
 
@@ -90,6 +116,10 @@ void shutdown_trace_post(struct device *dev)
 {
 	if (!st_file)
 		return;
+	if (st_console) {
+		pr_emerg("shutdown_trace: post %s\n", dev_name(dev));
+		return;
+	}
 	st_printf("post %s\n", dev_name(dev));
 }
 
@@ -97,6 +127,10 @@ void shutdown_trace_end(void)
 {
 	if (!st_file)
 		return;
+	if (st_console) {
+		pr_emerg("shutdown_trace: done\n");
+		return;
+	}
 	st_printf("done uptime=%llu ms\n", ktime_get_boottime_ns() / NSEC_PER_MSEC);
 	/* keep the file open: closing it would itself touch a device that may already be gone */
 }

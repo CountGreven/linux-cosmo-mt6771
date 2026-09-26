@@ -4915,7 +4915,8 @@ void device_shutdown(void)
 		/* Don't allow any more runtime suspends */
 		pm_runtime_get_noresume(dev);
 		pm_runtime_barrier(dev);
-		shutdown_trace_pre(dev);
+		if (shutdown_trace_pre(dev))
+			goto traced_skip;
 
 		if (dev->class && dev->class->shutdown_pre) {
 			if (initcall_debug)
@@ -4931,7 +4932,7 @@ void device_shutdown(void)
 				dev_info(dev, "shutdown\n");
 			dev->driver->shutdown(dev);
 		}
-
+traced_skip:
 		device_unlock(dev);
 		if (parent)
 			device_unlock(parent);

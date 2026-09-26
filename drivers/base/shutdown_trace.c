@@ -9,8 +9,8 @@
  * "done" when device_shutdown() finished. Read it back with dd + strings.
  *
  * The log cannot outlive its own storage: a write after the card or its host controller has been
- * shut down never completes. So the file log ends with "console <device>" at the first ancestor
- * of the block device, and from there the same lines go to the console at KERN_EMERG instead.
+ * shut down never completes. So the shutdown hooks of the block device's ancestors are skipped
+ * ("skip <device>") while tracing; this is a debug aid, not something to leave enabled.
  */
 #include <linux/blkdev.h>
 #include <linux/device.h>
@@ -25,7 +25,7 @@
 static char st_spec[96];
 static struct file *st_file;
 static loff_t st_start, st_pos;
-static bool st_failed, st_console;
+static bool st_failed;
 static struct device *st_disk;
 
 static int __init shutdown_trace_setup(char *str)
@@ -96,30 +96,22 @@ static bool st_holds_log(struct device *dev)
 	return false;
 }
 
-void shutdown_trace_pre(struct device *dev)
+bool shutdown_trace_pre(struct device *dev)
 {
 	if (!st_file)
-		return;
-	if (!st_console && st_holds_log(dev)) {
-		st_printf("console %s\n", dev_name(dev));
-		st_console = true;
-	}
-	if (st_console) {
-		pr_emerg("shutdown_trace: pre %s %s\n", dev_name(dev),
-			 dev->driver ? dev->driver->name : "-");
-		return;
+		return false;
+	if (st_holds_log(dev)) {
+		st_printf("skip %s\n", dev_name(dev));
+		return true;
 	}
 	st_printf("pre %s %s\n", dev_name(dev), dev->driver ? dev->driver->name : "-");
+	return false;
 }
 
 void shutdown_trace_post(struct device *dev)
 {
 	if (!st_file)
 		return;
-	if (st_console) {
-		pr_emerg("shutdown_trace: post %s\n", dev_name(dev));
-		return;
-	}
 	st_printf("post %s\n", dev_name(dev));
 }
 
@@ -127,10 +119,6 @@ void shutdown_trace_end(void)
 {
 	if (!st_file)
 		return;
-	if (st_console) {
-		pr_emerg("shutdown_trace: done\n");
-		return;
-	}
 	st_printf("done uptime=%llu ms\n", ktime_get_boottime_ns() / NSEC_PER_MSEC);
 	/* keep the file open: closing it would itself touch a device that may already be gone */
 }

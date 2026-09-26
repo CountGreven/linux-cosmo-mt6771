@@ -34,6 +34,7 @@
 #include "stp_exp.h"
 
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION("MediaTek WMT wifi character device (mt6771-consys)");
 
 #define WIFI_DRIVER_NAME "mtk_wmt_wifi_chrdev"
 #define WIFI_DEV_MAJOR 153

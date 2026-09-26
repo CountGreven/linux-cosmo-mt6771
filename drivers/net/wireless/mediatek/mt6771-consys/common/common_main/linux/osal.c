@@ -377,7 +377,12 @@ INT32 osal_thread_stop(P_OSAL_THREAD pThread)
 
 	if ((pThread) && (pThread->pThread)) {
 		iRet = kthread_stop(pThread->pThread);
-		/* pThread->pThread = NULL; */
+		/*
+		 * The vendor left this commented out, so osal_thread_destroy() called kthread_stop() a second
+		 * time on a thread that had already exited and been freed. 4.4 survived that; on 7.x the
+		 * second call waits forever (rmmod wmt_drv stuck in D state, Cosmo 2026-09-26).
+		 */
+		pThread->pThread = NULL;
 		return iRet;
 	}
 	return -1;

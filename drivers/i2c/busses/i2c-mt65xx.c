@@ -20,6 +20,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/arm-smccc.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/scatterlist.h>
@@ -293,6 +294,8 @@ struct mtk_i2c {
 
 	/* set in i2c probe */
 	void __iomem *base;		/* i2c base addr */
+	u32 ch_offset;			/* multi-channel controller: AP channel register offset */
+	int hw_id;			/* controller index for the secure register writes */
 	void __iomem *pdmabase;		/* dma base address*/
 	struct clk_bulk_data clocks[I2C_MT65XX_CLK_MAX]; /* clocks for i2c */
 	bool have_pmic;			/* can use i2c pins from PMIC */
@@ -542,13 +545,48 @@ MODULE_DEVICE_TABLE(of, mtk_i2c_of_match);
 
 static u16 mtk_i2c_readw(struct mtk_i2c *i2c, enum I2C_REGS_OFFSET reg)
 {
-	return readw(i2c->base + i2c->dev_comp->regs[reg]);
+	return readw(i2c->base + i2c->ch_offset + i2c->dev_comp->regs[reg]);
 }
 
 static void mtk_i2c_writew(struct mtk_i2c *i2c, u16 val,
 			   enum I2C_REGS_OFFSET reg)
 {
+	writew(val, i2c->base + i2c->ch_offset + i2c->dev_comp->regs[reg]);
+}
+
+/*
+ * Multi-channel controllers (MT6771 i2c2/i2c4, shared with the camera CCU): the AP channel's
+ * registers sit at "mediatek,ch-offset" from the controller base, while the arbitration and the
+ * shadow (global) registers stay at the base. The global rollback/multi-DMA registers are secure
+ * and only reachable through the vendor's MTK_SIP_KERNEL_I2C_SEC_WRITE service (i2c-mtk.c in the
+ * 4.4 tree writes them in resume_noirq).
+ */
+#define I2C_FIFO_ADDR_CLR_MCH		0x0004
+#define I2C_RESUME_ARBIT		0x0002
+#define I2C_V2_OFFSET_MULTI_DMA		0xf8c
+#define I2C_V2_OFFSET_ROLLBACK		0xf98
+#define I2C_SHADOW_REG_MODE		0x0002
+#define MTK_SIP_KERNEL_I2C_SEC_WRITE	0xc20002a0
+
+static void mtk_i2c_writew_shadow(struct mtk_i2c *i2c, u16 val,
+				  enum I2C_REGS_OFFSET reg)
+{
 	writew(val, i2c->base + i2c->dev_comp->regs[reg]);
+}
+
+static void mtk_i2c_multi_channel_setup(struct mtk_i2c *i2c)
+{
+	struct arm_smccc_res res;
+
+	if (!i2c->ch_offset)
+		return;
+	/* disable rollback mode, then enable the multi-channel (shadow register) DMA mode */
+	arm_smccc_smc(MTK_SIP_KERNEL_I2C_SEC_WRITE, i2c->hw_id, I2C_V2_OFFSET_ROLLBACK, 0,
+		      0, 0, 0, 0, &res);
+	arm_smccc_smc(MTK_SIP_KERNEL_I2C_SEC_WRITE, i2c->hw_id, I2C_V2_OFFSET_MULTI_DMA,
+		      I2C_SHADOW_REG_MODE, 0, 0, 0, 0, &res);
+	dev_info(i2c->dev, "multi-channel: AP channel at +%#x, controller %d, sip %ld\n",
+		 i2c->ch_offset, i2c->hw_id, (long)res.a0);
 }
 
 static void mtk_i2c_init_hw(struct mtk_i2c *i2c)
@@ -557,6 +595,7 @@ static void mtk_i2c_init_hw(struct mtk_i2c *i2c)
 	u16 intr_stat_reg;
 	u16 ext_conf_val;
 
+	mtk_i2c_multi_channel_setup(i2c);
 	mtk_i2c_writew(i2c, I2C_CHN_CLR_FLAG, OFFSET_START);
 	intr_stat_reg = mtk_i2c_readw(i2c, OFFSET_INTR_STAT);
 	mtk_i2c_writew(i2c, intr_stat_reg, OFFSET_INTR_STAT);
@@ -1055,11 +1094,17 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
 	mtk_i2c_writew(i2c, restart_flag | I2C_HS_NACKERR | I2C_ACKERR |
 			    I2C_ARB_LOST | I2C_TRANSAC_COMP, OFFSET_INTR_STAT);
 
-	mtk_i2c_writew(i2c, I2C_FIFO_ADDR_CLR, OFFSET_FIFO_ADDR_CLR);
+	mtk_i2c_writew(i2c, I2C_FIFO_ADDR_CLR |
+			    (i2c->ch_offset ? I2C_FIFO_ADDR_CLR_MCH : 0),
+		       OFFSET_FIFO_ADDR_CLR);
 
-	/* Enable interrupt */
-	mtk_i2c_writew(i2c, restart_flag | I2C_HS_NACKERR | I2C_ACKERR |
-			    I2C_ARB_LOST | I2C_TRANSAC_COMP, OFFSET_INTR_MASK);
+	/* Enable interrupt (the vendor leaves the ack errors unmasked only on single-channel controllers) */
+	if (i2c->ch_offset)
+		mtk_i2c_writew(i2c, restart_flag | I2C_ARB_LOST | I2C_TRANSAC_COMP,
+			       OFFSET_INTR_MASK);
+	else
+		mtk_i2c_writew(i2c, restart_flag | I2C_HS_NACKERR | I2C_ACKERR |
+				    I2C_ARB_LOST | I2C_TRANSAC_COMP, OFFSET_INTR_MASK);
 
 	/* Set transfer and transaction len */
 	if (i2c->op == I2C_MASTER_WRRD) {
@@ -1196,6 +1241,10 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
 
 	ret = wait_for_completion_timeout(&i2c->msg_complete,
 					  i2c->adap.timeout);
+
+	/* multi-channel: hand the bus back to the arbiter */
+	if (i2c->ch_offset)
+		mtk_i2c_writew_shadow(i2c, I2C_RESUME_ARBIT, OFFSET_START);
 
 	/* Clear interrupt mask */
 	mtk_i2c_writew(i2c, ~(restart_flag | I2C_HS_NACKERR | I2C_ACKERR |
@@ -1373,6 +1422,8 @@ static int mtk_i2c_parse_dt(struct device_node *np, struct mtk_i2c *i2c)
 	if (i2c->clk_src_div == 0)
 		return -EINVAL;
 
+	of_property_read_u32(np, "mediatek,ch-offset", &i2c->ch_offset);
+	i2c->hw_id = of_alias_get_id(np, "i2c");
 	i2c->have_pmic = of_property_read_bool(np, "mediatek,have-pmic");
 	i2c->use_push_pull =
 		of_property_read_bool(np, "mediatek,use-push-pull");

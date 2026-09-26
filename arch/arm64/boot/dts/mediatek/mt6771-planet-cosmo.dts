@@ -271,7 +271,8 @@
  * I2C on MT6771 vs the inherited MT8183 description (vendor mt6771.dts, dtbo fragment@40):
  * - every controller has a fixed /5 in front of its source clock: clock-div = <5>, not 1;
  * - i2c2 and i2c4 (the camera buses, shared with the CCU) are multi-channel controllers and the AP
- *   channel's registers start at +0x100 (vendor ch_offset_default), the APDMA channel at +0;
+ *   channel's registers start at +0x100 (vendor ch_offset_default, here mediatek,ch-offset), the
+ *   arbitration/shadow registers stay at the base and the DMA channel at +0;
  * - the Cosmo keyboard is an AW9523B expander at 0x5b on i2c4 (8x7 matrix on P0/P1, RSTN on
  *   GPIO175, INTN on GPIO12), which nothing else declares: LK drives it for its boot menu.
  * Controllers without known clients are left on for now so peripherals can be located from Linux.
@@ -279,13 +280,13 @@
 &i2c0 { clock-div = <5>; status = "okay"; };
 &i2c1 { clock-div = <5>; status = "okay"; };
 &i2c2 {
-	reg = <0 0x11009100 0 0xf00>, <0 0x11000280 0 0x80>;
+	mediatek,ch-offset = <0x100>;
 	clock-div = <5>;
 	status = "okay";
 };
 &i2c3 { clock-div = <5>; status = "okay"; };
 &i2c4 {
-	reg = <0 0x11008100 0 0xf00>, <0 0x11000100 0 0x80>;
+	mediatek,ch-offset = <0x100>;
 	clock-div = <5>;
 	status = "okay";
 

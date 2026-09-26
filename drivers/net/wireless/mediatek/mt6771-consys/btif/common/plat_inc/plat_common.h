@@ -25,23 +25,18 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
-#include <mtk_io.h>
 
 #ifdef CONFIG_OF
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/of.h>
 #else
-#include <mach/mt_reg_base.h>
-#include <mach/mt_irq.h>
 #endif
 #if defined(CONFIG_MTK_CLKMGR)
-#include <mach/mt_clkmgr.h>
 #else
 #include <linux/clk.h>
 #include <linux/platform_device.h>
 #endif /* defined(CONFIG_MTK_CLKMGR) */
-#include <sync_write.h>
 
 extern int mtk_btif_hal_get_log_lvl(void);
 

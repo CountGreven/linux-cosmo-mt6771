@@ -22,7 +22,6 @@
 #include <linux/cdev.h>
 #include <linux/poll.h>
 
-/*#include <mach/eint.h>*/
 /*-----------driver own header files----------------*/
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
@@ -41,7 +40,7 @@
 
 /*-----------static function declearation----------------*/
 static int mtk_btif_probe(struct platform_device *pdev);
-static int mtk_btif_remove(struct platform_device *pdev);
+static void mtk_btif_remove(struct platform_device *pdev);
 static int mtk_btif_suspend(struct platform_device *pdev, pm_message_t state);
 static int mtk_btif_resume(struct platform_device *pdev);
 static int mtk_btif_drv_resume(struct device *dev);
@@ -196,7 +195,7 @@ int g_enable_btif_rxd_test;
 #endif
 static int mtk_btif_dbg_lvl = BTIF_LOG_INFO;
 #if BTIF_RXD_BE_BLOCKED_DETECT
-static struct timeval btif_rxd_time_stamp[MAX_BTIF_RXD_TIME_REC];
+static struct __kernel_old_timeval btif_rxd_time_stamp[MAX_BTIF_RXD_TIME_REC];
 #endif
 /*-----------Platform bus related structures----------------*/
 #define DRV_NAME "mtk_btif"
@@ -254,13 +253,13 @@ static int mtk_btif_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int mtk_btif_remove(struct platform_device *pdev)
+static void mtk_btif_remove(struct platform_device *pdev)
 {
 /*Chaozhong: ToDo: to be implement*/
 	BTIF_INFO_FUNC("DO BTIF REMOVE\n");
 	platform_set_drvdata(pdev, NULL);
 	g_btif[0].private_data = NULL;
-	return 0;
+	return;
 }
 
 int _btif_suspend(p_mtk_btif p_btif)
@@ -498,7 +497,7 @@ static int btif_chrdev_init(void)
 	}
 	BTIF_INFO_FUNC("add btif dev to kernel succeed\n");
 
-	p_btif_class = class_create(THIS_MODULE, p_btif_dev_name);
+	p_btif_class = class_create(p_btif_dev_name);
 	if (IS_ERR(p_btif_class)) {
 		BTIF_ERR_FUNC("error happened when doing class_create\n");
 		unregister_chrdev_region(btif_dev, 1);
@@ -864,7 +863,8 @@ static ssize_t driver_flag_set(struct device_driver *drv,
 	return count;
 }
 
-static DRIVER_ATTR(flag, S_IRUGO | S_IWUSR, driver_flag_read, driver_flag_set);
+static struct driver_attribute driver_attr_flag =
+	__ATTR(flag, 0644, driver_flag_read, driver_flag_set);
 
 /*-----------End of platform bus related operation APIs------------*/
 
@@ -1720,13 +1720,13 @@ int _btif_enter_dpidle_from_on(p_mtk_btif p_btif)
 	unsigned int retry = 0;
 	unsigned int wait_period = 1;
 	unsigned int max_retry = MAX_WAIT_TIME_MS / wait_period;
-	struct timeval timer_start;
-	struct timeval timer_now;
+	struct __kernel_old_timeval timer_start;
+	struct __kernel_old_timeval timer_now;
 
-	do_gettimeofday(&timer_start);
+	mtk_gettimeofday(&timer_start);
 
 	while ((!_btif_is_tx_complete(p_btif)) && (retry < max_retry)) {
-		do_gettimeofday(&timer_now);
+		mtk_gettimeofday(&timer_now);
 		if ((MAX_WAIT_TIME_MS/1000) <= (timer_now.tv_sec - timer_start.tv_sec)) {
 			BTIF_WARN_FUNC("max retry timer expired, timer_start.tv_sec:%d, timer_now.tv_sec:%d,",
 				"retry:%d\n", timer_start.tv_sec, timer_now.tv_sec, retry);
@@ -1860,7 +1860,7 @@ static int _btif_vfifo_init(p_mtk_btif_dma p_dma)
 	}
 
 /*vFIFO memory allocation*/
-	p_vfifo->p_vir_addr = dma_zalloc_coherent(dev,
+	p_vfifo->p_vir_addr = dma_alloc_coherent(dev,
 						  p_vfifo->vfifo_size,
 						  &p_vfifo->phy_addr, GFP_DMA | GFP_DMA32);
 	if (p_vfifo->p_vir_addr == NULL) {
@@ -2158,10 +2158,10 @@ static int mtk_btif_rxd_be_blocked_by_timer(void)
 	int ret = 0;
 	int counter = 0;
 	unsigned int i;
-	struct timeval now;
+	struct __kernel_old_timeval now;
 	int time_gap[MAX_BTIF_RXD_TIME_REC];
 
-	do_gettimeofday(&now);
+	mtk_gettimeofday(&now);
 
 	for (i = 0; i < MAX_BTIF_RXD_TIME_REC; i++) {
 		BTIF_INFO_FUNC("btif_rxd_time_stamp[%d]=%d.%d\n", i,
@@ -2266,7 +2266,7 @@ static int btif_rx_thread(void *p_data)
 			break;
 		}
 #if BTIF_RXD_BE_BLOCKED_DETECT
-		do_gettimeofday(&btif_rxd_time_stamp[i]);
+		mtk_gettimeofday(&btif_rxd_time_stamp[i]);
 		i++;
 		if (i >= MAX_BTIF_RXD_TIME_REC)
 			i = 0;
@@ -2907,10 +2907,10 @@ int btif_log_buf_dmp_in(P_BTIF_LOG_QUEUE_T p_log_que, const char *p_buf,
 {
 	P_BTIF_LOG_BUF_T p_log_buf = NULL;
 	char *dir = NULL;
-	struct timeval *p_timer = NULL;
+	struct __kernel_old_timeval *p_timer = NULL;
 	unsigned long flags;
 	bool output_flag = false;
-	struct timespec *p_ts = NULL;
+	struct timespec64 *p_ts = NULL;
 
 	BTIF_DBG_FUNC("++\n");
 
@@ -2933,8 +2933,8 @@ int btif_log_buf_dmp_in(P_BTIF_LOG_QUEUE_T p_log_que, const char *p_buf,
 	p_ts = &p_log_buf->ts;
 
 /*log time stamp*/
-	do_gettimeofday(p_timer);
-	*p_ts = ktime_to_timespec(ktime_get());
+	mtk_gettimeofday(p_timer);
+	*p_ts = ktime_to_timespec64(ktime_get());
 
 /*record data information including length and content*/
 	p_log_buf->len = len;
@@ -2973,8 +2973,8 @@ static void btif_log_buf_dmp_out_work(struct work_struct *work)
 	unsigned int len = 0;
 	unsigned int pkt_count = 0;
 	unsigned char *p_dir = NULL;
-	struct timeval *p_timer = NULL;
-	struct timespec *p_ts = NULL;
+	struct __kernel_old_timeval *p_timer = NULL;
+	struct timespec64 *p_ts = NULL;
 	int i;
 
 	if (p_log_que == NULL || p_log_que->p_dump_queue == NULL)

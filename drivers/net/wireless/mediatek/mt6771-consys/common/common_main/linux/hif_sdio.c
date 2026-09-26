@@ -2102,6 +2102,8 @@ static VOID hif_sdio_irq(struct sdio_func *func)
  *
  * \retval
  */
+static int hif_sdio_drv_registered;
+
 static INT32 hif_sdio_init(VOID)
 {
 	INT32 ret = 0;
@@ -2128,6 +2130,8 @@ static INT32 hif_sdio_init(VOID)
 	ret = sdio_register_driver(&mtk_sdio_client_drv);
 	if (ret != 0)
 		HIF_SDIO_INFO_FUNC("sdio_register_driver() fail, ret=%d\n", ret);
+	else
+		hif_sdio_drv_registered = 1;
 
 #if !(DELETE_HIF_SDIO_CHRDEV)
 	/* 4 <3> create thread for query chip id and device node for launcher to access */
@@ -2165,7 +2169,11 @@ static VOID hif_sdio_exit(VOID)
 
 	/* 4 <3> Reregister with mmc driver. Our remove handler hif_sdio_remove() */
 	/* 4 will be called later by mmc_core. Clean up driver resources there. */
-	sdio_unregister_driver(&mtk_sdio_client_drv);
+	/* Unregistering a driver whose registration failed oopsed on unload (Cosmo 2026-09-26). */
+	if (hif_sdio_drv_registered) {
+		sdio_unregister_driver(&mtk_sdio_client_drv);
+		hif_sdio_drv_registered = 0;
+	}
 	atomic_set(&hif_sdio_irq_enable_flag, 0);
 	HIF_SDIO_DBG_FUNC("end!\n");
 }				/* end of exitWlan() */

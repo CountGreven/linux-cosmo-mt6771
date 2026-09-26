@@ -300,8 +300,11 @@
 		gpio-ranges = <&aw9523 0 0 16>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
-		/* the vendor's "shdn" pin: low holds the chip in reset, LK leaves it low */
-		reset-gpios = <&pio 175 GPIO_ACTIVE_LOW>;
+		/*
+		 * RSTN: LK leaves it low. The driver drives the line 0 then 1 and expects 1 to be
+		 * "running" (its binding example uses GPIO_ACTIVE_HIGH), so no inversion here.
+		 */
+		reset-gpios = <&pio 175 GPIO_ACTIVE_HIGH>;
 	};
 };
 &i2c5 { clock-div = <5>; status = "okay"; };
@@ -1065,3 +1068,17 @@
 		>;
 	};
 };
+
+/*
+ * Rails the vendor board overlay (dtbo fragment for the PMIC) keeps on from boot with
+ * "regulator-default-on": vcama1, vcama2, vsim1, vsim2, vcamd, vcamio, vldo28. Nothing on mainline claims
+ * them, so they were off, and every I2C peripheral except the MT6370 was silent (sensors, and the AW9523
+ * keyboard controller on the camera bus). Keep them on until each consumer has its own supply property.
+ */
+&mt6358_vcama1_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vcama2_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vsim1_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vsim2_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vcamd_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vcamio_reg { regulator-boot-on; regulator-always-on; };
+&mt6358_vldo28_reg { regulator-boot-on; regulator-always-on; };

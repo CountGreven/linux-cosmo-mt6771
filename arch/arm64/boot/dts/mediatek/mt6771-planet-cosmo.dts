@@ -891,6 +891,8 @@
  * platform bus. The wifi node's "wifi-dma" clock has no mainline provider yet: STAND-IN, omitted.
  * Bring-up state: the stack is loaded from Debian as modules; nothing here is verified on hardware.
  */
+/* All connectivity interrupts are level-low in the vendor tree (0x08); sysirq inverts them. Level-high
+ * here made one line fire at ~100 kHz (2026-09-26) and drowned BTIF receive. */
 &{/soc} {
 	consys_hw: consys@18070000 {
 		compatible = "mediatek,mt6771-consys";
@@ -898,8 +900,8 @@
 		      <0 0x10007000 0 0x100>,
 		      <0 0x10001000 0 0x1000>,
 		      <0 0x10006000 0 0x1000>;
-		interrupts = <GIC_SPI 289 IRQ_TYPE_LEVEL_HIGH>,
-			     <GIC_SPI 291 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts = <GIC_SPI 289 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 291 IRQ_TYPE_LEVEL_LOW>;
 		power-domains = <&spm MT8183_POWER_DOMAIN_CONN>;
 		/* The vendor driver asks for vcn18, vcn28, vcn33_bt and vcn33_wifi; the MT6358 has one
 		 * VCN33 LDO, which the vendor exposes as two enable bits, so both names map to ldo_vcn33. */
@@ -917,9 +919,9 @@
 		reg = <0 0x1100c000 0 0x1000>,
 		      <0 0x11000a80 0 0x80>,
 		      <0 0x11000b00 0 0x80>;
-		interrupts = <GIC_SPI 114 IRQ_TYPE_LEVEL_HIGH>,
-			     <GIC_SPI 139 IRQ_TYPE_LEVEL_HIGH>,
-			     <GIC_SPI 140 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts = <GIC_SPI 114 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 139 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 140 IRQ_TYPE_LEVEL_LOW>;
 		clocks = <&infracfg CLK_INFRA_BTIF>, <&infracfg CLK_INFRA_AP_DMA>;
 		clock-names = "btifc", "apdmac";
 		status = "okay";
@@ -931,8 +933,8 @@
 		      <0 0x10212180 0 0x6c>,
 		      <0 0x10001000 0 0x1000>,
 		      <0 0x180e0000 0 0x70>;
-		interrupts = <GIC_SPI 290 IRQ_TYPE_LEVEL_HIGH>,
-			     <GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts = <GIC_SPI 290 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 118 IRQ_TYPE_LEVEL_LOW>;
 		hardware-values = <0x788 0xa5800 0xa5800>;
 		status = "okay";
 	};

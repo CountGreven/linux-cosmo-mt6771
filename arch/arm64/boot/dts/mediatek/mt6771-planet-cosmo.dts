@@ -266,6 +266,25 @@
  * vendor runs this bus at 3.4 MHz high-speed, the controller's 100 kHz default is enough for a PMIC
  * and cannot be wrong for the wiring.
  */
+/*
+ * Keyboard hunt: the Cosmo keyboard is an AW9523B I2C expander that nothing declares -- neither the vendor
+ * dts nor its dtb has a child node for it; the vendor driver binds to a root-level platform node and LK
+ * talks to the chip itself, so its bus pins are muxed by the bootloader like i2c11's. Enable every
+ * controller with no pinctrl and no clients and probe from Linux (0x58-0x5b, ID register 0x10 == 0x23);
+ * the ones that turn out empty get switched off again once the bus is known.
+ */
+&i2c0 { status = "okay"; };
+&i2c1 { status = "okay"; };
+&i2c2 { status = "okay"; };
+&i2c3 { status = "okay"; };
+&i2c4 { status = "okay"; };
+&i2c5 { status = "okay"; };
+&i2c6 { status = "okay"; };
+&i2c7 { status = "okay"; };
+&i2c8 { status = "okay"; };
+&i2c9 { status = "okay"; };
+&i2c10 { status = "okay"; };
+
 &i2c11 {
 	/* On: the MT6370 lives here, and its OTG boost is the only 5 V for USB host mode. */
 	status = "okay";

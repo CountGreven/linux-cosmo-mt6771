@@ -359,10 +359,27 @@
 			status = "okay";
 		};
 
-		/* live tree bled: mt,chan_en = <0x0f>, all four WLED strings */
+		/*
+		 * The panel's backlight: all four WLED strings (vendor mt,chan_en = <0xf>), with the
+		 * vendor's protection settings (mt6370.dtsi: bl_ovp_level 3 = 29 V, bl_ocp_level 2 =
+		 * 1500 mA, both shutting the boost down) and its linear brightness map.
+		 *
+		 * max-brightness is the vendor's mt,max_bled_brightness = <768> of the chip's 2047:
+		 * Planet runs these LEDs at 37% of what the MT6370 can deliver, never more.
+		 *
+		 * No mediatek,bled-pwm-enable: the vendor dims with a PWM signal from the SoC
+		 * (mt,use_pwm). Nothing on mainline drives that signal, the MT6370 kept following it,
+		 * and the backlight flickered. Brightness is set over I2C alone here.
+		 */
 		mt6370_backlight: backlight {
 			compatible = "mediatek,mt6370-backlight";
 			mediatek,bled-channel-use = /bits/ 8 <15>;
+			mediatek,bled-ovp-shutdown;
+			mediatek,bled-ovp-microvolt = <29000000>;
+			mediatek,bled-ocp-shutdown;
+			mediatek,bled-ocp-microamp = <1500000>;
+			max-brightness = <768>;
+			default-brightness = <384>;
 		};
 
 		charger {

@@ -2759,10 +2759,13 @@ static int wlanLoadNvramFile(void)
 	size_t fsize = 0;
 	ssize_t n;
 
-	n = kernel_read_file_from_path(WLAN_NVRAM_PATH, 0, &data, sizeof(g_aucNvram), &fsize,
-				       READING_FIRMWARE);
-	if (n < 0)
+	/* from a kworker a plain path resolves in the initial rootfs; this looks in init's root */
+	n = kernel_read_file_from_path_initns(WLAN_NVRAM_PATH, 0, &data, sizeof(g_aucNvram),
+					      &fsize, READING_FIRMWARE);
+	if (n < 0) {
+		DBGLOG(INIT, WARN, "%s: read failed: %zd\n", WLAN_NVRAM_PATH, n);
 		return n;
+	}
 	if (n != sizeof(g_aucNvram)) {
 		DBGLOG(INIT, ERROR, "%s: %zd bytes, want %zu\n", WLAN_NVRAM_PATH, n, sizeof(g_aucNvram));
 		vfree(data);

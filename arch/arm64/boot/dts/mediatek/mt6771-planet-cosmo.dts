@@ -1052,7 +1052,12 @@
 			    <&aw9523 10 GPIO_ACTIVE_LOW>, <&aw9523 11 GPIO_ACTIVE_LOW>,
 			    <&aw9523 12 GPIO_ACTIVE_LOW>, <&aw9523 13 GPIO_ACTIVE_LOW>,
 			    <&aw9523 14 GPIO_ACTIVE_LOW>;
-		col-scan-delay-us = <10>;
+		/*
+		 * Settle time between driving a column and reading the rows. With 10 us the first row
+		 * read after a column went low still showed its neighbour's edge: "s" (row 2) also
+		 * typed "1" (row 0). The vendor driver has two I2C writes (~0.5 ms) in between.
+		 */
+		col-scan-delay-us = <500>;
 		debounce-delay-ms = <10>;
 		gpio-activelow;
 		wakeup-source;

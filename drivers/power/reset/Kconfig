@@ -208,6 +208,13 @@ config POWER_RESET_MT6323
 
 	  Say Y if you have a board where MT6323 could be found.
 
+config POWER_RESET_MT6358
+	bool "MediaTek MT6358 power-off driver"
+	depends on MFD_MT6397
+	help
+	  Power off support for devices with the MediaTek MT6358 PMIC, where
+	  the firmware leaves switching the device off to the PMIC.
+
 config POWER_RESET_QNAP
 	bool "QNAP power-off driver"
 	depends on PLAT_ORION

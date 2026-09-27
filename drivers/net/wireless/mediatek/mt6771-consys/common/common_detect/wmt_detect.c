@@ -73,6 +73,41 @@ ssize_t wmt_detect_write(struct file *filp, const char __user *buf, size_t count
 	return 0;
 }
 
+/*
+ * What the vendor's userspace wmt_loader did through /dev/wmtdetect: set the chip id, drop the
+ * sdio detect driver, create the WMT core. Then the launcher's part. The firmware lives on
+ * /vendor, which may not be mounted when udev loads this module, so that part is retried.
+ */
+extern INT32 wmt_dev_self_launch(VOID);
+static struct delayed_work wmt_self_start_work;
+static bool wmt_self_core_up;
+static int wmt_self_start_tries;
+
+static void wmt_detect_self_start(struct work_struct *work)
+{
+	int chip, ret;
+
+	if (!wmt_self_core_up) {
+		chip = wmt_plat_get_soc_chipid();
+		mtk_wcn_wmt_set_chipid(chip);
+		wmt_detect_set_chip_type(chip);
+		sdio_detect_exit();
+		ret = mtk_wcn_common_drv_init();
+		if (ret) {
+			WMT_DETECT_PR_ERR("WMT core init failed: %d\n", ret);
+			return;
+		}
+		wmt_self_core_up = true;
+	}
+	ret = wmt_dev_self_launch();
+	if (ret == -EAGAIN && ++wmt_self_start_tries < 60) {
+		schedule_delayed_work(&wmt_self_start_work, 2 * HZ);
+		return;
+	}
+	if (ret)
+		WMT_DETECT_PR_ERR("self launch failed: %d\n", ret);
+}
+
 static long wmt_detect_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int retval = 0;
@@ -120,6 +155,10 @@ static long wmt_detect_unlocked_ioctl(struct file *filp, unsigned int cmd, unsig
 		break;
 
 	case COMBO_IOCTL_DO_MODULE_INIT:
+		if (wmt_self_core_up) {
+			retval = 0;
+			break;
+		}
 #if (MTK_WCN_REMOVE_KO)
 		/*deinit SDIO-DETECT module */
 		WMT_DETECT_PR_INFO("built-in mode\n");
@@ -335,6 +374,8 @@ static int wmt_detect_driver_init(void)
 	}
 
 	WMT_DETECT_PR_INFO("driver(major %d) installed success\n", gWmtDetectMajor);
+	INIT_DELAYED_WORK(&wmt_self_start_work, wmt_detect_self_start);
+	schedule_delayed_work(&wmt_self_start_work, 0);
 
 	return 0;
 
@@ -369,6 +410,7 @@ static void wmt_detect_driver_exit(void)
 {
 	dev_t dev = MKDEV(gWmtDetectMajor, 0);
 
+	cancel_delayed_work_sync(&wmt_self_start_work);
 	mtk_wcn_common_drv_exit();
 
 	if (pDetectDev) {

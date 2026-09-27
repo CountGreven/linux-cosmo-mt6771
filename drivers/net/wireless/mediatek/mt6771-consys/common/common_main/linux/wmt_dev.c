@@ -38,6 +38,7 @@
 */
 
 #ifdef CONFIG_COMPAT
+#include <linux/firmware.h>
 #include <linux/compat.h>
 #endif
 #include <linux/ctype.h>
@@ -1707,6 +1708,97 @@ static VOID WMT_exit(VOID)
 	mtk_wcn_hif_sdio_driver_exit();
 	WMT_INFO_FUNC("done\n");
 }
+
+/*
+ * What the vendor's userspace wmt_launcher did through the ioctls, for the one chip this port
+ * supports: name the cfg file, describe the ROM patches, select the STP transport. Everything it
+ * passed in is fixed for the MT6771 CONSYS, so the driver does it itself and wifi needs no daemon.
+ * Returns -EAGAIN while the firmware files cannot be read yet (/vendor not mounted).
+ */
+static const char * const wmt_soc_patches[] = {
+	"ROMv4_be_patch_1_0_hdr.bin",
+	"ROMv4_be_patch_1_1_hdr.bin",
+};
+#define WMT_SELF_STP_MODE	(0x03 | (2 << 4))	/* STP_BTIF_FULL | WMT_FM_COMM << 4 */
+#define WMT_PATCH_HDR_LEN	28
+
+static bool wmt_self_launched;
+
+bool wmt_dev_self_launch_done(void)
+{
+	return wmt_self_launched;
+}
+EXPORT_SYMBOL(wmt_dev_self_launch_done);
+
+INT32 wmt_dev_self_launch(VOID)
+{
+	const UINT32 num = ARRAY_SIZE(wmt_soc_patches);
+	P_WMT_PATCH_INFO info;
+	P_WMT_HIF_CONF pHif;
+	P_OSAL_OP pOp;
+	UINT32 i, seq;
+
+	if (wmt_self_launched)
+		return 0;
+
+	info = kcalloc(num, sizeof(*info), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+	for (i = 0; i < num; i++) {
+		const struct firmware *fw;
+
+		if (request_firmware_direct(&fw, wmt_soc_patches[i], NULL)) {
+			kfree(info);
+			return -EAGAIN;
+		}
+		/*
+		 * Patch header: byte 24 carries the download sequence in its low nibble, bytes
+		 * 25..27 the load address; the launcher zeroes byte 0 of the address it passes on.
+		 */
+		seq = fw->size >= WMT_PATCH_HDR_LEN ? fw->data[24] & 0xf : 0;
+		if (seq == 0 || seq > num) {
+			WMT_ERR_FUNC("%s: bad download sequence %u\n", wmt_soc_patches[i], seq);
+			release_firmware(fw);
+			kfree(info);
+			return -EINVAL;
+		}
+		info[seq - 1].dowloadSeq = seq;
+		info[seq - 1].addRess[0] = 0;
+		osal_memcpy(&info[seq - 1].addRess[1], &fw->data[25], 3);
+		strscpy(info[seq - 1].patchName, wmt_soc_patches[i],
+			sizeof(info[seq - 1].patchName));
+		release_firmware(fw);
+	}
+
+	wmt_conf_set_cfg_file("WMT_SOC.cfg");
+	kfree(pPatchInfo);
+	pPatchInfo = info;
+	pAtchNum = num;
+	wmt_lib_set_patch_num(num);
+	wmt_lib_set_patch_info(pPatchInfo);
+
+	if (hif_info == 0) {
+		if (wmt_lib_set_hif(WMT_SELF_STP_MODE)) {
+			WMT_ERR_FUNC("wmt_lib_set_hif fail\n");
+			return -EIO;
+		}
+		pOp = wmt_lib_get_free_op();
+		if (!pOp)
+			return -ENOMEM;
+		pOp->op.opId = WMT_OPID_HIF_CONF;
+		pHif = wmt_lib_get_hif();
+		osal_memcpy(&pOp->op.au4OpData[0], pHif, sizeof(WMT_HIF_CONF));
+		pOp->op.u4InfoBit = WMT_OP_HIF_BIT;
+		pOp->signal.timeoutValue = 0;
+		if (wmt_lib_put_act_op(pOp) == MTK_WCN_BOOL_FALSE)
+			return -EIO;
+		hif_info = 1;
+	}
+	wmt_self_launched = true;
+	WMT_INFO_FUNC("patches and STP mode set by the driver\n");
+	return 0;
+}
+EXPORT_SYMBOL(wmt_dev_self_launch);
 
 INT32 mtk_wcn_common_drv_init(VOID)
 {

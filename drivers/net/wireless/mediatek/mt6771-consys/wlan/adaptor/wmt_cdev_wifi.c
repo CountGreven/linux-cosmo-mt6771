@@ -288,6 +288,38 @@ done:
 }
 EXPORT_SYMBOL(wifi_reset_end);
 
+/*
+ * Radio power for in-kernel callers: what writing "1"/"0" to /dev/wmtWifi does, without the
+ * character device. The wlan driver turns the radio on when it has registered with WMT, so that
+ * wlan0 exists without any help from userspace.
+ */
+int wifi_power_set(int on)
+{
+	int ret = 0;
+
+	down(&wr_mtx);
+	if (on && !powered) {
+		if (mtk_wcn_wmt_func_on(WMTDRV_TYPE_WIFI) == MTK_WCN_BOOL_FALSE) {
+			WIFI_ERR_FUNC("WMT turn on WIFI fail!\n");
+			ret = -EIO;
+		} else {
+			powered = 1;
+			wlan_mode = WLAN_MODE_HALT;
+		}
+	} else if (!on && powered) {
+		if (mtk_wcn_wmt_func_off(WMTDRV_TYPE_WIFI) == MTK_WCN_BOOL_FALSE) {
+			WIFI_ERR_FUNC("WMT turn off WIFI fail!\n");
+			ret = -EIO;
+		} else {
+			powered = 0;
+			wlan_mode = WLAN_MODE_HALT;
+		}
+	}
+	up(&wr_mtx);
+	return ret;
+}
+EXPORT_SYMBOL(wifi_power_set);
+
 static int WIFI_open(struct inode *inode, struct file *file)
 {
 	WIFI_INFO_FUNC("major %d minor %d (pid %d)\n", imajor(inode), iminor(inode), current->pid);

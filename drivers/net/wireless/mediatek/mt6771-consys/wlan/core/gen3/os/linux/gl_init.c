@@ -2733,6 +2733,28 @@ static VOID wlanRemove(VOID)
 */
 /*----------------------------------------------------------------------------*/
 /* 1 Module Entry Point */
+/*
+ * Turn the radio on once the WMT core has its patches and transport (wmt_dev_self_launch), so
+ * wlan0 is registered by loading the modules alone, the way any other wifi driver behaves.
+ */
+extern bool wmt_dev_self_launch_done(void);
+extern int wifi_power_set(int on);
+static struct delayed_work wlan_self_on_work;
+static int wlan_self_on_tries;
+
+static void wlan_self_on(struct work_struct *work)
+{
+	if (!wmt_dev_self_launch_done()) {
+		if (++wlan_self_on_tries < 120)
+			schedule_delayed_work(&wlan_self_on_work, HZ);
+		else
+			DBGLOG(INIT, ERROR, "WMT core never became ready, wifi stays off\n");
+		return;
+	}
+	if (wifi_power_set(1))
+		DBGLOG(INIT, ERROR, "wifi power on failed\n");
+}
+
 static int initWlan(void)
 {
 	int ret = 0;
@@ -2770,6 +2792,8 @@ static int initWlan(void)
 	/* Set WIFI EMI protection to consys permitted on system boot up */
 	kalSetEmiMpuProtection(gConEmiPhyBase, WIFI_EMI_MEM_SIZE, TRUE);
 #endif
+	INIT_DELAYED_WORK(&wlan_self_on_work, wlan_self_on);
+	schedule_delayed_work(&wlan_self_on_work, 0);
 	return ret;
 }				/* end of initWlan() */
 
@@ -2785,6 +2809,8 @@ static int initWlan(void)
 /* 1 Module Leave Point */
 static VOID exitWlan(void)
 {
+	cancel_delayed_work_sync(&wlan_self_on_work);
+	wifi_power_set(0);
 
 	kalFbNotifierUnReg();
 #if CFG_CHIP_RESET_SUPPORT

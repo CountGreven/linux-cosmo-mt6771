@@ -1512,8 +1512,10 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 	kalMemCopy((PUINT_8) ((ULONG) prMsduInfo->prPacket + MAC_TX_RESERVED_FIELD), prReq->aucFrame,
 		   prReq->u2FrameLength);
 
-	TX_SET_MMPDU(prAdapter, prMsduInfo, prAdapter->prAisBssInfo->ucBssIndex, STA_REC_INDEX_NOT_FOUND,
-		     prReq->ucMacHeaderLength, prReq->u2FrameLength, wlanMonTxDone,
+	TX_SET_MMPDU(prAdapter, prMsduInfo,
+		     prAdapter->prGlueInfo->prMonBssInfo ?
+			     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex,
+		     STA_REC_INDEX_NOT_FOUND, prReq->ucMacHeaderLength, prReq->u2FrameLength, wlanMonTxDone,
 		     prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO);
 	if (prReq->fgFixedRate)
 		nicTxSetPktFixedRateOption(prMsduInfo, prReq->u2RateCode, FIX_BW_20, FALSE, FALSE);
@@ -1676,22 +1678,31 @@ void wlanMonWorkHandler(struct work_struct *work)
  * station interface has to be down (and not managed by NetworkManager, whose connection attempts
  * retune the radio).
  */
+static void wlanMonChandefToRf(struct cfg80211_chan_def *chandef, ENUM_BAND_T *peBand, UINT_8 *pucChannel,
+			       ENUM_CHNL_EXT_T *peSco)
+{
+	*peBand = chandef->chan->band == NL80211_BAND_5GHZ ? BAND_5G : BAND_2G4;
+	*pucChannel = ieee80211_frequency_to_channel(chandef->chan->center_freq);
+	*peSco = CHNL_EXT_SCN;
+	if (chandef->width == NL80211_CHAN_WIDTH_40)
+		*peSco = chandef->center_freq1 > chandef->chan->center_freq ? CHNL_EXT_SCA : CHNL_EXT_SCB;
+}
+
 static WLAN_STATUS wlanMonSet(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable, struct cfg80211_chan_def *chandef)
 {
 	PARAM_CUSTOM_MONITOR_SET_STRUCT_T rInfo;
 	UINT_32 u4BufLen = 0;
+	ENUM_BAND_T eBand;
+	ENUM_CHNL_EXT_T eSco;
 
 	kalMemZero(&rInfo, sizeof(rInfo));
 	rInfo.ucEnable = fgEnable;
-	rInfo.ucBand = chandef->chan->band == NL80211_BAND_5GHZ ? BAND_5G : BAND_2G4;
-	rInfo.ucPriChannel = ieee80211_frequency_to_channel(chandef->chan->center_freq);
+	wlanMonChandefToRf(chandef, &eBand, &rInfo.ucPriChannel, &eSco);
+	rInfo.ucBand = (UINT_8) eBand;
+	rInfo.ucSco = (UINT_8) eSco;
 	rInfo.ucChannelWidth = CW_20_40MHZ;
-	rInfo.ucSco = CHNL_EXT_SCN;
 
 	switch (chandef->width) {
-	case NL80211_CHAN_WIDTH_40:
-		rInfo.ucSco = chandef->center_freq1 > chandef->chan->center_freq ? CHNL_EXT_SCA : CHNL_EXT_SCB;
-		break;
 	case NL80211_CHAN_WIDTH_80:
 		rInfo.ucChannelWidth = CW_80MHZ;
 		rInfo.ucChannelS1 = ieee80211_frequency_to_channel(chandef->center_freq1);
@@ -1701,6 +1712,56 @@ static WLAN_STATUS wlanMonSet(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable, struct
 	}
 
 	return kalIoctl(prGlueInfo, wlanoidSetMonitor, &rInfo, sizeof(rInfo), FALSE, FALSE, TRUE, &u4BufLen);
+}
+
+/*
+ * The monitor interface's own BSS context: association-based frame injection (TX_SET_MMPDU) needs a
+ * BSS the firmware considers active on the current channel. Riding on the station connection's BSS
+ * only works while connected, which defeats the point of a monitor interface. This claims one of the
+ * driver's own spare BSS slots (the pool cnmGetBssInfoAndInit() already draws from for P2P; see
+ * ci/../BSSDUMP for how it was confirmed free) and keeps it tuned to whatever channel the monitor is
+ * set to, independent of the AIS connection's state.
+ */
+static WLAN_STATUS wlanMonBssSetChannel(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssInfo,
+					struct cfg80211_chan_def *chandef)
+{
+	wlanMonChandefToRf(chandef, &prBssInfo->eBand, &prBssInfo->ucPrimaryChannel, &prBssInfo->eBssSCO);
+	return nicUpdateBss(prAdapter, prBssInfo->ucBssIndex);
+}
+
+static P_BSS_INFO_T wlanMonBssAlloc(P_ADAPTER_T prAdapter, struct cfg80211_chan_def *chandef)
+{
+	P_BSS_INFO_T prBssInfo = cnmGetBssInfoAndInit(prAdapter, NETWORK_TYPE_P2P, FALSE);
+
+	if (!prBssInfo)
+		return NULL;
+
+	BSS_INFO_INIT(prAdapter, prBssInfo);
+	COPY_MAC_ADDR(prBssInfo->aucOwnMacAddr, prAdapter->rMyMacAddr);
+	prBssInfo->aucOwnMacAddr[0] ^= 0x2;	/* locally administered: distinct from the real station address */
+	prBssInfo->u2OperationalRateSet = RATE_SET_OFDM;
+	prBssInfo->u2BSSBasicRateSet = BASIC_RATE_SET_OFDM;
+
+	wlanMonChandefToRf(chandef, &prBssInfo->eBand, &prBssInfo->ucPrimaryChannel, &prBssInfo->eBssSCO);
+
+	/*
+	 * Both queue the command and return WLAN_STATUS_PENDING on the ordinary path; only a real
+	 * allocation failure returns WLAN_STATUS_FAILURE (wlanSendSetQueryCmd, common/wlan_oid.c).
+	 */
+	if (nicActivateNetwork(prAdapter, prBssInfo->ucBssIndex) == WLAN_STATUS_FAILURE ||
+	    nicUpdateBss(prAdapter, prBssInfo->ucBssIndex) == WLAN_STATUS_FAILURE) {
+		nicDeactivateNetwork(prAdapter, prBssInfo->ucBssIndex);
+		cnmFreeBssInfo(prAdapter, prBssInfo);
+		return NULL;
+	}
+
+	return prBssInfo;
+}
+
+static void wlanMonBssFree(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssInfo)
+{
+	nicDeactivateNetwork(prAdapter, prBssInfo->ucBssIndex);
+	cnmFreeBssInfo(prAdapter, prBssInfo);
 }
 
 static void wlanMonFree(struct net_device *prDev)
@@ -1758,6 +1819,13 @@ static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *nam
 	skb_queue_head_init(&prGlueInfo->rMonTxQueue);
 	INIT_WORK(&prGlueInfo->rMonTxWork, wlanMonTxWork);
 	cfg80211_chandef_create(&prGlueInfo->rMonChandef, &prBand->channels[0], NL80211_CHAN_NO_HT);
+
+	prGlueInfo->prMonBssInfo = wlanMonBssAlloc(prGlueInfo->prAdapter, &prGlueInfo->rMonChandef);
+	if (!prGlueInfo->prMonBssInfo) {
+		DBGLOG(INIT, ERROR, "monitor: no free BSS context, injection will not work\n");
+		/* capture still works without it; only injection needs a BSS to send through */
+	}
+
 	prGlueInfo->prMonDevHandler = prDev;
 	prGlueInfo->fgIsEnableMon = TRUE;
 	if (wlanMonSet(prGlueInfo, TRUE, &prGlueInfo->rMonChandef) != WLAN_STATUS_SUCCESS)
@@ -1777,6 +1845,10 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	cancel_work_sync(&prGlueInfo->rMonTxWork);
 	skb_queue_purge(&prGlueInfo->rMonTxQueue);
 	wlanMonSet(prGlueInfo, FALSE, &prGlueInfo->rMonChandef);
+	if (prGlueInfo->prMonBssInfo) {
+		wlanMonBssFree(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo);
+		prGlueInfo->prMonBssInfo = NULL;
+	}
 	prGlueInfo->prMonDevHandler = NULL;
 	cfg80211_unregister_netdevice(wdev->netdev);
 
@@ -1794,6 +1866,8 @@ static int wlanMonSetChannel(struct wiphy *wiphy, struct net_device *dev, struct
 		return -EINVAL;
 	if (wlanMonSet(prGlueInfo, TRUE, chandef) != WLAN_STATUS_SUCCESS)
 		return -EIO;
+	if (prGlueInfo->prMonBssInfo)
+		wlanMonBssSetChannel(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo, chandef);
 
 	prGlueInfo->rMonChandef = *chandef;
 

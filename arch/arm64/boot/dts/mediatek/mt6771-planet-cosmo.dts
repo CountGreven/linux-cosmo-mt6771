@@ -1113,20 +1113,6 @@
 	};
 };
 
-/*
- * Rails the vendor board overlay (dtbo fragment for the PMIC) keeps on from boot with
- * "regulator-default-on": vcama1, vcama2, vsim1, vsim2, vcamd, vcamio, vldo28. Nothing on mainline claims
- * them, so they were off, and every I2C peripheral except the MT6370 was silent (sensors, and the AW9523
- * keyboard controller on the camera bus). Keep them on until each consumer has its own supply property.
- */
-&mt6358_vcama1_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vcama2_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vsim1_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vsim2_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vcamd_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vcamio_reg { regulator-boot-on; regulator-always-on; };
-&mt6358_vldo28_reg { regulator-boot-on; regulator-always-on; };
-
 /* Reset through the watchdog, ahead of the firmware: the vendor's PSCI SYSTEM_RESET hangs. */
 &watchdog {
 	compatible = "mediatek,mt6771-wdt";

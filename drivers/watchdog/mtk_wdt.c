@@ -83,6 +83,7 @@ struct mtk_wdt_dev {
 struct mtk_wdt_data {
 	int toprgu_sw_rst_num;
 	bool has_swsysrst_en;
+	int restart_priority;
 };
 
 static const struct mtk_wdt_data mt2712_data = {
@@ -108,6 +109,16 @@ static const struct mtk_wdt_data mt7988_data = {
 
 static const struct mtk_wdt_data mt8183_data = {
 	.toprgu_sw_rst_num = MT8183_TOPRGU_SW_RST_NUM,
+};
+
+/*
+ * MT6771 shares the MT8183 reset controller. Its vendor firmware's PSCI SYSTEM_RESET does not
+ * return and does not reset, and the vendor kernel switches it off (arm_pm_restart = NULL) to
+ * reset through the watchdog alone. Run ahead of the firmware handler (priority 129).
+ */
+static const struct mtk_wdt_data mt6771_data = {
+	.toprgu_sw_rst_num = MT8183_TOPRGU_SW_RST_NUM,
+	.restart_priority = 192,
 };
 
 static const struct mtk_wdt_data mt8186_data = {
@@ -445,7 +456,10 @@ static int mtk_wdt_probe(struct platform_device *pdev)
 
 	watchdog_init_timeout(&mtk_wdt->wdt_dev, timeout, dev);
 	watchdog_set_nowayout(&mtk_wdt->wdt_dev, nowayout);
-	watchdog_set_restart_priority(&mtk_wdt->wdt_dev, 128);
+	wdt_data = of_device_get_match_data(dev);
+	watchdog_set_restart_priority(&mtk_wdt->wdt_dev,
+				      wdt_data && wdt_data->restart_priority ?
+				      wdt_data->restart_priority : 128);
 
 	watchdog_set_drvdata(&mtk_wdt->wdt_dev, mtk_wdt);
 
@@ -459,7 +473,6 @@ static int mtk_wdt_probe(struct platform_device *pdev)
 	dev_info(dev, "Watchdog enabled (timeout=%d sec, nowayout=%d)\n",
 		 mtk_wdt->wdt_dev.timeout, nowayout);
 
-	wdt_data = of_device_get_match_data(dev);
 	if (wdt_data) {
 		err = toprgu_register_reset_controller(pdev,
 						       wdt_data->toprgu_sw_rst_num);
@@ -504,6 +517,7 @@ static const struct of_device_id mtk_wdt_dt_ids[] = {
 	{ .compatible = "mediatek,mt2712-wdt", .data = &mt2712_data },
 	{ .compatible = "mediatek,mt6589-wdt" },
 	{ .compatible = "mediatek,mt6735-wdt", .data = &mt6735_data },
+	{ .compatible = "mediatek,mt6771-wdt", .data = &mt6771_data },
 	{ .compatible = "mediatek,mt6795-wdt", .data = &mt6795_data },
 	{ .compatible = "mediatek,mt7986-wdt", .data = &mt7986_data },
 	{ .compatible = "mediatek,mt7988-wdt", .data = &mt7988_data },

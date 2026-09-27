@@ -100,6 +100,8 @@ struct mt6370_priv {
 	unsigned int irq_nums[MT6370_IRQ_MAX];
 	int attach;
 	int psy_usb_type;
+	int ichg_max;
+	int voreg_max;
 	bool pwr_rdy;
 };
 
@@ -544,12 +546,12 @@ static int mt6370_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		return mt6370_chg_field_get(priv, F_ICHG, &val->intval);
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-		val->intval = linear_range_get_max_value(&mt6370_chg_ranges[MT6370_RANGE_F_ICHG]);
+		val->intval = priv->ichg_max;
 		return 0;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 		return mt6370_chg_field_get(priv, F_VOREG, &val->intval);
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
-		val->intval = linear_range_get_max_value(&mt6370_chg_ranges[MT6370_RANGE_F_VOREG]);
+		val->intval = priv->voreg_max;
 		return 0;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
 		return mt6370_chg_field_get(priv, F_IAICR, &val->intval);
@@ -577,9 +579,11 @@ static int mt6370_chg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ONLINE:
 		return mt6370_chg_set_online(priv, val);
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
-		return mt6370_chg_field_set(priv, F_ICHG, val->intval);
+		return mt6370_chg_field_set(priv, F_ICHG,
+					    min(val->intval, priv->ichg_max));
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
-		return mt6370_chg_field_set(priv, F_VOREG, val->intval);
+		return mt6370_chg_field_set(priv, F_VOREG,
+					    min(val->intval, priv->voreg_max));
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
 		return mt6370_chg_field_set(priv, F_IAICR, val->intval);
 	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
@@ -794,6 +798,41 @@ static int mt6370_chg_init_setting(struct mt6370_priv *priv)
 	return 0;
 }
 
+/*
+ * Take the battery's limits from the monitored-battery node: the charge voltage and the termination
+ * current are programmed, and the charge voltage and current can not be raised above the battery's
+ * maximum afterwards. Without a battery node the chip's own range is the limit, as before.
+ */
+static int mt6370_chg_init_battery(struct mt6370_priv *priv)
+{
+	struct power_supply_battery_info *info;
+	int ret;
+
+	priv->ichg_max = linear_range_get_max_value(&mt6370_chg_ranges[MT6370_RANGE_F_ICHG]);
+	priv->voreg_max = linear_range_get_max_value(&mt6370_chg_ranges[MT6370_RANGE_F_VOREG]);
+
+	ret = power_supply_get_battery_info(priv->psy, &info);
+	if (ret)
+		return ret == -ENODEV || ret == -ENOENT ? 0 : ret;
+
+	if (info->constant_charge_current_max_ua > 0)
+		priv->ichg_max = min(priv->ichg_max, info->constant_charge_current_max_ua);
+
+	if (info->constant_charge_voltage_max_uv > 0) {
+		priv->voreg_max = min(priv->voreg_max, info->constant_charge_voltage_max_uv);
+		ret = mt6370_chg_field_set(priv, F_VOREG, priv->voreg_max);
+		if (ret)
+			goto out;
+	}
+
+	if (info->charge_term_current_ua > 0)
+		ret = mt6370_chg_field_set(priv, F_IEOC, info->charge_term_current_ua);
+
+out:
+	power_supply_put_battery_info(priv->psy, info);
+	return ret;
+}
+
 #define MT6370_CHG_DT_PROP_DECL(_name, _type, _field)	\
 {							\
 	.name = "mediatek,chg-" #_name,			\
@@ -962,6 +1001,10 @@ static int mt6370_chg_probe(struct platform_device *pdev)
 	ret = devm_delayed_work_autocancel(dev, &priv->mivr_dwork, mt6370_chg_mivr_dwork_func);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to init mivr delayed work\n");
+
+	ret = mt6370_chg_init_battery(priv);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to apply the battery's limits\n");
 
 	ret = mt6370_chg_init_setting(priv);
 	if (ret)

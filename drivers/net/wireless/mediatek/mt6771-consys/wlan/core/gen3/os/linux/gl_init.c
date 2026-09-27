@@ -33,6 +33,8 @@
 *                    E X T E R N A L   R E F E R E N C E S
 ********************************************************************************
 */
+#include <linux/kernel_read_file.h>
+#include <linux/vmalloc.h>
 #include "gl_os.h"
 #include <linux/sched/debug.h>
 #include "wlan_lib.h"
@@ -2741,6 +2743,37 @@ extern bool wmt_dev_self_launch_done(void);
 extern int wifi_power_set(int on);
 static struct delayed_work wlan_self_on_work;
 static int wlan_self_on_tries;
+static int wlan_nvram_tries;
+
+/*
+ * The factory calibration record (MAC address, crystal trim, TX power tables). The vendor system
+ * had a userspace daemon push it through /dev/wmtWifi ("WR-BUF:NVRAM"); without it the radio
+ * runs on defaults with a random address, and transmissions fail after 31 retries at good signal.
+ * The file carries a 2-byte checksum after the record; only the record is taken.
+ */
+#define WLAN_NVRAM_PATH	"/mnt/vendor/nvdata/APCFG/APRDEB/WIFI"
+
+static int wlanLoadNvramFile(void)
+{
+	void *data = NULL;
+	size_t fsize = 0;
+	ssize_t n;
+
+	n = kernel_read_file_from_path(WLAN_NVRAM_PATH, 0, &data, sizeof(g_aucNvram), &fsize,
+				       READING_FIRMWARE);
+	if (n < 0)
+		return n;
+	if (n != sizeof(g_aucNvram)) {
+		DBGLOG(INIT, ERROR, "%s: %zd bytes, want %zu\n", WLAN_NVRAM_PATH, n, sizeof(g_aucNvram));
+		vfree(data);
+		return -EINVAL;
+	}
+	kalMemCopy(g_aucNvram, data, sizeof(g_aucNvram));
+	vfree(data);
+	fgNvramAvailable = TRUE;
+	DBGLOG(INIT, INFO, "calibration record loaded from %s\n", WLAN_NVRAM_PATH);
+	return 0;
+}
 
 static void wlan_self_on(struct work_struct *work)
 {
@@ -2751,6 +2784,13 @@ static void wlan_self_on(struct work_struct *work)
 			DBGLOG(INIT, ERROR, "WMT core never became ready, wifi stays off\n");
 		return;
 	}
+	/* nvdata is a separate mount: give it half a minute to appear before going on without */
+	if (!fgNvramAvailable && wlanLoadNvramFile() && ++wlan_nvram_tries < 30) {
+		schedule_delayed_work(&wlan_self_on_work, HZ);
+		return;
+	}
+	if (!fgNvramAvailable)
+		DBGLOG(INIT, ERROR, "no calibration record: radio uncalibrated, random MAC address\n");
 	if (wifi_power_set(1))
 		DBGLOG(INIT, ERROR, "wifi power on failed\n");
 }

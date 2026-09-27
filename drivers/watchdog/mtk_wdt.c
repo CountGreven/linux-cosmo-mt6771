@@ -49,6 +49,7 @@
 #define WDT_MODE_EXRST_EN	(1 << 2)
 #define WDT_MODE_IRQ_EN		(1 << 3)
 #define WDT_MODE_AUTO_START	(1 << 4)
+#define WDT_MODE_IRQ_LEVEL_EN	(1 << 5)
 #define WDT_MODE_DUAL_EN	(1 << 6)
 #define WDT_MODE_CNT_SEL	(1 << 8)
 #define WDT_MODE_KEY		0x22000000
@@ -234,9 +235,17 @@ static int mtk_wdt_restart(struct watchdog_device *wdt_dev,
 
 	wdt_base = mtk_wdt->wdt_base;
 
-	/* Enable reset in order to issue a system reset instead of an IRQ */
+	/*
+	 * Issue a system reset instead of an IRQ. Clearing the irq bit alone is not enough when
+	 * the bootloader left dual mode on (MT6771: mode 0x5d): the first expiry then raises the
+	 * interrupt, and with interrupts off the restart never happens. Do what the vendor's
+	 * wdt_arch_reset() does: reload the counter, drop irq, irq-level, enable and dual mode,
+	 * keep the external reset and set auto restart so the board comes back up by itself.
+	 */
+	writel(WDT_RST_RELOAD, wdt_base + WDT_RST);
 	reg = readl(wdt_base + WDT_MODE);
-	reg &= ~WDT_MODE_IRQ_EN;
+	reg &= ~(WDT_MODE_IRQ_EN | WDT_MODE_IRQ_LEVEL_EN | WDT_MODE_EN | WDT_MODE_DUAL_EN);
+	reg |= WDT_MODE_EXRST_EN | WDT_MODE_AUTO_START;
 	writel(reg | WDT_MODE_KEY, wdt_base + WDT_MODE);
 
 	while (1) {

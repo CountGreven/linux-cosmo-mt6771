@@ -47,7 +47,11 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # rotate:1 came up upside down once FRAMEBUFFER_CONSOLE_ROTATION was actually built in
            # (the earlier "narrow strip" was fbcon ignoring the option, not a direction). 3 is the vendor's
            # 270 degrees.
-           "console=tty0 fbcon=rotate:3 panic=5 "
+           # loglevel=4: warnings and worse reach the consoles, everything stays in the log buffer.
+           # At the default 7 every message is drawn on the rotated framebuffer console and sent to the
+           # UART LK adds, synchronously: the wifi driver's per-packet lines stalled its own threads for
+           # seconds (median ping 18-88 ms, worst 8 s; 1.1 ms with the consoles quiet).
+           "console=tty0 fbcon=rotate:3 panic=5 loglevel=4 "
            # The Type-C connector sits under the tcpc under the MT6370 on i2c11 and links to the USB
            # controller both ways; fw_devlink reported the cycle as fixed and still left
            # 11017000.i2c "deferred probe pending: (reason unknown)", so the MT6370 never probed.

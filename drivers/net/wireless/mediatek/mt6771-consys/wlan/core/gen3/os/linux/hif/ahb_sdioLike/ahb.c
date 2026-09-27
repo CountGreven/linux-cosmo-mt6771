@@ -152,6 +152,8 @@ static const struct of_device_id apwifi_of_ids[] = {
 	{.compatible = "mediatek,wifi",},
 	{}
 };
+/* lets udev load the module (and through its dependencies the whole stack) from the device tree */
+MODULE_DEVICE_TABLE(of, apwifi_of_ids);
 #endif
 
 struct platform_driver MtkAhbPltmDriver = {

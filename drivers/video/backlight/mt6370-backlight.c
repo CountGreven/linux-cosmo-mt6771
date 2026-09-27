@@ -155,8 +155,12 @@ static int mt6370_init_backlight_properties(struct mt6370_priv *priv,
 		val |= prop_val;
 	}
 
-	ret = regmap_update_bits(priv->regmap, MT6370_REG_BL_PWM,
-				 val, val);
+	/*
+	 * Write every field this function owns, not only the bits that are set: a bootloader may
+	 * have left the PWM input enabled, and a mask equal to the value can never clear it.
+	 */
+	mask = MT6370_BL_PWM_EN_MASK | MT6370_BL_PWM_HYS_EN_MASK | MT6370_BL_PWM_HYS_SEL_MASK;
+	ret = regmap_update_bits(priv->regmap, MT6370_REG_BL_PWM, mask, val);
 	if (ret)
 		return ret;
 
@@ -187,8 +191,9 @@ static int mt6370_init_backlight_properties(struct mt6370_priv *priv,
 		val |= ocp_uA << MT6370_BL_OC_SEL_SHIFT;
 	}
 
-	ret = regmap_update_bits(priv->regmap, MT6370_REG_BL_BSTCTRL,
-				 val, val);
+	mask = MT6370_BL_OVP_EN_MASK | MT6370_BL_OVP_SEL_MASK |
+	       MT6370_BL_OC_EN_MASK | MT6370_BL_OC_SEL_MASK;
+	ret = regmap_update_bits(priv->regmap, MT6370_REG_BL_BSTCTRL, mask, val);
 	if (ret)
 		return ret;
 

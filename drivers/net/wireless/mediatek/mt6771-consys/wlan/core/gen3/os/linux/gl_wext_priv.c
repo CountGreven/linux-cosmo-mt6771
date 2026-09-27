@@ -2254,6 +2254,10 @@ reqExtSetAcpiDevicePowerState(IN P_GLUE_INFO_T prGlueInfo,
 #define CMD_OKC_ENABLE		"OKC_ENABLE"
 
 #define CMD_SETMONITOR		"MONITOR"
+#define CMD_RFTEST_ENTER	"RFTEST_ENTER"
+#define CMD_RFTEST_ABORT	"RFTEST_ABORT"
+#define CMD_RFTEST_SET		"RFTEST_SET"
+#define CMD_RFTEST_QUERY	"RFTEST_QUERY"
 #define CMD_SETBUFMODE		"BUFFER_MODE"
 
 #if CFG_SUPPORT_QA_TOOL
@@ -3165,6 +3169,77 @@ static int priv_driver_get_wifi_type(IN struct net_device *prNetDev,
 	return (int)u4BytesWritten;
 }
 
+/*
+ * The vendor's RF test ("AutoTest"/ATE) mode: a manufacturing interface that talks straight to the
+ * radio (channel, rate, power, a continuous-TX command, TX/RX counters) with no BSS or association
+ * needed. Entering it takes the radio out of normal wifi operation until RFTEST_ABORT is run; that
+ * command, or a restart if it does not fully recover, is required before wifi will work again.
+ */
+int priv_driver_rftest_mode(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen,
+			    IN BOOLEAN fgEnter)
+{
+	P_GLUE_INFO_T prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	WLAN_STATUS rStatus;
+	UINT_32 u4BufLen = 0;
+
+	rStatus = kalIoctl(prGlueInfo, fgEnter ? wlanoidRftestSetTestMode : wlanoidRftestSetAbortTestMode,
+			   NULL, 0, FALSE, TRUE, TRUE, &u4BufLen);
+
+	return snprintf(pcCommand, i4TotalLen, "rftest %s %s", fgEnter ? "enter" : "abort",
+			(rStatus == WLAN_STATUS_SUCCESS) ? "success" : "fail");
+}
+
+int priv_driver_rftest_set(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
+{
+	P_GLUE_INFO_T prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	PARAM_MTK_WIFI_TEST_STRUCT_T rInfo;
+	WLAN_STATUS rStatus;
+	UINT_32 u4BufLen = 0;
+	INT_32 i4Argc = 0;
+	PCHAR apcArgv[WLAN_CFG_ARGV_MAX];
+
+	wlanCfgParseArgument(pcCommand, &i4Argc, apcArgv);
+	if (i4Argc < 3)
+		return snprintf(pcCommand, i4TotalLen, "RFTEST_SET [FuncIndex] [FuncData]");
+
+	kalMemZero(&rInfo, sizeof(rInfo));
+	kalkStrtou32(apcArgv[1], 0, &rInfo.u4FuncIndex);
+	kalkStrtou32(apcArgv[2], 0, &rInfo.u4FuncData);
+
+	rStatus = kalIoctl(prGlueInfo, wlanoidRftestSetAutoTest, &rInfo, sizeof(rInfo), FALSE, TRUE, TRUE,
+			   &u4BufLen);
+
+	return snprintf(pcCommand, i4TotalLen, "rftest set %u %u %s", rInfo.u4FuncIndex, rInfo.u4FuncData,
+			(rStatus == WLAN_STATUS_SUCCESS) ? "success" : "fail");
+}
+
+int priv_driver_rftest_query(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
+{
+	P_GLUE_INFO_T prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	PARAM_MTK_WIFI_TEST_STRUCT_T rInfo;
+	WLAN_STATUS rStatus;
+	UINT_32 u4QueryInfoLen = 0;
+	INT_32 i4Argc = 0;
+	PCHAR apcArgv[WLAN_CFG_ARGV_MAX];
+
+	wlanCfgParseArgument(pcCommand, &i4Argc, apcArgv);
+	if (i4Argc < 3)
+		return snprintf(pcCommand, i4TotalLen, "RFTEST_QUERY [FuncIndex] [FuncData]");
+
+	kalMemZero(&rInfo, sizeof(rInfo));
+	kalkStrtou32(apcArgv[1], 0, &rInfo.u4FuncIndex);
+	kalkStrtou32(apcArgv[2], 0, &rInfo.u4FuncData);
+
+	rStatus = kalIoctl(prGlueInfo, wlanoidRftestQueryAutoTest, &rInfo, sizeof(rInfo), TRUE, TRUE, TRUE,
+			   &u4QueryInfoLen);
+
+	if (rStatus != WLAN_STATUS_SUCCESS)
+		return snprintf(pcCommand, i4TotalLen, "rftest query %u fail", rInfo.u4FuncIndex);
+
+	return snprintf(pcCommand, i4TotalLen, "rftest query %u: %u %u", rInfo.u4FuncIndex,
+			rInfo.u4FuncData, rInfo.u4FuncData2);
+}
+
 #if CFG_SUPPORT_SNIFFER
 int priv_driver_set_monitor(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
 {
@@ -3396,6 +3471,14 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 			i4BytesWritten = priv_driver_set_country(prNetDev, pcCommand, i4TotalLen);
 		} else if (strncasecmp(pcCommand, CMD_MIRACAST, strlen(CMD_MIRACAST)) == 0) {
 			i4BytesWritten = priv_driver_set_miracast(prNetDev, pcCommand, i4TotalLen);
+		} else if (strncasecmp(pcCommand, CMD_RFTEST_ENTER, strlen(CMD_RFTEST_ENTER)) == 0) {
+			i4BytesWritten = priv_driver_rftest_mode(prNetDev, pcCommand, i4TotalLen, TRUE);
+		} else if (strncasecmp(pcCommand, CMD_RFTEST_ABORT, strlen(CMD_RFTEST_ABORT)) == 0) {
+			i4BytesWritten = priv_driver_rftest_mode(prNetDev, pcCommand, i4TotalLen, FALSE);
+		} else if (strncasecmp(pcCommand, CMD_RFTEST_SET, strlen(CMD_RFTEST_SET)) == 0) {
+			i4BytesWritten = priv_driver_rftest_set(prNetDev, pcCommand, i4TotalLen);
+		} else if (strncasecmp(pcCommand, CMD_RFTEST_QUERY, strlen(CMD_RFTEST_QUERY)) == 0) {
+			i4BytesWritten = priv_driver_rftest_query(prNetDev, pcCommand, i4TotalLen);
 		}
 		/* Mediatek private command */
 		else if (strncasecmp(pcCommand, CMD_SET_SW_CTRL, strlen(CMD_SET_SW_CTRL)) == 0) {

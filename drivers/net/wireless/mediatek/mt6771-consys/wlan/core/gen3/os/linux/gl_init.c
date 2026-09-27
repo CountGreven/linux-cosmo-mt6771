@@ -273,6 +273,22 @@ static int wlanMonGetChannel(struct wiphy *wiphy, struct wireless_dev *wdev, uns
 			     struct cfg80211_chan_def *chandef);
 #endif
 
+#if CFG_SUPPORT_SNIFFER
+static const struct ieee80211_iface_limit mtk_iface_limits[] = {
+	{ .max = 1, .types = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_ADHOC) },
+	{ .max = 1, .types = BIT(NL80211_IFTYPE_MONITOR) },
+};
+
+static const struct ieee80211_iface_combination mtk_iface_combinations[] = {
+	{
+		.limits = mtk_iface_limits,
+		.n_limits = ARRAY_SIZE(mtk_iface_limits),
+		.max_interfaces = 2,
+		.num_different_channels = 1,
+	},
+};
+#endif
+
 static struct cfg80211_ops mtk_wlan_ops = {
 	.suspend = mtk_cfg80211_suspend,
 	.resume	= mtk_cfg80211_resume,
@@ -2014,6 +2030,17 @@ static void createWirelessDevice(void)
 	prWiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_ADHOC);
 #if CFG_SUPPORT_SNIFFER
 	prWiphy->interface_modes |= BIT(NL80211_IFTYPE_MONITOR);
+#endif
+#if CFG_SUPPORT_SNIFFER
+	/*
+	 * One radio, one channel at a time: the monitor interface may run alongside the normal
+	 * station connection, but only tuned to the same channel that connection already holds --
+	 * anything else would mean retuning away from it. Without this table cfg80211 assumes the
+	 * most conservative case and refuses a monitor channel change outright once any other
+	 * interface is up, regardless of the requested channel.
+	 */
+	prWiphy->iface_combinations = mtk_iface_combinations;
+	prWiphy->n_iface_combinations = ARRAY_SIZE(mtk_iface_combinations);
 #endif
 	prWiphy->bands[KAL_BAND_2GHZ] = &mtk_band_2ghz;
 	/*

@@ -369,7 +369,21 @@
 			compatible = "mediatek,mt6370-charger";
 			interrupts = <68>, <48>, <6>;
 			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
-			io-channels = <&mt6370_adc MT6370_CHAN_IBUS>;
+			/*
+			 * All nine, in the binding's order: the driver indexes this list by channel
+			 * number (IBUS is [5]). With IBUS alone it read past the end of a one-entry
+			 * array whenever the MIVR interrupt fired, and the resulting oops in a kworker
+			 * left the boot half dead (NetworkManager and polkit never started).
+			 */
+			io-channels = <&mt6370_adc MT6370_CHAN_VBUSDIV5>,
+				      <&mt6370_adc MT6370_CHAN_VBUSDIV2>,
+				      <&mt6370_adc MT6370_CHAN_VSYS>,
+				      <&mt6370_adc MT6370_CHAN_VBAT>,
+				      <&mt6370_adc MT6370_CHAN_TS_BAT>,
+				      <&mt6370_adc MT6370_CHAN_IBUS>,
+				      <&mt6370_adc MT6370_CHAN_IBAT>,
+				      <&mt6370_adc MT6370_CHAN_CHG_VDDP>,
+				      <&mt6370_adc MT6370_CHAN_TEMP_JC>;
 			status = "okay";
 		};
 

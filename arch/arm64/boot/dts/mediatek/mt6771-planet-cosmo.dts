@@ -22,6 +22,19 @@
 	chassis-type = "handset";
 	compatible = "planet,cosmo", "mediatek,mt6771";
 
+	/*
+	 * The limits the vendor charges this battery with, from the phone's live device tree
+	 * (mt6370 charger node: cv 4400000, ichg 2050000, ieoc 150000). The charger driver programs
+	 * the voltage and the termination current and refuses to go above the maxima.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		device-chemistry = "lithium-ion-polymer";
+		constant-charge-voltage-max-microvolt = <4400000>;
+		constant-charge-current-max-microamp = <2050000>;
+		charge-term-current-microamp = <150000>;
+	};
+
 	aliases {
 		serial0 = &uart0;
 		/* The SD card probes first and took mmcblk0; root= names the eMMC as mmcblk0p43. */
@@ -386,6 +399,7 @@
 			compatible = "mediatek,mt6370-charger";
 			interrupts = <68>, <48>, <6>;
 			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
+			monitored-battery = <&battery>;
 			/*
 			 * All nine, in the binding's order: the driver indexes this list by channel
 			 * number (IBUS is [5]). With IBUS alone it read past the end of a one-entry

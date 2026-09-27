@@ -4943,8 +4943,9 @@ traced_skip:
 
 		spin_lock(&devices_kset->list_lock);
 	}
-	shutdown_trace_end();
 	spin_unlock(&devices_kset->list_lock);
+	/* after the unlock: it writes to a file, which may sleep */
+	shutdown_trace_end();
 }
 
 /*

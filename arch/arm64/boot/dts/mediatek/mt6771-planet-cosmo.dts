@@ -1117,3 +1117,12 @@
 &watchdog {
 	compatible = "mediatek,mt6771-wdt";
 };
+
+/*
+ * The SoC temperature sensors are read through this ADC. With it disabled the thermal sensor never
+ * probed and the phone had no thermal zones at all: nothing between a runaway load and the silicon.
+ * The vendor resets the phone at 117 C; mt8183.dtsi's zones carry a 115 C critical trip.
+ */
+&auxadc {
+	status = "okay";
+};

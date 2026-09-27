@@ -64,8 +64,13 @@ extern int get_logtoomuch_enable(void);
 #define DBG_CLASS_LOUD          BIT(6)
 #define DBG_CLASS_TEMP          BIT(7)
 #define DBG_CLASS_MASK          BITS(0, 7)
-#define DBG_LOG_LEVEL_OFF       (DBG_CLASS_ERROR | DBG_CLASS_WARN | DBG_CLASS_INFO | DBG_CLASS_STATE)
-#define DBG_LOG_LEVEL_DEFAULT   (DBG_LOG_LEVEL_OFF | DBG_CLASS_EVENT | DBG_CLASS_TRACE)
+/*
+ * "Off" is errors and warnings. The vendor kept INFO and STATE in it, which logs every packet and
+ * every statistics poll: over 100 MB of kernel log a day, written to the eMMC by syslog.
+ */
+#define DBG_LOG_LEVEL_OFF       (DBG_CLASS_ERROR | DBG_CLASS_WARN)
+#define DBG_LOG_LEVEL_DEFAULT   (DBG_LOG_LEVEL_OFF | DBG_CLASS_INFO | DBG_CLASS_STATE | \
+				 DBG_CLASS_EVENT | DBG_CLASS_TRACE)
 #define DBG_LOG_LEVEL_EXTREME   (DBG_LOG_LEVEL_DEFAULT | DBG_CLASS_LOUD | DBG_CLASS_TEMP)
 
 

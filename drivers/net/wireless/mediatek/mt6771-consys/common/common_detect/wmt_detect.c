@@ -12,6 +12,7 @@
 * If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <linux/firmware.h>
 #include <mtk_wcn_cmb_stub.h>
 #include <linux/platform_device.h>
 
@@ -88,6 +89,22 @@ static void wmt_detect_self_start(struct work_struct *work)
 	int chip, ret;
 
 	if (!wmt_self_core_up) {
+		const struct firmware *fw;
+
+		/*
+		 * The WMT core reads WMT_SOC.cfg while it initialises and fails for good without
+		 * it. udev loads this module seconds before /vendor is mounted: wait for the file.
+		 */
+		if (request_firmware_direct(&fw, "WMT_SOC.cfg", NULL)) {
+			if (++wmt_self_start_tries < 60)
+				schedule_delayed_work(&wmt_self_start_work, 2 * HZ);
+			else
+				WMT_DETECT_PR_ERR("WMT_SOC.cfg never became readable\n");
+			return;
+		}
+		release_firmware(fw);
+		wmt_self_start_tries = 0;
+
 		chip = wmt_plat_get_soc_chipid();
 		mtk_wcn_wmt_set_chipid(chip);
 		wmt_detect_set_chip_type(chip);

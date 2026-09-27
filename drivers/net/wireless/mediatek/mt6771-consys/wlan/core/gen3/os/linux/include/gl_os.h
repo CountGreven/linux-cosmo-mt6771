@@ -587,6 +587,7 @@ struct _GLUE_INFO_T {
 	BOOLEAN fgIsEnableMon;
 	struct net_device *prMonDevHandler;
 	struct work_struct monWork;
+	struct cfg80211_chan_def rMonChandef;	/* channel of the nl80211 monitor interface */
 #endif
 
 	INT_32 i4RssiCache;

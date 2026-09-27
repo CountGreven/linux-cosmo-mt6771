@@ -261,9 +261,25 @@ struct delayed_work sched_workq;
 ********************************************************************************
 */
 
+#if CFG_SUPPORT_SNIFFER
+static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *name,
+					    unsigned char name_assign_type, enum nl80211_iftype type,
+					    struct vif_params *params);
+static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev);
+static int wlanMonSetChannel(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_chan_def *chandef);
+static int wlanMonGetChannel(struct wiphy *wiphy, struct wireless_dev *wdev, unsigned int link_id,
+			     struct cfg80211_chan_def *chandef);
+#endif
+
 static struct cfg80211_ops mtk_wlan_ops = {
 	.suspend = mtk_cfg80211_suspend,
 	.resume	= mtk_cfg80211_resume,
+#if CFG_SUPPORT_SNIFFER
+	.add_virtual_intf = wlanMonAddIface,
+	.del_virtual_intf = wlanMonDelIface,
+	.set_monitor_channel = wlanMonSetChannel,
+	.get_channel = wlanMonGetChannel,
+#endif
 	.change_virtual_intf = mtk_cfg80211_change_iface,
 	.add_key = mtk_cfg80211_add_key,
 	.get_key = mtk_cfg80211_get_key,
@@ -1444,6 +1460,145 @@ void wlanMonWorkHandler(struct work_struct *work)
 		}
 	}
 }
+/*
+ * Monitor mode through nl80211, on top of the firmware's sniffer: "iw phy <phy> interface add <name>
+ * type monitor" creates the radiotap interface, "iw dev <name> set channel/freq" tunes the radio.
+ * cfg80211 only allows the channel to be set while every running interface is a monitor, so the
+ * station interface has to be down (and not managed by NetworkManager, whose connection attempts
+ * retune the radio).
+ */
+static WLAN_STATUS wlanMonSet(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable, struct cfg80211_chan_def *chandef)
+{
+	PARAM_CUSTOM_MONITOR_SET_STRUCT_T rInfo;
+	UINT_32 u4BufLen = 0;
+
+	kalMemZero(&rInfo, sizeof(rInfo));
+	rInfo.ucEnable = fgEnable;
+	rInfo.ucBand = chandef->chan->band == NL80211_BAND_5GHZ ? BAND_5G : BAND_2G4;
+	rInfo.ucPriChannel = ieee80211_frequency_to_channel(chandef->chan->center_freq);
+	rInfo.ucChannelWidth = CW_20_40MHZ;
+	rInfo.ucSco = CHNL_EXT_SCN;
+
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_40:
+		rInfo.ucSco = chandef->center_freq1 > chandef->chan->center_freq ? CHNL_EXT_SCA : CHNL_EXT_SCB;
+		break;
+	case NL80211_CHAN_WIDTH_80:
+		rInfo.ucChannelWidth = CW_80MHZ;
+		rInfo.ucChannelS1 = ieee80211_frequency_to_channel(chandef->center_freq1);
+		break;
+	default:
+		break;
+	}
+
+	return kalIoctl(prGlueInfo, wlanoidSetMonitor, &rInfo, sizeof(rInfo), FALSE, FALSE, TRUE, &u4BufLen);
+}
+
+static void wlanMonFree(struct net_device *prDev)
+{
+	kfree(prDev->ieee80211_ptr);
+	prDev->ieee80211_ptr = NULL;
+}
+
+static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *name,
+					    unsigned char name_assign_type, enum nl80211_iftype type,
+					    struct vif_params *params)
+{
+	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+	struct ieee80211_supported_band *prBand = wiphy->bands[KAL_BAND_2GHZ];
+	struct wireless_dev *prWdev;
+	struct net_device *prDev;
+	int ret;
+
+	if (type != NL80211_IFTYPE_MONITOR)
+		return ERR_PTR(-EOPNOTSUPP);
+	if (prGlueInfo->prMonDevHandler || !prBand || !prBand->n_channels)
+		return ERR_PTR(-EBUSY);
+
+	prWdev = kzalloc(sizeof(*prWdev), GFP_KERNEL);
+	if (!prWdev)
+		return ERR_PTR(-ENOMEM);
+
+	prDev = alloc_netdev_mq(sizeof(NETDEV_PRIVATE_GLUE_INFO), name, name_assign_type, ether_setup,
+				CFG_MAX_TXQ_NUM);
+	if (!prDev) {
+		kfree(prWdev);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	((P_NETDEV_PRIVATE_GLUE_INFO) netdev_priv(prDev))->prGlueInfo = prGlueInfo;
+	prDev->type = ARPHRD_IEEE80211_RADIOTAP;
+	prDev->netdev_ops = &wlan_mon_netdev_ops;
+	prDev->needs_free_netdev = true;
+	prDev->priv_destructor = wlanMonFree;
+	prDev->ieee80211_ptr = prWdev;
+	SET_NETDEV_DEV(prDev, wiphy_dev(wiphy));
+	prWdev->wiphy = wiphy;
+	prWdev->netdev = prDev;
+	prWdev->iftype = NL80211_IFTYPE_MONITOR;
+	kalResetStats(prDev);
+
+	ret = cfg80211_register_netdevice(prDev);
+	if (ret) {
+		prDev->ieee80211_ptr = NULL;
+		free_netdev(prDev);
+		kfree(prWdev);
+		return ERR_PTR(ret);
+	}
+
+	cfg80211_chandef_create(&prGlueInfo->rMonChandef, &prBand->channels[0], NL80211_CHAN_NO_HT);
+	prGlueInfo->prMonDevHandler = prDev;
+	prGlueInfo->fgIsEnableMon = TRUE;
+	if (wlanMonSet(prGlueInfo, TRUE, &prGlueInfo->rMonChandef) != WLAN_STATUS_SUCCESS)
+		DBGLOG(INIT, WARN, "monitor: the firmware did not accept sniffer mode\n");
+
+	return prWdev;
+}
+
+static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
+{
+	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+
+	if (!wdev->netdev || wdev->netdev != prGlueInfo->prMonDevHandler)
+		return -EOPNOTSUPP;
+
+	prGlueInfo->fgIsEnableMon = FALSE;
+	wlanMonSet(prGlueInfo, FALSE, &prGlueInfo->rMonChandef);
+	prGlueInfo->prMonDevHandler = NULL;
+	cfg80211_unregister_netdevice(wdev->netdev);
+
+	return 0;
+}
+
+static int wlanMonSetChannel(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_chan_def *chandef)
+{
+	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+
+	if (!prGlueInfo->fgIsEnableMon || !prGlueInfo->prMonDevHandler)
+		return -ENODEV;
+	if (chandef->width != NL80211_CHAN_WIDTH_20_NOHT && chandef->width != NL80211_CHAN_WIDTH_20 &&
+	    chandef->width != NL80211_CHAN_WIDTH_40 && chandef->width != NL80211_CHAN_WIDTH_80)
+		return -EINVAL;
+	if (wlanMonSet(prGlueInfo, TRUE, chandef) != WLAN_STATUS_SUCCESS)
+		return -EIO;
+
+	prGlueInfo->rMonChandef = *chandef;
+
+	return 0;
+}
+
+static int wlanMonGetChannel(struct wiphy *wiphy, struct wireless_dev *wdev, unsigned int link_id,
+			     struct cfg80211_chan_def *chandef)
+{
+	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+
+	if (!wdev->netdev || wdev->netdev != prGlueInfo->prMonDevHandler || !prGlueInfo->rMonChandef.chan)
+		return -ENODATA;
+
+	*chandef = prGlueInfo->rMonChandef;
+
+	return 0;
+}
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -1660,6 +1815,9 @@ static void createWirelessDevice(void)
 	prWiphy->max_match_sets           = CFG_SCAN_SSID_MATCH_MAX_NUM;
 	prWiphy->max_sched_scan_ie_len    = CFG_CFG80211_IE_BUF_LEN;
 	prWiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_ADHOC);
+#if CFG_SUPPORT_SNIFFER
+	prWiphy->interface_modes |= BIT(NL80211_IFTYPE_MONITOR);
+#endif
 	prWiphy->bands[KAL_BAND_2GHZ] = &mtk_band_2ghz;
 	/*
 	 * always assign 5Ghz bands here, if the chip is not support 5Ghz,

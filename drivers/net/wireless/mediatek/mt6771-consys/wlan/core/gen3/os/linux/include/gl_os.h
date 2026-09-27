@@ -591,6 +591,15 @@ struct _GLUE_INFO_T {
 	struct _BSS_INFO_T *prMonBssInfo;	/* the monitor interface's own BSS context, for TX */
 	struct sk_buff_head rMonTxQueue;	/* frames injected on the monitor interface */
 	struct work_struct rMonTxWork;
+	/*
+	 * Injected unicast frames are resolved to one of these on first use and reused after that:
+	 * without a real per-destination station record, TX falls back to a generic WLAN table
+	 * entry (nicTxGetWlanIdx, NIC_TX_DEFAULT_WLAN_INDEX) and the destination never sends an ACK.
+	 */
+	struct {
+		UINT_8 aucAddr[6];
+		struct _STA_RECORD_T *prStaRec;
+	} arMonPeer[8];
 #endif
 
 	INT_32 i4RssiCache;

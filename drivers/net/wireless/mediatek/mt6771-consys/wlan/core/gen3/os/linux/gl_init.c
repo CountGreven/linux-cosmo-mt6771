@@ -1494,15 +1494,77 @@ static WLAN_STATUS wlanMonTxDone(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMs
 	return WLAN_STATUS_SUCCESS;
 }
 
+/*
+ * Resolve the destination address of an injected frame to a real station record, allocating one on
+ * first use (cnmStaRecAlloc gives it a proper WTBL entry; see nicTxGetWlanIdx, nic/nic_tx.c) and
+ * reusing it after that. Without this, TX_SET_MMPDU's STA_REC_INDEX_NOT_FOUND resolves to the
+ * generic fallback WLAN index (NIC_TX_DEFAULT_WLAN_INDEX) and the destination never sends an ACK.
+ * Broadcast/multicast destinations keep using STA_REC_INDEX_NOT_FOUND: nothing acknowledges those
+ * anyway, and they are not a station to hold a record for.
+ */
+static UINT_8 wlanMonResolvePeer(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PUINT_8 pucDstAddr)
+{
+	P_GLUE_INFO_T prGlueInfo = prAdapter->prGlueInfo;
+	P_STA_RECORD_T prStaRec;
+	int i, iFree = -1;
+
+	if (pucDstAddr[0] & BIT(0))
+		return STA_REC_INDEX_NOT_FOUND;
+
+	for (i = 0; i < ARRAY_SIZE(prGlueInfo->arMonPeer); i++) {
+		if (prGlueInfo->arMonPeer[i].prStaRec && EQUAL_MAC_ADDR(prGlueInfo->arMonPeer[i].aucAddr, pucDstAddr))
+			return prGlueInfo->arMonPeer[i].prStaRec->ucIndex;
+		if (!prGlueInfo->arMonPeer[i].prStaRec && iFree < 0)
+			iFree = i;
+	}
+
+	if (iFree < 0)
+		return STA_REC_INDEX_NOT_FOUND;
+
+	prStaRec = cnmStaRecAlloc(prAdapter, STA_TYPE_LEGACY_AP, ucBssIndex, pucDstAddr);
+	if (!prStaRec)
+		return STA_REC_INDEX_NOT_FOUND;
+
+	/*
+	 * cnmStaRecAlloc's own update command runs before any state is attached to it. AIS sets this
+	 * explicitly right after allocating a peer's record, before authentication even starts
+	 * (mgmt/ais_fsm.c); the comment on cnmStaRecChangeState (mgmt/cnm_mem.c) says a 1->1
+	 * transition still syncs to firmware, it is not a no-op. STA_STATE_1 (accept Class 1 frames)
+	 * is what unassociated management frames -- probe requests, auth, deauth -- belong to.
+	 */
+	cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
+
+	COPY_MAC_ADDR(prGlueInfo->arMonPeer[iFree].aucAddr, pucDstAddr);
+	prGlueInfo->arMonPeer[iFree].prStaRec = prStaRec;
+
+	return prStaRec->ucIndex;
+}
+
+static void wlanMonFreePeers(P_ADAPTER_T prAdapter)
+{
+	P_GLUE_INFO_T prGlueInfo = prAdapter->prGlueInfo;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(prGlueInfo->arMonPeer); i++) {
+		if (prGlueInfo->arMonPeer[i].prStaRec) {
+			cnmStaRecFree(prAdapter, prGlueInfo->arMonPeer[i].prStaRec);
+			prGlueInfo->arMonPeer[i].prStaRec = NULL;
+		}
+	}
+}
+
 /* runs in the driver's main thread, through kalIoctl */
 static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen,
 				    OUT PUINT_32 pu4SetInfoLen)
 {
 	struct wlan_mon_inject *prReq = pvSetBuffer;
 	P_MSDU_INFO_T prMsduInfo;
+	UINT_8 ucBssIndex, ucStaRecIndex;
 
 	*pu4SetInfoLen = u4SetBufferLen;
 	if (u4SetBufferLen < sizeof(*prReq) || u4SetBufferLen < sizeof(*prReq) + prReq->u2FrameLength)
+		return WLAN_STATUS_INVALID_LENGTH;
+	if (prReq->ucMacHeaderLength < 10)
 		return WLAN_STATUS_INVALID_LENGTH;
 
 	prMsduInfo = cnmMgtPktAlloc(prAdapter, (UINT_32) (prReq->u2FrameLength + MAC_TX_RESERVED_FIELD));
@@ -1512,10 +1574,20 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 	kalMemCopy((PUINT_8) ((ULONG) prMsduInfo->prPacket + MAC_TX_RESERVED_FIELD), prReq->aucFrame,
 		   prReq->u2FrameLength);
 
-	TX_SET_MMPDU(prAdapter, prMsduInfo,
-		     prAdapter->prGlueInfo->prMonBssInfo ?
-			     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex,
-		     STA_REC_INDEX_NOT_FOUND, prReq->ucMacHeaderLength, prReq->u2FrameLength, wlanMonTxDone,
+	ucBssIndex = prAdapter->prGlueInfo->prMonBssInfo ?
+		     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex;
+	ucStaRecIndex = wlanMonResolvePeer(prAdapter, ucBssIndex, &prReq->aucFrame[4]);	/* Address 1 */
+
+	/*
+	 * Data-type frames need a real skb-backed native packet, not this cnmMgtPktAlloc buffer: an
+	 * attempt to route one through nicTxSetDataPacket crashed tx_thread outright (NULL deref in
+	 * kalSendCompleteAndAwakeQueue, called from nicTxFreeMsduInfoPacket's error-cleanup path,
+	 * which assumes a genuine skb). Confirmed on the phone, not reverted speculatively. Left as
+	 * the clearest lead for whoever gives this its own allocation path (cnmPktAlloc(prAdapter, 0)
+	 * plus a real sk_buff for prPacket, matching wlanProcessSecurityFrame, common/wlan_lib.c).
+	 */
+	TX_SET_MMPDU(prAdapter, prMsduInfo, ucBssIndex, ucStaRecIndex, prReq->ucMacHeaderLength,
+		     prReq->u2FrameLength, wlanMonTxDone,
 		     prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO);
 	if (prReq->fgFixedRate)
 		nicTxSetPktFixedRateOption(prMsduInfo, prReq->u2RateCode, FIX_BW_20, FALSE, FALSE);
@@ -1729,9 +1801,55 @@ static WLAN_STATUS wlanMonBssSetChannel(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBs
 	return nicUpdateBss(prAdapter, prBssInfo->ucBssIndex);
 }
 
+/*
+ * CMD_ID_CH_PRIVILEGE: request the radio's scheduler for real airtime on this channel for this BSS.
+ * Built exactly as cnmChMngrRequestPrivilege / cnmChMngrAbortPrivilege do (mgmt/cnm.c), called
+ * directly rather than through the AIS FSM's internal message queue -- this monitor context has no
+ * FSM of its own to route MID_MNY_CNM_CH_REQ through. The grant itself (EVENT_CH_STATUS_GRANT) is
+ * asynchronous; sent immediately before use rather than waited on, since this is a bounded first
+ * test of whether requesting it at all makes any difference.
+ */
+static void wlanMonRequestChannelPrivilege(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex,
+					   struct cfg80211_chan_def *chandef)
+{
+	CMD_CH_PRIVILEGE_T rCmdBody;
+	ENUM_BAND_T eBand;
+	UINT_8 ucChannel;
+	ENUM_CHNL_EXT_T eSco;
+
+	wlanMonChandefToRf(chandef, &eBand, &ucChannel, &eSco);
+
+	kalMemZero(&rCmdBody, sizeof(rCmdBody));
+	rCmdBody.ucBssIndex = ucBssIndex;
+	rCmdBody.ucTokenID = 1;
+	rCmdBody.ucAction = CMD_CH_ACTION_REQ;
+	rCmdBody.ucPrimaryChannel = ucChannel;
+	rCmdBody.ucRfSco = (UINT_8) eSco;
+	rCmdBody.ucRfBand = (UINT_8) eBand;
+	rCmdBody.ucRfChannelWidth = (UINT_8) chandef->width;
+	rCmdBody.ucReqType = CH_REQ_TYPE_JOIN;
+	rCmdBody.u4MaxInterval = AIS_JOIN_CH_REQUEST_INTERVAL;
+
+	wlanSendSetQueryCmd(prAdapter, CMD_ID_CH_PRIVILEGE, TRUE, FALSE, FALSE, NULL, NULL,
+			   sizeof(rCmdBody), (PUINT_8) &rCmdBody, NULL, 0);
+}
+
+static void wlanMonAbortChannelPrivilege(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex)
+{
+	CMD_CH_PRIVILEGE_T rCmdBody;
+
+	kalMemZero(&rCmdBody, sizeof(rCmdBody));
+	rCmdBody.ucBssIndex = ucBssIndex;
+	rCmdBody.ucTokenID = 1;
+	rCmdBody.ucAction = CMD_CH_ACTION_ABORT;
+
+	wlanSendSetQueryCmd(prAdapter, CMD_ID_CH_PRIVILEGE, TRUE, FALSE, FALSE, NULL, NULL,
+			   sizeof(rCmdBody), (PUINT_8) &rCmdBody, NULL, 0);
+}
+
 static P_BSS_INFO_T wlanMonBssAlloc(P_ADAPTER_T prAdapter, struct cfg80211_chan_def *chandef)
 {
-	P_BSS_INFO_T prBssInfo = cnmGetBssInfoAndInit(prAdapter, NETWORK_TYPE_P2P, FALSE);
+	P_BSS_INFO_T prBssInfo = cnmGetBssInfoAndInit(prAdapter, NETWORK_TYPE_AIS, FALSE);
 
 	if (!prBssInfo)
 		return NULL;
@@ -1741,6 +1859,14 @@ static P_BSS_INFO_T wlanMonBssAlloc(P_ADAPTER_T prAdapter, struct cfg80211_chan_
 	prBssInfo->aucOwnMacAddr[0] ^= 0x2;	/* locally administered: distinct from the real station address */
 	prBssInfo->u2OperationalRateSet = RATE_SET_OFDM;
 	prBssInfo->u2BSSBasicRateSet = BASIC_RATE_SET_OFDM;
+	prBssInfo->ucNonHTBasicPhyType = PHY_TYPE_OFDM_INDEX;
+	/*
+	 * Without this, BSS_INFO_INIT's default (RATE_CCK_1M_LONG) stands: a 2.4GHz-only DSSS rate,
+	 * used for protection frames ahead of the real one, on a channel that may not support it at
+	 * all. AIS and P2P both call this once their rate sets are set (mgmt/ais_fsm.c,
+	 * mgmt/p2p_func.c); the real connection flow skipped by taking this BSS directly does it too.
+	 */
+	nicTxUpdateBssDefaultRate(prBssInfo);
 
 	wlanMonChandefToRf(chandef, &prBssInfo->eBand, &prBssInfo->ucPrimaryChannel, &prBssInfo->eBssSCO);
 
@@ -1754,12 +1880,28 @@ static P_BSS_INFO_T wlanMonBssAlloc(P_ADAPTER_T prAdapter, struct cfg80211_chan_
 		cnmFreeBssInfo(prAdapter, prBssInfo);
 		return NULL;
 	}
+	/* Local bookkeeping only, no firmware command; AIS always sets this alongside activation. */
+	SET_NET_ACTIVE(prAdapter, prBssInfo->ucBssIndex);
+
+	/*
+	 * The one thing left unrequested. On a single-radio chip, being "activated" with the right
+	 * channel fields set is not the same as having the radio's scheduler actually granted to
+	 * this BSS: AIS explicitly requests that (AIS_STATE_REQ_CHANNEL_JOIN, mgmt/ais_fsm.c) via
+	 * CMD_ID_CH_PRIVILEGE before it ever sends its first auth frame, and only proceeds once
+	 * granted. Every real, ACKed TX_SET_MMPDU exchange in this driver happens after this step;
+	 * scanning's own probe requests, which this session mistook earlier for proof that
+	 * TX_SET_MMPDU works standalone, are entirely firmware-internal (CMD_ID_SCAN_REQ) and never
+	 * go through the driver's own MMPDU path at all -- they proved nothing about it either way.
+	 */
+	wlanMonRequestChannelPrivilege(prAdapter, prBssInfo->ucBssIndex, chandef);
 
 	return prBssInfo;
 }
 
 static void wlanMonBssFree(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssInfo)
 {
+	UNSET_NET_ACTIVE(prAdapter, prBssInfo->ucBssIndex);
+	wlanMonAbortChannelPrivilege(prAdapter, prBssInfo->ucBssIndex);
 	nicDeactivateNetwork(prAdapter, prBssInfo->ucBssIndex);
 	cnmFreeBssInfo(prAdapter, prBssInfo);
 }
@@ -1769,6 +1911,29 @@ static void wlanMonFree(struct net_device *prDev)
 	kfree(prDev->ieee80211_ptr);
 	prDev->ieee80211_ptr = NULL;
 }
+
+static int wlan_mon_sniffer = 1;
+module_param(wlan_mon_sniffer, int, 0644);
+MODULE_PARM_DESC(wlan_mon_sniffer, "diagnostic: 0 skips telling firmware to enter sniffer mode when the monitor interface is added, to test injection without it");
+
+/*
+ * Injection through a secondary BSS (network type, PHY/rate config, STA_STATE sync, channel
+ * privilege, SET_NET_ACTIVE -- all of it, individually confirmed correct) still never gets an ACK.
+ * Injection through prAdapter->prAisBssInfo -- the one index every real, ACKed TX_SET_MMPDU exchange
+ * in this driver has ever used -- does: confirmed live, 25 of 30 unicast probe requests to a real AP
+ * genuinely acknowledged (TX_RESULT_SUCCESS), after a brief settling window for the channel
+ * privilege grant. Something about being BSS index 0 specifically, not any field this session can
+ * set on a second index, is what the firmware's scheduler actually honours on this chip.
+ *
+ * Only usable while AIS is genuinely idle (the same requirement cfg80211 already imposes on adding
+ * the monitor interface at all -- see wlanMonSetChannel's own comment on cfg80211_has_monitors_only
+ * -- so in practice this is always true by the time this runs). If AIS is connected, this backs off
+ * and falls back to the monitor's own secondary BSS instead, at whatever cost that comes with,
+ * rather than disturb a real connection.
+ */
+static int wlan_mon_prefer_ais = 1;
+module_param(wlan_mon_prefer_ais, int, 0644);
+MODULE_PARM_DESC(wlan_mon_prefer_ais, "1 (default) injects through the AIS BSS while it is idle; 0 forces the monitor's own secondary BSS, which does not get real ACKs on this firmware");
 
 static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *name,
 					    unsigned char name_assign_type, enum nl80211_iftype type,
@@ -1820,15 +1985,33 @@ static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *nam
 	INIT_WORK(&prGlueInfo->rMonTxWork, wlanMonTxWork);
 	cfg80211_chandef_create(&prGlueInfo->rMonChandef, &prBand->channels[0], NL80211_CHAN_NO_HT);
 
-	prGlueInfo->prMonBssInfo = wlanMonBssAlloc(prGlueInfo->prAdapter, &prGlueInfo->rMonChandef);
-	if (!prGlueInfo->prMonBssInfo) {
-		DBGLOG(INIT, ERROR, "monitor: no free BSS context, injection will not work\n");
-		/* capture still works without it; only injection needs a BSS to send through */
+	if (wlan_mon_prefer_ais && !IS_NET_ACTIVE(prGlueInfo->prAdapter, prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex)) {
+		P_BSS_INFO_T prAis = prGlueInfo->prAdapter->prAisBssInfo;
+
+		wlanMonChandefToRf(&prGlueInfo->rMonChandef, &prAis->eBand, &prAis->ucPrimaryChannel, &prAis->eBssSCO);
+		nicActivateNetwork(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		SET_NET_ACTIVE(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		nicUpdateBss(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prAis->ucBssIndex, &prGlueInfo->rMonChandef);
+		/* prMonBssInfo stays NULL: wlanoidMonInject's existing fallback already means "use AIS" */
+	} else {
+		/* AIS is genuinely connected, or borrowing it is disabled: never touch it, use our own. */
+		prGlueInfo->prMonBssInfo = wlanMonBssAlloc(prGlueInfo->prAdapter, &prGlueInfo->rMonChandef);
+		if (!prGlueInfo->prMonBssInfo) {
+			DBGLOG(INIT, ERROR, "monitor: no free BSS context, injection will not work\n");
+			/* capture still works without it; only injection needs a BSS to send through */
+		}
 	}
 
 	prGlueInfo->prMonDevHandler = prDev;
 	prGlueInfo->fgIsEnableMon = TRUE;
-	if (wlanMonSet(prGlueInfo, TRUE, &prGlueInfo->rMonChandef) != WLAN_STATUS_SUCCESS)
+	/*
+	 * DIAGNOSTIC, temporary: does the vendor sniffer/promiscuous mode itself disable normal
+	 * MAC-layer ACK exchange for our own transmitted frames, independent of BSS/STA_REC
+	 * correctness? wlan_mon_sniffer=N (module param) skips telling firmware to enter it, to test
+	 * capture-less injection in isolation. Revert to unconditional once answered.
+	 */
+	if (wlan_mon_sniffer && wlanMonSet(prGlueInfo, TRUE, &prGlueInfo->rMonChandef) != WLAN_STATUS_SUCCESS)
 		DBGLOG(INIT, WARN, "monitor: the firmware did not accept sniffer mode\n");
 
 	return prWdev;
@@ -1845,9 +2028,12 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	cancel_work_sync(&prGlueInfo->rMonTxWork);
 	skb_queue_purge(&prGlueInfo->rMonTxQueue);
 	wlanMonSet(prGlueInfo, FALSE, &prGlueInfo->rMonChandef);
+	wlanMonFreePeers(prGlueInfo->prAdapter);
 	if (prGlueInfo->prMonBssInfo) {
 		wlanMonBssFree(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo);
 		prGlueInfo->prMonBssInfo = NULL;
+	} else if (wlan_mon_prefer_ais) {
+		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex);
 	}
 	prGlueInfo->prMonDevHandler = NULL;
 	cfg80211_unregister_netdevice(wdev->netdev);
@@ -1866,8 +2052,12 @@ static int wlanMonSetChannel(struct wiphy *wiphy, struct net_device *dev, struct
 		return -EINVAL;
 	if (wlanMonSet(prGlueInfo, TRUE, chandef) != WLAN_STATUS_SUCCESS)
 		return -EIO;
-	if (prGlueInfo->prMonBssInfo)
+	if (prGlueInfo->prMonBssInfo) {
 		wlanMonBssSetChannel(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo, chandef);
+		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo->ucBssIndex);
+		wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo->ucBssIndex,
+					       chandef);
+	}
 
 	prGlueInfo->rMonChandef = *chandef;
 

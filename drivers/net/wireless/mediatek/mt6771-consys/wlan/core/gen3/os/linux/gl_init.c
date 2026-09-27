@@ -982,6 +982,17 @@ int wlanDoIOCTL(struct net_device *prDev, struct ifreq *prIfReq, int i4Cmd)
 	return ret;
 }				/* end of wlanDoIOCTL() */
 
+/*
+ * Private ioctls (SIOCDEVPRIVATE..+15) no longer reach ndo_do_ioctl: since 5.15 the core hands them
+ * to ndo_siocdevprivate. Without this the driver command interface (SIOCDEVPRIVATE + 1) is
+ * unreachable from userspace.
+ */
+static int wlanSiocDevPrivate(struct net_device *prDev, struct ifreq *prIfReq, void __user *data, int i4Cmd)
+{
+	prIfReq->ifr_data = data;
+	return wlanDoIOCTL(prDev, prIfReq, i4Cmd);
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
 * \brief Export wlan GLUE_INFO_T pointer to p2p module
@@ -1595,6 +1606,7 @@ static const struct net_device_ops wlan_netdev_ops = {
 	.ndo_set_rx_mode = wlanSetMulticastList,
 	.ndo_get_stats = wlanGetStats,
 	.ndo_do_ioctl = wlanDoIOCTL,
+	.ndo_siocdevprivate = wlanSiocDevPrivate,
 	.ndo_start_xmit = wlanHardStartXmit,
 	.ndo_init = wlanInit,
 	.ndo_uninit = wlanUninit,

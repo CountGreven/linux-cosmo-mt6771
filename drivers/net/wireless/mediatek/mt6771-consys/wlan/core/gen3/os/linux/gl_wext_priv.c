@@ -3573,6 +3573,12 @@ int priv_support_driver_cmd(IN struct net_device *prNetDev, IN OUT struct ifreq 
 		DBGLOG(REQ, ERROR, "%s: command %s failed; Written is %d\n",
 			__func__, pcCommand, i4BytesWritten);
 		ret = -EFAULT;
+	} else {
+		/* hand the reply back: the vendor code wrote it into the buffer and dropped it */
+		priv_cmd->buf[PRIV_CMD_SIZE - 1] = '\0';
+		priv_cmd->used_len = i4BytesWritten;
+		if (copy_to_user(prReq->ifr_data, priv_cmd, sizeof(priv_driver_cmd_t)))
+			ret = -EFAULT;
 	}
 
 exit:

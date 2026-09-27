@@ -58,10 +58,12 @@
  * struct aw9523_irq - Interrupt controller structure
  * @lock: mutex locking for the irq bus
  * @cached_gpio: stores the previous gpio status for bit comparison
+ * @masked: interrupts to disable, one bit per pin; written out when the irq bus is unlocked
  */
 struct aw9523_irq {
 	struct mutex lock;
 	u16 cached_gpio;
+	u16 masked;
 };
 
 /*
@@ -418,17 +420,15 @@ static int aw9523_gpio_irq_type(struct irq_data *d, unsigned int type)
  * aw9523_irq_mask - Mask interrupt
  * @d: irq data
  *
- * Sets which interrupt to mask in the bitmap;
+ * Sets which interrupt to mask in the shadow;
  * The interrupt will be masked when unlocking the irq bus.
  */
 static void aw9523_irq_mask(struct irq_data *d)
 {
 	struct aw9523 *awi = gpiochip_get_data(irq_data_get_irq_chip_data(d));
 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
-	unsigned int n = hwirq % AW9523_PINS_PER_PORT;
 
-	regmap_update_bits(awi->regmap, AW9523_REG_INTR_DIS(hwirq),
-			   BIT(n), BIT(n));
+	awi->irq->masked |= BIT(hwirq);
 	gpiochip_disable_irq(&awi->gpio, hwirq);
 }
 
@@ -443,11 +443,9 @@ static void aw9523_irq_unmask(struct irq_data *d)
 {
 	struct aw9523 *awi = gpiochip_get_data(irq_data_get_irq_chip_data(d));
 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
-	unsigned int n = hwirq % AW9523_PINS_PER_PORT;
 
 	gpiochip_enable_irq(&awi->gpio, hwirq);
-	regmap_update_bits(awi->regmap, AW9523_REG_INTR_DIS(hwirq),
-			   BIT(n), 0);
+	awi->irq->masked &= ~BIT(hwirq);
 }
 
 static irqreturn_t aw9523_irq_thread_func(int irq, void *dev_id)
@@ -496,7 +494,6 @@ static void aw9523_irq_bus_lock(struct irq_data *d)
 	struct aw9523 *awi = gpiochip_get_data(irq_data_get_irq_chip_data(d));
 
 	mutex_lock(&awi->irq->lock);
-	regcache_cache_only(awi->regmap, true);
 }
 
 /*
@@ -510,8 +507,21 @@ static void aw9523_irq_bus_sync_unlock(struct irq_data *d)
 {
 	struct aw9523 *awi = gpiochip_get_data(irq_data_get_irq_chip_data(d));
 
-	regcache_cache_only(awi->regmap, false);
-	regcache_sync(awi->regmap);
+	unsigned int i;
+
+	/*
+	 * The mask is kept in a shadow and written here. Putting the whole regmap in cache-only
+	 * mode for the duration instead is global: a GPIO user running meanwhile had its reads of
+	 * the (volatile) input registers fail with -EBUSY and its writes held back in the cache.
+	 * A matrix keypad, which toggles its row interrupts around every scan, then read rows
+	 * of a column that was not being driven, and took the errors for pressed keys.
+	 */
+	scoped_guard(mutex, &awi->i2c_lock) {
+		for (i = 0; i < AW9523_NUM_PORTS; i++)
+			regmap_update_bits(awi->regmap,
+					   AW9523_REG_INTR_DIS(i * AW9523_PINS_PER_PORT),
+					   U8_MAX, awi->irq->masked >> (i * 8));
+	}
 	mutex_unlock(&awi->irq->lock);
 }
 
@@ -813,6 +823,8 @@ static int aw9523_init_irq(struct aw9523 *awi, int irq)
 		return -ENOMEM;
 
 	mutex_init(&awi->irq->lock);
+	/* aw9523_hw_init() disabled every interrupt in the chip */
+	awi->irq->masked = U16_MAX;
 
 	ret = devm_request_threaded_irq(dev, irq, NULL, aw9523_irq_thread_func,
 					IRQF_ONESHOT, dev_name(dev), awi);

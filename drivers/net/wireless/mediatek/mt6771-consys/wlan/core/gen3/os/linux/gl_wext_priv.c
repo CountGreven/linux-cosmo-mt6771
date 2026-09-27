@@ -2258,6 +2258,7 @@ reqExtSetAcpiDevicePowerState(IN P_GLUE_INFO_T prGlueInfo,
 #define CMD_RFTEST_ABORT	"RFTEST_ABORT"
 #define CMD_RFTEST_SET		"RFTEST_SET"
 #define CMD_RFTEST_QUERY	"RFTEST_QUERY"
+#define CMD_BSSDUMP		"BSSDUMP"
 #define CMD_SETBUFMODE		"BUFFER_MODE"
 
 #if CFG_SUPPORT_QA_TOOL
@@ -3240,6 +3241,33 @@ int priv_driver_rftest_query(IN struct net_device *prNetDev, IN char *pcCommand,
 			rInfo.u4FuncData, rInfo.u4FuncData2);
 }
 
+/*
+ * Read-only: the pool cnmGetBssInfoAndInit() draws from (AIS uses one slot, P2P a dedicated one at
+ * P2P_DEV_BSS_INDEX; the pool otherwise has BSS_INFO_NUM slots). Diagnostic for whether a free slot
+ * exists to give the monitor interface its own BSS context, before writing anything that claims one.
+ */
+int priv_driver_bss_dump(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
+{
+	P_GLUE_INFO_T prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	P_ADAPTER_T prAdapter = prGlueInfo->prAdapter;
+	P_BSS_INFO_T prBssInfo;
+	int i, n = 0;
+
+	for (i = 0; i <= HW_BSSID_NUM; i++) {
+		prBssInfo = prAdapter->aprBssInfo[i];
+		if (!prBssInfo)
+			continue;
+		n += snprintf(pcCommand + n, i4TotalLen - n,
+			     "[%d] inuse=%u active=%u net=%u ownmac=%u band=%u ch=%u\n",
+			     i, prBssInfo->fgIsInUse, prBssInfo->fgIsNetActive, prBssInfo->eNetworkType,
+			     prBssInfo->ucOwnMacIndex, prBssInfo->eBand, prBssInfo->ucPrimaryChannel);
+		if (n >= i4TotalLen)
+			break;
+	}
+
+	return n;
+}
+
 #if CFG_SUPPORT_SNIFFER
 int priv_driver_set_monitor(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
 {
@@ -3479,6 +3507,8 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 			i4BytesWritten = priv_driver_rftest_set(prNetDev, pcCommand, i4TotalLen);
 		} else if (strncasecmp(pcCommand, CMD_RFTEST_QUERY, strlen(CMD_RFTEST_QUERY)) == 0) {
 			i4BytesWritten = priv_driver_rftest_query(prNetDev, pcCommand, i4TotalLen);
+		} else if (strncasecmp(pcCommand, CMD_BSSDUMP, strlen(CMD_BSSDUMP)) == 0) {
+			i4BytesWritten = priv_driver_bss_dump(prNetDev, pcCommand, i4TotalLen);
 		}
 		/* Mediatek private command */
 		else if (strncasecmp(pcCommand, CMD_SET_SW_CTRL, strlen(CMD_SET_SW_CTRL)) == 0) {

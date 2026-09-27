@@ -373,8 +373,11 @@
 
 /*! Maximum RX packet size, if exceed this value, drop incoming packet */
 /* 7.2.3 Maganement frames */
-/* TODO: it should be 4096 under emulation mode */
-#define CFG_RX_MAX_PKT_SIZE   (28 + 2312 + 12 /* HIF_RX_HEADER_T */)
+/*
+ * 4096 as the vendor notes for emulation mode: in sniffer mode the firmware hands up other stations'
+ * aggregates whole (3222 bytes seen), and anything above this limit ends in a chip reset.
+ */
+#define CFG_RX_MAX_PKT_SIZE   4096
 
 /*! Minimum RX packet size, if lower than this value, drop incoming packet */
 #define CFG_RX_MIN_PKT_SIZE                     10	/* !< 802.11 Control Frame is 10 bytes */

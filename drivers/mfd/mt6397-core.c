@@ -222,6 +222,8 @@ static const struct mfd_cell mt6358_devs[] = {
 		.resources = mt6358_rtc_resources,
 		.of_compatible = "mediatek,mt6358-rtc",
 	}, {
+		.name = "mt6358-pwrc",
+	}, {
 		.name = "mt6358-sound",
 		.of_compatible = "mediatek,mt6358-sound"
 	}, {

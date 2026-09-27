@@ -1463,10 +1463,17 @@ static WLAN_STATUS wlanMonTxDone(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMs
 			prDev->stats.tx_bytes += prMsduInfo->u2FrameLength;
 		} else {
 			prDev->stats.tx_errors++;
+			/* tell apart "sent, not acknowledged" from "never sent" */
+			if (rTxDoneStatus == TX_RESULT_MPDU_ERROR || rTxDoneStatus == TX_RESULT_RTS_ERROR)
+				prDev->stats.tx_window_errors++;
+			else if (rTxDoneStatus == TX_RESULT_LIFE_TIMEOUT || rTxDoneStatus == TX_RESULT_AGING_TIMEOUT)
+				prDev->stats.tx_heartbeat_errors++;
+			else
+				prDev->stats.tx_aborted_errors++;
 		}
 	}
-	DBGLOG(TX, INFO, "monitor: injected frame of %u bytes, tx status %d\n",
-	       prMsduInfo->u2FrameLength, rTxDoneStatus);
+	pr_info_ratelimited("wlan: monitor: injected %u bytes, rate option %#x, tx status %d\n",
+			    prMsduInfo->u2FrameLength, prMsduInfo->u4FixedRateOption, rTxDoneStatus);
 
 	return WLAN_STATUS_SUCCESS;
 }

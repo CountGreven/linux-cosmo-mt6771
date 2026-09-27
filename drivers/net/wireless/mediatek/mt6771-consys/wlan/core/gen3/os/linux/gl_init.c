@@ -1228,7 +1228,7 @@ VOID wlanDebugInit(VOID)
 		aucDebugModule[i] = DBG_CLASS_MASK;	/* enable all */
 #else
 	for (i = 0; i < DBG_MODULE_NUM; i++)
-		aucDebugModule[i] = DBG_CLASS_ERROR | DBG_CLASS_WARN | DBG_CLASS_STATE | DBG_CLASS_INFO;
+		aucDebugModule[i] = DBG_LOG_LEVEL_OFF;	/* errors and warnings */
 
 	aucDebugModule[DBG_INTR_IDX] = DBG_CLASS_ERROR;
 #endif /* DBG */

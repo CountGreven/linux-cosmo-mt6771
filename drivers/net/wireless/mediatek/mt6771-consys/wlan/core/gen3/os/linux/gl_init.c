@@ -35,6 +35,8 @@
 */
 #include <linux/kernel_read_file.h>
 #include <linux/vmalloc.h>
+#include <linux/unaligned.h>
+#include <net/ieee80211_radiotap.h>
 #include "gl_os.h"
 #include <linux/sched/debug.h>
 #include "wlan_lib.h"
@@ -1415,9 +1417,193 @@ static int wlanMonStop(struct net_device *prDev)
 	return 0;		/* success */
 }
 
+/*
+ * Frame injection on the monitor interface. A frame written to it carries a radiotap header and a
+ * complete 802.11 frame; it is sent through the path the driver uses for its own management frames,
+ * on the channel the monitor interface is tuned to. Honoured radiotap fields: RATE and MCS (fixed
+ * rate, otherwise the firmware chooses), DATA_RETRIES, and TX_FLAGS NOACK.
+ */
+struct wlan_mon_inject {
+	UINT_16 u2FrameLength;
+	UINT_16 u2RateCode;
+	UINT_8 ucMacHeaderLength;
+	UINT_8 ucRetryLimit;
+	BOOLEAN fgFixedRate;
+	BOOLEAN fgRetryLimit;
+	UINT_8 aucFrame[];
+};
+
+static UINT_16 wlanMonLegacyRateCode(UINT_8 ucRate500k)
+{
+	switch (ucRate500k) {
+	case 2: return RATE_CCK_1M_LONG;
+	case 4: return RATE_CCK_2M_LONG;
+	case 11: return RATE_CCK_5_5M_LONG;
+	case 22: return RATE_CCK_11M_LONG;
+	case 12: return RATE_OFDM_6M;
+	case 18: return RATE_OFDM_9M;
+	case 24: return RATE_OFDM_12M;
+	case 36: return RATE_OFDM_18M;
+	case 48: return RATE_OFDM_24M;
+	case 72: return RATE_OFDM_36M;
+	case 96: return RATE_OFDM_48M;
+	case 108: return RATE_OFDM_54M;
+	default: return 0xffff;
+	}
+}
+
+static WLAN_STATUS wlanMonTxDone(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
+				 IN ENUM_TX_RESULT_CODE_T rTxDoneStatus)
+{
+	struct net_device *prDev = prAdapter->prGlueInfo->prMonDevHandler;
+
+	if (prDev) {
+		if (rTxDoneStatus == TX_RESULT_SUCCESS) {
+			prDev->stats.tx_packets++;
+			prDev->stats.tx_bytes += prMsduInfo->u2FrameLength;
+		} else {
+			prDev->stats.tx_errors++;
+		}
+	}
+	DBGLOG(TX, INFO, "monitor: injected frame of %u bytes, tx status %d\n",
+	       prMsduInfo->u2FrameLength, rTxDoneStatus);
+
+	return WLAN_STATUS_SUCCESS;
+}
+
+/* runs in the driver's main thread, through kalIoctl */
+static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen,
+				    OUT PUINT_32 pu4SetInfoLen)
+{
+	struct wlan_mon_inject *prReq = pvSetBuffer;
+	P_MSDU_INFO_T prMsduInfo;
+
+	*pu4SetInfoLen = u4SetBufferLen;
+	if (u4SetBufferLen < sizeof(*prReq) || u4SetBufferLen < sizeof(*prReq) + prReq->u2FrameLength)
+		return WLAN_STATUS_INVALID_LENGTH;
+
+	prMsduInfo = cnmMgtPktAlloc(prAdapter, (UINT_32) (prReq->u2FrameLength + MAC_TX_RESERVED_FIELD));
+	if (!prMsduInfo)
+		return WLAN_STATUS_RESOURCES;
+
+	kalMemCopy((PUINT_8) ((ULONG) prMsduInfo->prPacket + MAC_TX_RESERVED_FIELD), prReq->aucFrame,
+		   prReq->u2FrameLength);
+
+	TX_SET_MMPDU(prAdapter, prMsduInfo, prAdapter->prAisBssInfo->ucBssIndex, STA_REC_INDEX_NOT_FOUND,
+		     prReq->ucMacHeaderLength, prReq->u2FrameLength, wlanMonTxDone,
+		     prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO);
+	if (prReq->fgFixedRate)
+		nicTxSetPktFixedRateOption(prMsduInfo, prReq->u2RateCode, FIX_BW_20, FALSE, FALSE);
+	if (prReq->fgRetryLimit)
+		nicTxSetPktRetryLimit(prMsduInfo, prReq->ucRetryLimit);
+	nicTxConfigPktControlFlag(prMsduInfo, MSDU_CONTROL_FLAG_FORCE_TX, TRUE);
+
+	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
+
+	return WLAN_STATUS_SUCCESS;
+}
+
+static void wlanMonTxWork(struct work_struct *work)
+{
+	P_GLUE_INFO_T prGlueInfo = container_of(work, GLUE_INFO_T, rMonTxWork);
+	struct wlan_mon_inject *prReq;
+	struct sk_buff *prSkb;
+	UINT_32 u4BufLen;
+
+	while ((prSkb = skb_dequeue(&prGlueInfo->rMonTxQueue)) != NULL) {
+		struct net_device *prDev = prSkb->dev;
+
+		prReq = kzalloc(sizeof(*prReq) + prSkb->len, GFP_KERNEL);
+		if (prReq) {
+			kalMemCopy(prReq, prSkb->cb, sizeof(*prReq));
+			skb_copy_bits(prSkb, 0, prReq->aucFrame, prSkb->len);
+			if (!prGlueInfo->fgIsEnableMon ||
+			    kalIoctl(prGlueInfo, wlanoidMonInject, prReq, sizeof(*prReq) + prSkb->len,
+				     FALSE, FALSE, FALSE, &u4BufLen) != WLAN_STATUS_SUCCESS)
+				prDev->stats.tx_dropped++;
+			kfree(prReq);
+		} else {
+			prDev->stats.tx_dropped++;
+		}
+		dev_kfree_skb(prSkb);
+	}
+}
+
+static netdev_tx_t wlanMonXmit(struct sk_buff *prSkb, struct net_device *prDev)
+{
+	P_GLUE_INFO_T prGlueInfo = ((P_NETDEV_PRIVATE_GLUE_INFO) netdev_priv(prDev))->prGlueInfo;
+	struct ieee80211_radiotap_header *prRtap = (struct ieee80211_radiotap_header *)prSkb->data;
+	struct ieee80211_radiotap_iterator rIter;
+	struct wlan_mon_inject rReq;
+	UINT_16 u2RtapLen, u2Fc;
+	int ret;
+
+	BUILD_BUG_ON(sizeof(rReq) > sizeof(prSkb->cb));
+	kalMemZero(&rReq, sizeof(rReq));
+
+	if (prSkb->len < sizeof(*prRtap))
+		goto drop;
+	u2RtapLen = ieee80211_get_radiotap_len(prSkb->data);
+	if (prSkb->len < u2RtapLen + 10 || prSkb->len - u2RtapLen > CFG_RX_MAX_PKT_SIZE / 2)
+		goto drop;
+	if (ieee80211_radiotap_iterator_init(&rIter, prRtap, u2RtapLen, NULL))
+		goto drop;
+
+	while ((ret = ieee80211_radiotap_iterator_next(&rIter)) == 0) {
+		switch (rIter.this_arg_index) {
+		case IEEE80211_RADIOTAP_RATE:
+			rReq.u2RateCode = wlanMonLegacyRateCode(*rIter.this_arg);
+			if (rReq.u2RateCode == 0xffff)
+				goto drop;
+			rReq.fgFixedRate = TRUE;
+			break;
+		case IEEE80211_RADIOTAP_MCS:
+			if (!(rIter.this_arg[0] & IEEE80211_RADIOTAP_MCS_HAVE_MCS) || rIter.this_arg[2] > 7)
+				goto drop;
+			rReq.u2RateCode = RATE_MM_MCS_0 + rIter.this_arg[2];
+			rReq.fgFixedRate = TRUE;
+			break;
+		case IEEE80211_RADIOTAP_DATA_RETRIES:
+			rReq.ucRetryLimit = *rIter.this_arg;
+			rReq.fgRetryLimit = TRUE;
+			break;
+		case IEEE80211_RADIOTAP_TX_FLAGS:
+			if (get_unaligned_le16(rIter.this_arg) & IEEE80211_RADIOTAP_F_TX_NOACK) {
+				rReq.ucRetryLimit = 0;
+				rReq.fgRetryLimit = TRUE;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (ret != -ENOENT)
+		goto drop;
+
+	skb_pull(prSkb, u2RtapLen);
+	u2Fc = get_unaligned_le16(prSkb->data);
+	rReq.ucMacHeaderLength = ieee80211_hdrlen(cpu_to_le16(u2Fc));
+	if (prSkb->len < rReq.ucMacHeaderLength)
+		goto drop;
+	rReq.u2FrameLength = prSkb->len;
+
+	kalMemCopy(prSkb->cb, &rReq, sizeof(rReq));
+	skb_queue_tail(&prGlueInfo->rMonTxQueue, prSkb);
+	schedule_work(&prGlueInfo->rMonTxWork);
+
+	return NETDEV_TX_OK;
+
+drop:
+	prDev->stats.tx_dropped++;
+	dev_kfree_skb_any(prSkb);
+
+	return NETDEV_TX_OK;
+}
+
 static const struct net_device_ops wlan_mon_netdev_ops = {
 	.ndo_open = wlanMonOpen,
 	.ndo_stop = wlanMonStop,
+	.ndo_start_xmit = wlanMonXmit,
 };
 
 void wlanMonWorkHandler(struct work_struct *work)
@@ -1546,6 +1732,8 @@ static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *nam
 		return ERR_PTR(ret);
 	}
 
+	skb_queue_head_init(&prGlueInfo->rMonTxQueue);
+	INIT_WORK(&prGlueInfo->rMonTxWork, wlanMonTxWork);
 	cfg80211_chandef_create(&prGlueInfo->rMonChandef, &prBand->channels[0], NL80211_CHAN_NO_HT);
 	prGlueInfo->prMonDevHandler = prDev;
 	prGlueInfo->fgIsEnableMon = TRUE;
@@ -1563,6 +1751,8 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 		return -EOPNOTSUPP;
 
 	prGlueInfo->fgIsEnableMon = FALSE;
+	cancel_work_sync(&prGlueInfo->rMonTxWork);
+	skb_queue_purge(&prGlueInfo->rMonTxQueue);
 	wlanMonSet(prGlueInfo, FALSE, &prGlueInfo->rMonChandef);
 	prGlueInfo->prMonDevHandler = NULL;
 	cfg80211_unregister_netdevice(wdev->netdev);

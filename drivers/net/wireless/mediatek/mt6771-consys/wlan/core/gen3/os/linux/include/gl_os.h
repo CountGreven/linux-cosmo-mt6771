@@ -588,6 +588,8 @@ struct _GLUE_INFO_T {
 	struct net_device *prMonDevHandler;
 	struct work_struct monWork;
 	struct cfg80211_chan_def rMonChandef;	/* channel of the nl80211 monitor interface */
+	struct sk_buff_head rMonTxQueue;	/* frames injected on the monitor interface */
+	struct work_struct rMonTxWork;
 #endif
 
 	INT_32 i4RssiCache;

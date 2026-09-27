@@ -153,6 +153,17 @@ static void ssusb_mode_sw_work(struct work_struct *work)
 	current_role = ssusb->is_host ? USB_ROLE_HOST : USB_ROLE_DEVICE;
 
 	if (desired_role == USB_ROLE_NONE) {
+		/*
+		 * No role is what a Type-C port controller reports when the cable is pulled. As
+		 * host, stay host: going to the default role here takes the only port away from
+		 * xhci while it is still tearing down the devices that just disappeared, its
+		 * commands time out, and it declares the controller dead ("HC died"). A hub
+		 * plugged in afterwards is then never enumerated. The port controller asks for
+		 * the device role itself when it sees a host on the other end.
+		 */
+		if (ssusb->is_host)
+			return;
+
 		/* the default mode is host as probe does */
 		desired_role = USB_ROLE_HOST;
 		if (otg_sx->default_role == USB_ROLE_DEVICE)

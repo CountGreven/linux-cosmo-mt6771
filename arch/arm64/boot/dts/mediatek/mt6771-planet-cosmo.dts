@@ -1095,3 +1095,8 @@
 &mt6358_vcamd_reg { regulator-boot-on; regulator-always-on; };
 &mt6358_vcamio_reg { regulator-boot-on; regulator-always-on; };
 &mt6358_vldo28_reg { regulator-boot-on; regulator-always-on; };
+
+/* Reset through the watchdog, ahead of the firmware: the vendor's PSCI SYSTEM_RESET hangs. */
+&watchdog {
+	compatible = "mediatek,mt6771-wdt";
+};

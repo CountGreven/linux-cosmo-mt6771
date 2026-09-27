@@ -3295,6 +3295,7 @@ int priv_driver_set_monitor(IN struct net_device *prNetDev, IN char *pcCommand, 
 		kalMemZero(&rMonitorSetInfo, sizeof(rMonitorSetInfo));
 
 		rMonitorSetInfo.ucEnable = ucEnable;
+		rMonitorSetInfo.ucBand = (UINT_8) eBand;
 		rMonitorSetInfo.ucPriChannel = ucPriChannel;
 		rMonitorSetInfo.ucSco = ucSco;
 		rMonitorSetInfo.ucChannelWidth = ucChannelWidth;

@@ -15,6 +15,7 @@
 #include <linux/kmsg_dump.h>
 #include <linux/rcupdate.h>
 #include <linux/reboot.h>
+#include <linux/shutdown_trace.h>
 #include <linux/sched/signal.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
@@ -288,14 +289,19 @@ static void do_kernel_restart_prepare(void)
 void kernel_restart(char *cmd)
 {
 	kernel_restart_prepare(cmd);
+	shutdown_trace_mark("restart_prepare");
 	do_kernel_restart_prepare();
+	shutdown_trace_mark("migrate_to_reboot_cpu");
 	migrate_to_reboot_cpu();
+	shutdown_trace_mark("syscore_shutdown");
 	syscore_shutdown();
 	if (!cmd)
 		pr_emerg("Restarting system\n");
 	else
 		pr_emerg("Restarting system with command '%s'\n", cmd);
+	shutdown_trace_mark("kmsg_dump");
 	kmsg_dump(KMSG_DUMP_SHUTDOWN);
+	shutdown_trace_mark("machine_restart");
 	machine_restart(cmd);
 }
 EXPORT_SYMBOL_GPL(kernel_restart);

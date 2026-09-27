@@ -122,3 +122,12 @@ void shutdown_trace_end(void)
 	st_printf("done uptime=%llu ms\n", ktime_get_boottime_ns() / NSEC_PER_MSEC);
 	/* keep the file open: closing it would itself touch a device that may already be gone */
 }
+
+/* The steps kernel_restart() takes after device_shutdown(), while block I/O still works. */
+void shutdown_trace_mark(const char *what)
+{
+	if (!st_file)
+		return;
+	st_printf("mark %s cpu=%d uptime=%llu ms\n", what, raw_smp_processor_id(),
+		  ktime_get_boottime_ns() / NSEC_PER_MSEC);
+}

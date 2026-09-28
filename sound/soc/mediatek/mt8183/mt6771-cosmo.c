@@ -10,11 +10,79 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <sound/soc.h>
+
+struct cosmo_priv {
+	bool phase_fix;
+	bool speaker_on;
+};
+
+/*
+ * One speaker is wired with inverted polarity (the headphone jack is not), so while the
+ * speakers play the codec inverts its left DAC channel, unless headphones are enabled too.
+ */
+static void cosmo_apply_phase(struct snd_soc_card *card)
+{
+	struct cosmo_priv *priv = snd_soc_card_get_drvdata(card);
+	struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(card);
+	struct snd_kcontrol *kctl;
+	struct snd_ctl_elem_value *val;
+
+	kctl = snd_soc_card_get_kcontrol(card, "DAC Left Invert Switch");
+	if (!kctl)
+		return;
+
+	val = kzalloc_obj(*val);
+	if (!val)
+		return;
+
+	val->value.integer.value[0] = priv->phase_fix && priv->speaker_on &&
+				      !snd_soc_dapm_get_pin_status(dapm, "Headphone");
+	kctl->put(kctl, val);
+	kfree(val);
+}
+
+static int cosmo_speaker_event(struct snd_soc_dapm_widget *w,
+			       struct snd_kcontrol *kcontrol, int event)
+{
+	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
+	struct cosmo_priv *priv = snd_soc_card_get_drvdata(card);
+
+	priv->speaker_on = SND_SOC_DAPM_EVENT_ON(event);
+	cosmo_apply_phase(card);
+
+	return 0;
+}
+
+static int cosmo_phase_fix_get(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
+	struct cosmo_priv *priv = snd_soc_card_get_drvdata(card);
+
+	ucontrol->value.integer.value[0] = priv->phase_fix;
+	return 0;
+}
+
+static int cosmo_phase_fix_put(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
+	struct cosmo_priv *priv = snd_soc_card_get_drvdata(card);
+	bool fix = ucontrol->value.integer.value[0];
+
+	if (priv->phase_fix == fix)
+		return 0;
+
+	priv->phase_fix = fix;
+	cosmo_apply_phase(card);
+	return 1;
+}
 
 static const struct snd_soc_dapm_widget cosmo_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone", NULL),
-	SND_SOC_DAPM_SPK("Speaker", NULL),
+	SND_SOC_DAPM_SPK("Speaker", cosmo_speaker_event),
 	SND_SOC_DAPM_SPK("Earpiece", NULL),
 	SND_SOC_DAPM_MIC("Main Mic", NULL),
 	SND_SOC_DAPM_MIC("Second Mic", NULL),
@@ -49,6 +117,8 @@ static const struct snd_kcontrol_new cosmo_controls[] = {
 	SOC_DAPM_PIN_SWITCH("Main Mic"),
 	SOC_DAPM_PIN_SWITCH("Second Mic"),
 	SOC_DAPM_PIN_SWITCH("Headset Mic"),
+	SOC_SINGLE_BOOL_EXT("Speaker Phase Fix Switch", 0,
+			    cosmo_phase_fix_get, cosmo_phase_fix_put),
 };
 
 SND_SOC_DAILINK_DEFS(playback1,
@@ -123,6 +193,7 @@ static int cosmo_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct snd_soc_card *card = &cosmo_card;
 	struct snd_soc_dai_link *link;
+	struct cosmo_priv *priv;
 	struct device_node *platform;
 	int i, n, ret;
 
@@ -146,6 +217,14 @@ static int cosmo_probe(struct platform_device *pdev)
 									"aux-devs", i);
 		card->num_aux_devs = n;
 	}
+
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	priv->phase_fix = true;
+	snd_soc_card_set_drvdata(card, priv);
 
 	card->dev = dev;
 	ret = devm_snd_soc_register_card(dev, card);

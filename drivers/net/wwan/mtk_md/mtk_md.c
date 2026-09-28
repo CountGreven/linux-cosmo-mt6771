@@ -38,6 +38,14 @@
 
 /* BOOT_TIMEOUT in eccci/fsm/ccci_fsm_internal.h covers HS1 and HS2 together */
 #define MTK_MD_HS_TIMEOUT_MS	30000
+/*
+ * The modem's share memory starts with LK's tag list and has to be zeroed before the modem
+ * starts. A copy kept in the unassigned tail (the 6293 layout ends at 986 KiB of 1 MiB) lets the
+ * driver be bound again without a reboot.
+ */
+#define MTK_MD_LK_STASH_OFFSET	(SZ_1M - SZ_8K)
+#define MTK_MD_LK_STASH_MAGIC	0x4b4c444d	/* "MDLK" */
+
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
 
@@ -71,6 +79,7 @@ struct mtk_md {
 	bool clks_on;
 
 	struct mtk_md_lk_hdr lk;
+	void *lk_tags;
 	struct mtk_md_lk_modem image;
 	struct mtk_md_lk_smem smem;
 	phys_addr_t smem_nc;		/* AP/MD1 non-cacheable share memory */
@@ -122,6 +131,21 @@ static int mtk_md_read_lk(struct mtk_md *md)
 		.version = md->lk.version,
 	};
 
+	if (mtk_md_lk_get_modem(&info, 0, &md->image)) {
+		__le32 *stash;
+
+		stash = memremap(md->lk.base + MTK_MD_LK_STASH_OFFSET, SZ_8K, MEMREMAP_WC);
+		if (!stash)
+			return -ENOMEM;
+		if (le32_to_cpu(stash[0]) == MTK_MD_LK_STASH_MAGIC &&
+		    le32_to_cpu(stash[1]) == md->lk.size) {
+			memcpy(copy, &stash[2], md->lk.size);
+			dev_info(md->dev, "lk: tag list taken from the copy of an earlier start\n");
+		}
+		memunmap(stash);
+	}
+	md->lk_tags = copy;
+
 	ret = mtk_md_lk_get_modem(&info, 0, &md->image);
 	if (ret)
 		return dev_err_probe(md->dev, ret, "lk: no modem image entry\n");
@@ -155,6 +179,33 @@ static int mtk_md_ccif_send(struct mtk_md *md, unsigned int ch)
 	return 0;
 }
 
+/* The CCIF SRAM takes 32-bit accesses only: a byte write replaces the whole word */
+static void mtk_md_sram_write(void __iomem *sram, const void *buf, size_t len)
+{
+	const __le32 *w = buf;
+	size_t i;
+
+	for (i = 0; i < len / 4; i++)
+		writel(le32_to_cpu(w[i]), sram + 4 * i);
+}
+
+static void mtk_md_sram_read(void __iomem *sram, void *buf, size_t len)
+{
+	__le32 *w = buf;
+	size_t i;
+
+	for (i = 0; i < len / 4; i++)
+		w[i] = cpu_to_le32(readl(sram + 4 * i));
+}
+
+static void mtk_md_sram_clear(void __iomem *sram)
+{
+	size_t i;
+
+	for (i = 0; i < CCIF_SRAM_SIZE; i += 4)
+		writel(0, sram + i);
+}
+
 /* The data line (md_ccif_isr): ring queues 0-7 and the SRAM mailbox. */
 static irqreturn_t mtk_md_ccif_data_irq(int irq, void *data)
 {
@@ -164,8 +215,8 @@ static irqreturn_t mtk_md_ccif_data_irq(int irq, void *data)
 	writel(ch & CCIF_DATA_CHANNELS, md->ap_ccif + APCCIF_ACK);
 
 	if (ch & BIT(CCIF_CH_SRAM)) {
-		memcpy_fromio(md->hs1, md->ap_ccif + APCCIF_CHDATA + CCIF_SRAM_DL_HEADER,
-			      sizeof(md->hs1));
+		mtk_md_sram_read(md->ap_ccif + APCCIF_CHDATA + CCIF_SRAM_DL_HEADER, md->hs1,
+				 sizeof(md->hs1));
 		complete(&md->hs1_done);
 	}
 	if (ch & CCIF_DATA_CHANNELS & ~BIT(CCIF_CH_SRAM))
@@ -298,8 +349,8 @@ static void mtk_md_ccif_reset(struct mtk_md *md)
 
 	reset_control_assert(md->resets[MTK_MD_RST_CCIF].rstc);
 	reset_control_deassert(md->resets[MTK_MD_RST_CCIF].rstc);
-	memset_io(sram, 0, CCIF_SRAM_SIZE);
-	memset_io(md->md_ccif + APCCIF_CHDATA, 0, CCIF_SRAM_SIZE);
+	mtk_md_sram_clear(sram);
+	mtk_md_sram_clear(md->md_ccif + APCCIF_CHDATA);
 
 	/* Where the modem may leave its debug dump: SMEM_USER_RAW_MDSS_DBG, 10 KiB at 2 KiB. */
 	writel(CCIF_SRAM_DBG_MAGIC_VAL, sram + CCIF_SRAM_DBG_MAGIC);
@@ -532,6 +583,12 @@ static int mtk_md_clear_smem(struct mtk_md *md)
 	if (!smem)
 		return -ENOMEM;
 	memset_io(smem, 0, md->smem_nc_size);
+	if (md->smem_nc == md->lk.base && md->smem_nc_size >= SZ_1M &&
+	    md->lk.size <= SZ_8K - 8) {
+		writel(MTK_MD_LK_STASH_MAGIC, smem + MTK_MD_LK_STASH_OFFSET);
+		writel(md->lk.size, smem + MTK_MD_LK_STASH_OFFSET + 4);
+		memcpy_toio(smem + MTK_MD_LK_STASH_OFFSET + 8, md->lk_tags, md->lk.size);
+	}
 	iounmap(smem);
 	return 0;
 }
@@ -730,8 +787,8 @@ static int mtk_md_handshake(struct mtk_md *md)
 	up.status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_CONTROL_TX));
 	up.reserved = cpu_to_le32(MTK_MD_INIT_CHK_ID);
 	sram = md->ap_ccif + APCCIF_CHDATA + CCIF_SRAM_UP_HEADER;
-	memcpy_toio(sram, &up, sizeof(up));
-	memcpy_toio(sram + sizeof(up), &aq, sizeof(aq));
+	mtk_md_sram_write(sram, &up, sizeof(up));
+	mtk_md_sram_write(sram + sizeof(up), &aq, sizeof(aq));
 
 	ret = mtk_md_ccif_send(md, CCIF_CH_SRAM);
 	if (ret) {

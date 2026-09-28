@@ -159,10 +159,41 @@ struct cldma_rgpd {
 #define SPMFW_LP4X_2CH_3733		0
 #define VCOREFS_SMC_CMD_INIT		0	/* argument: the current operating point */
 #define VCOREFS_SMC_CMD_GO		1	/* argument: the flags below */
-#define SPM_FLAG_DIS_VCORE_DVS		BIT(3)
-#define SPM_FLAG_DIS_VCORE_DFS		BIT(4)
+#define VCOREFS_SMC_CMD_PWRAP		3	/* arguments: slot, PMIC vcore selector */
 #define SPM_FLAG_RUN_COMMON_SCENARIO	BIT(10)
 #define SPM_FLAG_DISABLE_MMSYS_DVFS	BIT(15)
+/* spm_vcorefs_pwarp_cmd(): (uV - 500000 + 6249) / 6250 for opp 3 (725 mV) and opp 0 (800 mV) */
+#define VCOREFS_PMIC_VSEL_0725		0x24
+#define VCOREFS_PMIC_VSEL_0800		0x30
+#define SPM_SW_RSV_5			0x061c	/* [15:0]: the operating point the SPM settled on */
+#define SPM_SW_RSV_5_OPP		GENMASK(15, 0)
+
+/* DVFSRC (spm_v4/mtk_dvfsrc_reg_mt6771.h) */
+#define DVFSRC_BASIC_CONTROL		0x000
+#define DVFSRC_SW_REQ			0x004
+#define DVFSRC_EMI_REQUEST		0x00c
+#define DVFSRC_EMI_REQUEST2		0x010
+#define DVFSRC_EMI_REQUEST3		0x014
+#define DVFSRC_EMI_QOS0			0x024
+#define DVFSRC_EMI_QOS1			0x028
+#define DVFSRC_EMI_MD2SPM0		0x030
+#define DVFSRC_EMI_MD2SPM1		0x034
+#define DVFSRC_VCORE_REQUEST		0x048
+#define DVFSRC_VCORE_REQUEST2		0x04c
+#define DVFSRC_VCORE_MD2SPM0		0x068
+#define DVFSRC_MD_SW_CONTROL		0x084
+#define DVFSRC_INT_EN			0x09c
+#define DVFSRC_TIMEOUT_NEXTREQ		0x0d8
+#define DVFSRC_LEVEL			0x0dc
+#define DVFSRC_LEVEL_LABEL(n)		(0x0e0 + 4 * (n))
+#define DVFSRC_QOS_EN			0x180
+#define DVFSRC_FORCE			0x300
+#define DVFSRC_RSRV_1			0x604
+#define DVFSRC_BASIC_CONTROL_RUN	0x017b
+#define DVFSRC_LEVEL_BUSY		GENMASK(15, 0)
+#define DVFSRC_VCORE_REQ2_OPP		GENMASK(25, 24)	/* pm_qos VCORE_OPP: 1 holds opp 0 */
+#define DVFSRC_MD_SW_CONTROL_POLICY	(BIT(0) | BIT(3) | BIT(5))
+#define DVFSRC_SW_REQ_OPP		GENMASK(3, 0)
 
 /*
  * MT6358 PMIC: which inputs may switch an LDO on. The vendor kernel hands the

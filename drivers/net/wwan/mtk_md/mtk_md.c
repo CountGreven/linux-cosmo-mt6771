@@ -22,6 +22,7 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
+#include <linux/log2.h>
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/miscdevice.h>
@@ -193,6 +194,7 @@ struct mtk_md {
 	unsigned long rx_packets;
 	struct work_struct cldma_rx_work;
 
+	void __iomem *dvfsrc;
 	void *smem_va;			/* the AP/MD1 share memory, mapped for the driver's life */
 	struct mtk_md_ring *ring[MTK_MD_RING_QUEUES];
 	struct mtk_md_ring *ring_exp[MTK_MD_RING_QUEUES];
@@ -731,39 +733,101 @@ static int mtk_md_pll_init(struct mtk_md *md)
 	return 0;
 }
 
+/* dvfsrc_init(), LP4X_2CH_3733 with CONFIG_MTK_QOS_SUPPORT, in the vendor's order */
+static const struct {
+	u16 reg;
+	u32 val;
+} mtk_md_dvfsrc_init_seq[] = {
+	{ DVFSRC_LEVEL_LABEL(0), 0x00100000 },
+	{ DVFSRC_LEVEL_LABEL(1), 0x00210011 },
+	{ DVFSRC_LEVEL_LABEL(2), 0x01100100 },
+	{ DVFSRC_LEVEL_LABEL(3), 0x01210111 },
+	{ DVFSRC_LEVEL_LABEL(4), 0x02100200 },
+	{ DVFSRC_LEVEL_LABEL(5), 0x02210211 },
+	{ DVFSRC_LEVEL_LABEL(6), 0x03210321 },
+	{ DVFSRC_LEVEL_LABEL(7), 0x03210321 },
+	{ DVFSRC_EMI_QOS0, 0x32 },
+	{ DVFSRC_EMI_QOS1, 0x66 },
+	{ DVFSRC_EMI_MD2SPM0, 0x80f8 },	/* display on; 0x80c0 with it off */
+	{ DVFSRC_EMI_MD2SPM1, 0 },
+	{ DVFSRC_VCORE_MD2SPM0, 0x80c0 },
+	{ DVFSRC_RSRV_1, 0x1c },
+	{ DVFSRC_TIMEOUT_NEXTREQ, 0x13 },
+	{ DVFSRC_INT_EN, 0x2 },
+	{ DVFSRC_EMI_REQUEST, 0x00290209 },
+	{ DVFSRC_EMI_REQUEST2, 0 },
+	{ DVFSRC_VCORE_REQUEST, 0x00150000 },
+	{ DVFSRC_QOS_EN, 0x407f },
+	{ DVFSRC_EMI_REQUEST3, 0x09000000 },
+	{ DVFSRC_FORCE, 0x00400000 },
+	{ DVFSRC_BASIC_CONTROL, 0xc07b },
+	{ DVFSRC_BASIC_CONTROL, DVFSRC_BASIC_CONTROL_RUN },
+};
+
 /*
- * spm_check_status_before_dvfs(): the vendor holds a VCORE request around the modem start, and
- * making that request starts the SPM firmware if it is not running. Without the firmware nothing
- * answers the modem's clock and memory requests and the whole SoC stops when the modem first
- * goes idle. Voltage and memory frequency scaling stay off: only the requests are served.
+ * spm_vcorefs_init() as the vendor boots it: the SPM firmware scales Vcore and DDR, and the
+ * DVFSRC arbitrates the requests, the modem's included (MD2SPM). Belongs in a DVFSRC driver.
  */
-static int mtk_md_spm_firmware(struct mtk_md *md)
+static int mtk_md_vcorefs(struct mtk_md *md)
 {
 	struct arm_smccc_res res;
+	unsigned int i;
 	u32 v;
 
 	regmap_read(md->scpsys, SPM_PCM_REG15_DATA, &v);
-	if (v) {
-		dev_info(md->dev, "spm: firmware running (r15 %#x)\n", v);
+	if (!v) {
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0,
+			      0, 0, 0, 0, &res);
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_PWRAP, 0,
+			      VCOREFS_PMIC_VSEL_0725, 0, 0, 0, 0, &res);
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_PWRAP, 1,
+			      VCOREFS_PMIC_VSEL_0800, 0, 0, 0, 0, &res);
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_INIT, 0, 0,
+			      0, 0, 0, 0, &res);
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_GO,
+			      SPM_FLAG_RUN_COMMON_SCENARIO | SPM_FLAG_DISABLE_MMSYS_DVFS, 0,
+			      0, 0, 0, 0, &res);
+		if (regmap_read_poll_timeout(md->scpsys, SPM_PCM_REG15_DATA, v, v, MTK_MD_POLL_US,
+					     MTK_MD_POLL_TIMEOUT_US)) {
+			dev_err(md->dev, "spm: the firmware did not start\n");
+			return -ETIMEDOUT;
+		}
+		dev_info(md->dev, "spm: firmware started (r15 %#x)\n", v);
+	}
+
+	if (readl(md->dvfsrc + DVFSRC_BASIC_CONTROL) == DVFSRC_BASIC_CONTROL_RUN)
 		return 0;
-	}
+	for (i = 0; i < ARRAY_SIZE(mtk_md_dvfsrc_init_seq); i++)
+		writel(mtk_md_dvfsrc_init_seq[i].val, md->dvfsrc + mtk_md_dvfsrc_init_seq[i].reg);
 
-	arm_smccc_smc(MTK_SIP_KERNEL_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0,
-		      0, 0, 0, 0, &res);
-	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_INIT, 0, 0,
-		      0, 0, 0, 0, &res);
-	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_GO,
-		      SPM_FLAG_RUN_COMMON_SCENARIO | SPM_FLAG_DIS_VCORE_DVS |
-		      SPM_FLAG_DIS_VCORE_DFS | SPM_FLAG_DISABLE_MMSYS_DVFS, 0,
-		      0, 0, 0, 0, &res);
-
-	if (regmap_read_poll_timeout(md->scpsys, SPM_PCM_REG15_DATA, v, v, MTK_MD_POLL_US,
-				     MTK_MD_POLL_TIMEOUT_US)) {
-		dev_err(md->dev, "spm: the firmware did not start\n");
-		return -ETIMEDOUT;
-	}
-	dev_info(md->dev, "spm: firmware started (r15 %#x)\n", v);
+	/* vcorefs_late_init_dvfs(): back to the hardware policy, no software floor */
+	writel(readl(md->dvfsrc + DVFSRC_MD_SW_CONTROL) & ~DVFSRC_MD_SW_CONTROL_POLICY,
+	       md->dvfsrc + DVFSRC_MD_SW_CONTROL);
+	if (readl_poll_timeout(md->dvfsrc + DVFSRC_LEVEL, v, !(v & DVFSRC_LEVEL_BUSY), 10, 1000))
+		dev_warn(md->dev, "dvfsrc: level change still pending (%#x)\n", v);
+	writel(readl(md->dvfsrc + DVFSRC_SW_REQ) & ~DVFSRC_SW_REQ_OPP, md->dvfsrc + DVFSRC_SW_REQ);
+	dev_info(md->dev, "dvfsrc: running, level %#x\n", readl(md->dvfsrc + DVFSRC_LEVEL));
 	return 0;
+}
+
+/* md_cd_vcore_config(): hold Vcore at 0.8 V from before the modem runs until it is ready */
+static void mtk_md_vcore_hold(struct mtk_md *md, bool hold)
+{
+	u32 v;
+
+	if (!hold) {
+		writel(readl(md->dvfsrc + DVFSRC_VCORE_REQUEST2) & ~DVFSRC_VCORE_REQ2_OPP,
+		       md->dvfsrc + DVFSRC_VCORE_REQUEST2);
+		return;
+	}
+	readl_poll_timeout(md->dvfsrc + DVFSRC_LEVEL, v, !(v & DVFSRC_LEVEL_BUSY), 10, 1000);
+	writel((readl(md->dvfsrc + DVFSRC_VCORE_REQUEST2) & ~DVFSRC_VCORE_REQ2_OPP) |
+	       FIELD_PREP(DVFSRC_VCORE_REQ2_OPP, 1), md->dvfsrc + DVFSRC_VCORE_REQUEST2);
+	/* opp 0 or 1, both 0.8 V, in any of the three encodings the SPM uses */
+	if (regmap_read_poll_timeout(md->scpsys, SPM_SW_RSV_5, v,
+				     (v & SPM_SW_RSV_5_OPP) & 0x0ccc &&
+				     is_power_of_2(v & SPM_SW_RSV_5_OPP), 10, 1000))
+		dev_warn(md->dev, "vcore: 0.8 V not confirmed (sw_rsv_5 %#x)\n", v);
 }
 
 static const struct {
@@ -855,6 +919,7 @@ static void mtk_md_power_off(struct mtk_md *md)
 	mtk_md_rf_supplies(md, false);
 	regmap_clear_bits(md->infracfg, INFRA_MD_SRCCLKENA, INFRA_MD_SRCCLKENA_MASK);
 	regmap_set_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
+	mtk_md_vcore_hold(md, false);
 	md->powered = false;
 	dev_info(md->dev, "modem powered off\n");
 }
@@ -1278,6 +1343,7 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 		switch (mtk_md_ctrl_classify(h)) {
 		case MTK_MD_CTRL_HS2:
 			md->ready = true;
+			mtk_md_vcore_hold(md, false);
 			dev_info(md->dev, "step 13: HS2, md_state 3 -> 4: the modem is ready\n");
 			return;
 		case MTK_MD_CTRL_EXCEPTION:
@@ -1620,7 +1686,7 @@ static void mtk_md_start(struct work_struct *work)
 	struct mtk_md *md = container_of(work, struct mtk_md, start_work);
 	int ret;
 
-	if (mtk_md_spm_firmware(md) || spm_only)
+	if (mtk_md_vcorefs(md) || spm_only)
 		return;
 
 	dev_info(md->dev, "step 1: clocks on\n");
@@ -1649,6 +1715,7 @@ static void mtk_md_start(struct work_struct *work)
 	mtk_md_cldma_hw_reset(md);
 	mtk_md_gpd_init(md);
 
+	mtk_md_vcore_hold(md, true);
 	ret = mtk_md_power_on(md);
 	if (ret)
 		return;
@@ -1757,6 +1824,9 @@ static int mtk_md_probe(struct platform_device *pdev)
 	md->md_rgu = devm_platform_ioremap_resource_byname(pdev, "md-rgu");
 	if (IS_ERR(md->md_rgu))
 		return PTR_ERR(md->md_rgu);
+	md->dvfsrc = devm_platform_ioremap_resource_byname(pdev, "dvfsrc");
+	if (IS_ERR(md->dvfsrc))
+		return PTR_ERR(md->dvfsrc);
 	md->md_boot = devm_platform_ioremap_resource_byname(pdev, "md-boot");
 	if (IS_ERR(md->md_boot))
 		return PTR_ERR(md->md_boot);

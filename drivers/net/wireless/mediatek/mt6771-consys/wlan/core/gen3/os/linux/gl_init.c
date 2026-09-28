@@ -1632,6 +1632,15 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 		     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex;
 	ucStaRecIndex = wlanMonResolvePeer(prAdapter, ucBssIndex, &prReq->aucFrame[4]);	/* Address 1 */
 
+	/* Broadcast/multicast has no per-station rate history to auto-rate from; real 802.11 always
+	 * sends it at a fixed basic rate. Without this, a caller that omits a radiotap rate field
+	 * (real aireplay-ng deauth frames do) gets TxRate 0 and a timeout.
+	 */
+	if (ucStaRecIndex == STA_REC_INDEX_BMCAST && !prReq->fgFixedRate) {
+		prReq->fgFixedRate = TRUE;
+		prReq->u2RateCode = RATE_OFDM_6M;
+	}
+
 	/* 802.11 Frame Control, bits 2-3: 00 Management, 01 Control, 10 Data */
 	ucFrameType = (prReq->aucFrame[0] >> 2) & 0x3;
 	if (ucFrameType == 0x2)

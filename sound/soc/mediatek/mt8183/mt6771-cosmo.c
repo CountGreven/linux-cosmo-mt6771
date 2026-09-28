@@ -89,6 +89,17 @@ static struct snd_soc_dai_link cosmo_dai_links[] = {
 	},
 };
 
+static int cosmo_late_probe(struct snd_soc_card *card)
+{
+	struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(card);
+
+	/* The earpiece switch is a stereo simple amplifier with one side wired */
+	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch INR");
+	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch OUTR");
+
+	return snd_soc_dapm_sync(dapm);
+}
+
 static struct snd_soc_card cosmo_card = {
 	.name = "cosmo",
 	.owner = THIS_MODULE,
@@ -100,6 +111,7 @@ static struct snd_soc_card cosmo_card = {
 	.num_dapm_widgets = ARRAY_SIZE(cosmo_widgets),
 	.dapm_routes = cosmo_routes,
 	.num_dapm_routes = ARRAY_SIZE(cosmo_routes),
+	.late_probe = cosmo_late_probe,
 };
 
 static int cosmo_probe(struct platform_device *pdev)

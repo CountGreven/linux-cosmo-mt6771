@@ -156,7 +156,8 @@ class Handle:
 
 
 class Service:
-    def __init__(self, root, postfix, log):
+    def __init__(self, root, postfix, log, max_frag=MAX_FS_PKT_BYTE):
+        self.max_frag = max_frag
         self.root = root.rstrip('/')
         self.postfix = postfix
         self.log = log
@@ -750,8 +751,7 @@ class Service:
         hdr = bytearray(msg[:16])
         return hdr, pending[1], bytes(pending[2])
 
-    @staticmethod
-    def build(hdr, op, out):
+    def build(self, hdr, op, out):
         """FS_WriteToMD: the reply, split into messages of at most MAX_FS_PKT_BYTE of data."""
         body = bytearray(p_u32(len(out)))
         for a in out:
@@ -759,9 +759,10 @@ class Service:
         d0, _, ch, slot = HDR.unpack_from(hdr)
         respop = p_u32(FS_API_RESP_ID | op)
         msgs = []
-        for pos in range(0, max(len(body), 1), MAX_FS_PKT_BYTE):
-            chunk = bytes(body[pos:pos + MAX_FS_PKT_BYTE])
-            last = pos + MAX_FS_PKT_BYTE >= len(body)
+        step = self.max_frag
+        for pos in range(0, max(len(body), 1), step):
+            chunk = bytes(body[pos:pos + step])
+            last = pos + step >= len(body)
             h0 = (d0 & ~FS_REQ_SEND_AGAIN) if last else (d0 | FS_REQ_SEND_AGAIN)
             msgs.append(HDR.pack(h0, 16 + 4 + len(chunk), ch + 1, slot) + respop + chunk)
         return msgs
@@ -785,6 +786,8 @@ def main():
     ap.add_argument('--root', default='', help='serve ROOT/<path> instead of the real directories')
     ap.add_argument('--init-root', action='store_true', help='copy the real directories into ROOT first')
     ap.add_argument('--postfix', default='1_ulwctg_n', help="the modem image's postfix, for W:")
+    ap.add_argument('--max-frag', type=int, default=MAX_FS_PKT_BYTE,
+                    help='reply bytes per message after header and op (ccci_fsd: 3456)')
     ap.add_argument('-q', '--quiet', action='store_true')
     a = ap.parse_args()
 
@@ -796,7 +799,7 @@ def main():
         if not a.root:
             sys.exit('--init-root needs --root')
         init_root(a.root)
-    svc = Service(a.root, a.postfix, log)
+    svc = Service(a.root, a.postfix, log, a.max_frag)
     # the device appears in probe just before the modem boots: be waiting for it
     while True:
         try:

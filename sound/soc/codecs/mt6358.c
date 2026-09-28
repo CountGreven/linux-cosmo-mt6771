@@ -96,6 +96,8 @@ struct mt6358_priv {
 	int wov_enabled;
 
 	int dmic_one_wire_mode;
+
+	bool dac_l_invert;
 };
 
 int mt6358_set_mtkaif_protocol(struct snd_soc_component *cmpnt,
@@ -504,6 +506,38 @@ static int mt6358_dmic_mode_set(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int mt6358_dac_l_invert_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *c = snd_kcontrol_chip(kcontrol);
+	struct mt6358_priv *priv = snd_soc_component_get_drvdata(c);
+
+	ucontrol->value.integer.value[0] = priv->dac_l_invert;
+	return 0;
+}
+
+static int mt6358_dac_l_invert_put(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *c = snd_kcontrol_chip(kcontrol);
+	struct mt6358_priv *priv = snd_soc_component_get_drvdata(c);
+	bool invert = ucontrol->value.integer.value[0];
+
+	if (priv->dac_l_invert == invert)
+		return 0;
+
+	priv->dac_l_invert = invert;
+	/* Takes effect now if the DL path is running, else at its next power-up */
+	regmap_update_bits(priv->regmap, MT6358_AFUNC_AUD_CON0, CCI_LCH_INV_MASK_SFT,
+			   invert ? CCI_LCH_INV_MASK_SFT : 0);
+	return 1;
+}
+
+static unsigned int mt6358_afunc_aud_con0(struct mt6358_priv *priv, unsigned int val)
+{
+	return priv->dac_l_invert ? val | CCI_LCH_INV_MASK_SFT : val;
+}
+
 static const DECLARE_TLV_DB_SCALE(playback_tlv, -1000, 100, 0);
 static const DECLARE_TLV_DB_SCALE(pga_tlv, 0, 600, 0);
 
@@ -529,6 +563,9 @@ static const struct snd_kcontrol_new mt6358_snd_controls[] = {
 
 	SOC_SINGLE_BOOL_EXT("Dmic Mode Switch", 0,
 			    mt6358_dmic_mode_get, mt6358_dmic_mode_set),
+
+	SOC_SINGLE_BOOL_EXT("DAC Left Invert Switch", 0,
+			    mt6358_dac_l_invert_get, mt6358_dac_l_invert_put),
 };
 
 /* MUX */
@@ -823,7 +860,8 @@ static int mt_sgen_event(struct snd_soc_dapm_widget *w,
 		/* sdm audio fifo clock power on */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0006);
 		/* scrambler clock on enable */
-		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0, 0xCBA1);
+		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0,
+			     mt6358_afunc_aud_con0(priv, 0xCBA1));
 		/* sdm power on */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0003);
 		/* sdm fifo enable */
@@ -839,7 +877,8 @@ static int mt_sgen_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMD:
 		/* DL scrambler disabling sequence */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0000);
-		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0, 0xcba0);
+		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0,
+			     mt6358_afunc_aud_con0(priv, 0xcba0));
 		break;
 	default:
 		break;
@@ -865,7 +904,8 @@ static int mt_aif_in_event(struct snd_soc_dapm_widget *w,
 		/* sdm audio fifo clock power on */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0006);
 		/* scrambler clock on enable */
-		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0, 0xCBA1);
+		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0,
+			     mt6358_afunc_aud_con0(priv, 0xCBA1));
 		/* sdm power on */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0003);
 		/* sdm fifo enable */
@@ -874,7 +914,8 @@ static int mt_aif_in_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMD:
 		/* DL scrambler disabling sequence */
 		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON2, 0x0000);
-		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0, 0xcba0);
+		regmap_write(priv->regmap, MT6358_AFUNC_AUD_CON0,
+			     mt6358_afunc_aud_con0(priv, 0xcba0));
 
 		playback_gpio_reset(priv);
 		break;

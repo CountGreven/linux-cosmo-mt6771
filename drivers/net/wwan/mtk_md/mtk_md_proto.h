@@ -183,6 +183,11 @@ struct mtk_md_rt_feature {
 	__le32 data_len;
 } __packed;
 
+/* The CCB control block (SMEM_USER_RAW_CCB_CTRL): one 64-byte entry per buffer config */
+#define MTK_MD_SMEM_CCB_CTRL_OFFSET	(96 * SZ_1K)
+#define MTK_MD_CCB_CTRL_WORDS		(20 * 16)
+void mtk_md_ccb_ctrl_fill(__le32 *ctrl);
+
 /* The modem's power budget block (SMEM_USER_RAW_DBM): guards, dBm tables, section levels */
 #define MTK_MD_SMEM_DBM_OFFSET		(SZ_64K - MTK_MD_DBM_WORDS * 4)
 #define MTK_MD_DBM_WORDS		44

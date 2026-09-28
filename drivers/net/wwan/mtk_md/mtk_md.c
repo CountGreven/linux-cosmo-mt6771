@@ -1706,6 +1706,8 @@ static void mtk_md_start(struct work_struct *work)
 		dev_err(md->dev, "cacheable share memory: %d\n", ret);
 		return;
 	}
+	/* what the vendor's ccci_mdinit writes from user space before starting the modem */
+	mtk_md_ccb_ctrl_fill(md->smem_va + MTK_MD_SMEM_CCB_CTRL_OFFSET);
 	ret = mtk_md_rings_init(md);
 	if (ret) {
 		dev_err(md->dev, "ring queues do not fit the share memory\n");

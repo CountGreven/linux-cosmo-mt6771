@@ -655,6 +655,41 @@ static void dbm_fill(struct kunit *test)
 	}
 }
 
+/* ccci_ccb_init_user() in libccci_util.so, fed with mt6771 ccb_configs[] */
+static void ccb_ctrl_fill(struct kunit *test)
+{
+	__le32 ctrl[MTK_MD_CCB_CTRL_WORDS];
+	int e, w;
+
+	memset(ctrl, 0xa5, sizeof(ctrl));
+	mtk_md_ccb_ctrl_fill(ctrl);
+
+	KUNIT_EXPECT_EQ(test, MTK_MD_CCB_CTRL_WORDS * 4, 20 * 64);
+	for (e = 0; e < 20; e++) {
+		for (w = 0; w < 5; w++) {
+			KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[e * 16 + w]), 0);
+			KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[e * 16 + 8 + w]), 0);
+		}
+		KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[e * 16 + 7]), 0xeeff0011);
+		KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[e * 16 + 15]), 0xeeff0011);
+	}
+	/* DHL control pages: 1 KiB pages, 32 of them each way */
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[5]), 1024);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[6]), 32768);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[13]), 1024);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[14]), 32768);
+	/* DHL exception: 20 KiB x 6 down, one 128-byte dummy page up */
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[16 + 5]), 20480);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[16 + 6]), 122880);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[16 + 13]), 128);
+	/* the padding entry, then MD monitor and META */
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[17 * 16 + 6]), 640);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[18 * 16 + 5]), 512);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[18 * 16 + 14]), 16384);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[19 * 16 + 6]), 532480);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[19 * 16 + 13]), 66560);
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rpc_parse),
 	KUNIT_CASE(rpc_build),
@@ -676,6 +711,7 @@ static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rt_ap_features_6293),
 	KUNIT_CASE(rt_append),
 	KUNIT_CASE(dbm_fill),
+	KUNIT_CASE(ccb_ctrl_fill),
 	{}
 };
 

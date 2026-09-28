@@ -370,6 +370,53 @@ void mtk_md_dbm_fill(__le32 *dbm)
 EXPORT_SYMBOL_GPL(mtk_md_dbm_fill);
 
 /*
+ * mt6771 ccb_configs[] (eccci/mt6771/ccci_platform.c): DL page, UL page, DL buffer, UL buffer.
+ * Entries 0-17 are the DHL user (control, exception, PS, three hardware loggers, padding),
+ * 18 the MD monitor, 19 META.
+ */
+static const u32 mtk_md_ccb_configs[][4] = {
+	{ 1024, 1024, 32768, 32768 },
+	{ 20480, 128, 122880, 128 },
+	{ 512, 1024, 36864, 32768 },
+	{ 512, 128, 32768, 128 },
+	{ 512, 128, 32768, 128 },
+	{ 512, 128, 131072, 128 },
+	{ 128, 128, 128, 128 }, { 128, 128, 128, 128 }, { 128, 128, 128, 128 },
+	{ 128, 128, 128, 128 }, { 128, 128, 128, 128 }, { 128, 128, 128, 128 },
+	{ 128, 128, 128, 128 }, { 128, 128, 128, 128 }, { 128, 128, 128, 128 },
+	{ 128, 128, 128, 128 }, { 128, 128, 128, 128 },
+	{ 128, 128, 640, 128 },
+	{ 512, 1024, 16384, 16384 },
+	{ 66560, 66560, 532480, 532480 },
+};
+
+#define MTK_MD_CCB_CTRL_GUARD	0xeeff0011
+
+/*
+ * ccci_ccb_init_user() in the vendor's libccci_util.so, run by ccci_mdinit before the first
+ * modem start: per config, a DL half and a UL half of eight words each, page size and buffer
+ * size in words 5 and 6, a guard in word 7. The modem's CCB buffer manager asserts without it.
+ */
+void mtk_md_ccb_ctrl_fill(__le32 *ctrl)
+{
+	int i;
+
+	BUILD_BUG_ON(ARRAY_SIZE(mtk_md_ccb_configs) * 16 != MTK_MD_CCB_CTRL_WORDS);
+	memset(ctrl, 0, MTK_MD_CCB_CTRL_WORDS * 4);
+	for (i = 0; i < ARRAY_SIZE(mtk_md_ccb_configs); i++) {
+		__le32 *e = ctrl + i * 16;
+
+		e[5] = cpu_to_le32(mtk_md_ccb_configs[i][0]);
+		e[6] = cpu_to_le32(mtk_md_ccb_configs[i][2]);
+		e[7] = cpu_to_le32(MTK_MD_CCB_CTRL_GUARD);
+		e[13] = cpu_to_le32(mtk_md_ccb_configs[i][1]);
+		e[14] = cpu_to_le32(mtk_md_ccb_configs[i][3]);
+		e[15] = cpu_to_le32(MTK_MD_CCB_CTRL_GUARD);
+	}
+}
+EXPORT_SYMBOL_GPL(mtk_md_ccb_ctrl_fill);
+
+/*
  * eccci/ccci_modem.c: "MD bank4 is remap to nearest 32M aligned address", so the modem's view of
  * a non-cacheable share memory address is its offset from the 32 MiB boundary below it, plus
  * 0x40000000.

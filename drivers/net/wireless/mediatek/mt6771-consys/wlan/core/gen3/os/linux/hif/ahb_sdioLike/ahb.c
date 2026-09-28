@@ -23,6 +23,7 @@
 */
 #include <linux/interrupt.h>
 #include <linux/device.h>
+#include <linux/pm_wakeup.h>
 #include <linux/platform_device.h>
 #include <linux/mm.h>
 #ifndef CONFIG_X86
@@ -470,6 +471,14 @@ INT_32 glBusSetIrq(PVOID pvData, PVOID pfnIsr, PVOID pvCookie)
 
 	prGlueInfo->rHifInfo.HifIRQ = irq_id;
 
+	/*
+	 * CONNSYS wakes the vendor AP through the SPM CONN2AP source; here the HIF interrupt itself
+	 * must be a wakeup, or it waits out a whole suspend unanswered and the firmware stops
+	 * granting driver own afterwards.
+	 */
+	device_init_wakeup(prGlueInfo->rHifInfo.Dev, true);
+	enable_irq_wake(irq_id);
+
 #if (CONF_HIF_DMA_INT == 1)
 #ifdef CONFIG_OF
 	dma_irq_id = irq_of_parse_and_map(node, 1);
@@ -526,6 +535,8 @@ VOID glBusFreeIrq(PVOID pvData, PVOID pvCookie)
 	}
 
 	/* Free the IRQ */
+	disable_irq_wake(prGlueInfo->rHifInfo.HifIRQ);
+	device_init_wakeup(prGlueInfo->rHifInfo.Dev, false);
 	free_irq(prGlueInfo->rHifInfo.HifIRQ, prNetDevice);
 
 #if (CONF_HIF_DMA_INT == 1)
@@ -1056,8 +1067,7 @@ static irqreturn_t HifAhbISR(IN int irq, IN void *arg)
 	__disable_irq();
 
 	/* lock 100ms to avoid suspend */
-	/* MT6797 TODO */
-	/* kalHifAhbKalWakeLockTimeout(GlueInfo); */
+	pm_wakeup_event(prGlueInfo->rHifInfo.Dev, 100);
 
 	set_bit(GLUE_FLAG_INT_BIT, &prGlueInfo->ulFlag);
 

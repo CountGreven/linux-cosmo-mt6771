@@ -1449,6 +1449,44 @@
 	};
 };
 
+/*
+ * Keyboard backlight (vendor aw9524_key.c gpio_main_pwm_keyboardlight): SoC PWM channel 0 on GPIO90 in
+ * five 20 % steps, and GPIO178 high whenever the light is on. GPIO178 is shared with the HDMI hot-plug
+ * path in the vendor code; what it switches on the board is not in the source, so it is held high.
+ */
+&pio {
+	kbd_backlight_pins: kbd-backlight-pins {
+		pins-pwm {
+			pinmux = <PINMUX_GPIO90__FUNC_PWM_A>;
+		};
+	};
+
+	kbd-light-enable-hog {
+		gpio-hog;
+		gpios = <178 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "keyboard-light-enable";
+	};
+};
+
+&pwm1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&kbd_backlight_pins>;
+};
+
+/ {
+	pwm-leds {
+		compatible = "pwm-leds";
+
+		led {
+			function = LED_FUNCTION_KBD_BACKLIGHT;
+			color = <LED_COLOR_ID_WHITE>;
+			pwms = <&pwm1 0 20000>;
+			max-brightness = <5>;
+		};
+	};
+};
+
 &pio {
 	touch_pins: touch-pins {
 		pins-irq {

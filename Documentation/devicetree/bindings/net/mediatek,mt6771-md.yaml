@@ -30,6 +30,10 @@ properties:
       - description: AP CLDMA, power-down half
       - description: AP-side CCIF
       - description: MD-side CCIF
+      - description: modem PLL block, written before the modem is released
+      - description: modem clock switch
+      - description: modem reset and watchdog block
+      - description: modem boot control
 
   reg-names:
     items:
@@ -37,6 +41,10 @@ properties:
       - const: cldma-pd
       - const: ap-ccif
       - const: md-ccif
+      - const: md-pll
+      - const: md-clksw
+      - const: md-rgu
+      - const: md-boot
 
   interrupts:
     items:
@@ -84,12 +92,21 @@ properties:
       - const: cldma-pd
       - const: ccif
 
-  power-domains:
-    maxItems: 1
-    description: The modem subsystem (MD1) power domain.
+  mediatek,scpsys:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The SPM, which holds the modem subsystem (MD1) power switch.
 
-  modem-supply:
-    description: The modem core rail (vmodem on the MT6358 PMIC).
+  mediatek,infracfg:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The bus protection between the AP and the modem, and the modem clock request.
+
+  mediatek,topckgen:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The gates of the modem's reference clocks.
+
+  mediatek,apmixedsys:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The filter of the 26 MHz reference the modem PLLs lock to.
 
 required:
   - compatible
@@ -99,6 +116,10 @@ required:
   - interrupt-names
   - clocks
   - clock-names
+  - mediatek,scpsys
+  - mediatek,infracfg
+  - mediatek,topckgen
+  - mediatek,apmixedsys
 
 additionalProperties: false
 
@@ -118,8 +139,13 @@ examples:
             reg = <0 0x10014000 0 0x1000>,
                   <0 0x1021b000 0 0x1000>,
                   <0 0x10209000 0 0x1000>,
-                  <0 0x1020a000 0 0x1000>;
-            reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif";
+                  <0 0x1020a000 0 0x1000>,
+                  <0 0x20140000 0 0x1000>,
+                  <0 0x20150000 0 0x1000>,
+                  <0 0x200f0000 0 0x1000>,
+                  <0 0x20000000 0 0x1000>;
+            reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif",
+                        "md-pll", "md-clksw", "md-rgu", "md-boot";
             interrupts = <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>,
                          <GIC_SPI 151 IRQ_TYPE_LEVEL_LOW>,
                          <GIC_SPI 152 IRQ_TYPE_LEVEL_LOW>,
@@ -138,5 +164,9 @@ examples:
                      <&infracfg MT8183_INFRACFG_AO_CLDMA_SW_RST>,
                      <&infracfg MT8183_INFRACFG_AO_AP_MD_CCIF_SW_RST>;
             reset-names = "cldma-ao", "cldma-pd", "ccif";
+            mediatek,scpsys = <&scpsys>;
+            mediatek,infracfg = <&infracfg>;
+            mediatek,topckgen = <&topckgen>;
+            mediatek,apmixedsys = <&apmixedsys>;
         };
     };

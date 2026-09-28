@@ -183,6 +183,11 @@ struct mtk_md_rt_feature {
 	__le32 data_len;
 } __packed;
 
+/* The modem's power budget block (SMEM_USER_RAW_DBM): guards, dBm tables, section levels */
+#define MTK_MD_SMEM_DBM_OFFSET		(SZ_64K - MTK_MD_DBM_WORDS * 4)
+#define MTK_MD_DBM_WORDS		44
+void mtk_md_dbm_fill(__le32 *dbm);
+
 int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const void *data,
 		     u32 data_len);
 

@@ -626,6 +626,35 @@ static void rpc_build(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mtk_md_rpc_build(buf, 40, req, 0x4005, 3, arg, len), -ENOSPC);
 }
 
+/* md_cd_smem_sub_region_init() and pbm_v3 init_md1_section_level() for mt6771, by hand */
+static void dbm_fill(struct kunit *test)
+{
+	__le32 dbm[MTK_MD_DBM_WORDS];
+	int i;
+
+	memset(dbm, 0xa5, sizeof(dbm));
+	mtk_md_dbm_fill(dbm);
+
+	KUNIT_EXPECT_EQ(test, MTK_MD_DBM_WORDS * 4, 176);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[0]), 0x44444444);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[1]), 0x44444444);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[42]), 0x44444444);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[43]), 0x44444444);
+	/* body word n is dbm[2 + n]: section levels 2G, 3G, 4G, 4G_1, TDD, C2K_1 */
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 20]), 0xfaefbf);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 21]), 0xd84e95);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 22]), 0xb74254);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 23]), 0xb74254);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 35]), 0xd84a75);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(dbm[2 + 36]), 0x108d2d7);
+	for (i = 2; i < 42; i++) {
+		if (i - 2 == 20 || i - 2 == 21 || i - 2 == 22 || i - 2 == 23 ||
+		    i - 2 == 35 || i - 2 == 36)
+			continue;
+		KUNIT_EXPECT_EQ_MSG(test, le32_to_cpu(dbm[i]), 0, "word %d", i);
+	}
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rpc_parse),
 	KUNIT_CASE(rpc_build),
@@ -646,6 +675,7 @@ static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rt_negotiate),
 	KUNIT_CASE(rt_ap_features_6293),
 	KUNIT_CASE(rt_append),
+	KUNIT_CASE(dbm_fill),
 	{}
 };
 

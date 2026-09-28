@@ -331,6 +331,45 @@ int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const
 EXPORT_SYMBOL_GPL(mtk_md_rt_append);
 
 /*
+ * md_cd_smem_sub_region_init() followed by pbm_v3 init_md1_section_level(), mt6771 values from
+ * mach/mtk_pbm.h: per RAT, six 5-bit section levels packed from bit 0 upwards.
+ */
+static const struct {
+	u8 word;
+	u8 level[6];
+} mtk_md_dbm_sections[] = {
+	{ 20, { 31, 29, 27, 21, 15, 0 } },	/* SECTION_LEVLE_2G */
+	{ 21, { 21, 20, 19, 16, 13, 0 } },	/* SECTION_LEVLE_3G */
+	{ 22, { 20, 18, 16, 14, 11, 0 } },	/* SECTION_LEVLE_4G, uplink 1CC */
+	{ 23, { 20, 18, 16, 14, 11, 0 } },	/* SECTION_1_LEVLE_4G, uplink 2CC */
+	{ 35, { 21, 19, 18, 16, 13, 0 } },	/* SECTION_LEVLE_TDD */
+	{ 36, { 23, 22, 20, 17, 16, 0 } },	/* SECTION_1_LEVLE_C2K */
+};
+
+#define MTK_MD_DBM_GUARD	0x44444444
+
+void mtk_md_dbm_fill(__le32 *dbm)
+{
+	__le32 *body = dbm + 2;
+	int i, s;
+
+	memset(dbm, 0, MTK_MD_DBM_WORDS * 4);
+	dbm[0] = cpu_to_le32(MTK_MD_DBM_GUARD);
+	dbm[1] = cpu_to_le32(MTK_MD_DBM_GUARD);
+	dbm[MTK_MD_DBM_WORDS - 2] = cpu_to_le32(MTK_MD_DBM_GUARD);
+	dbm[MTK_MD_DBM_WORDS - 1] = cpu_to_le32(MTK_MD_DBM_GUARD);
+
+	for (i = 0; i < ARRAY_SIZE(mtk_md_dbm_sections); i++) {
+		u32 v = 0;
+
+		for (s = 0; s < 6; s++)
+			v |= mtk_md_dbm_sections[i].level[s] << (5 * s);
+		body[mtk_md_dbm_sections[i].word] = cpu_to_le32(v);
+	}
+}
+EXPORT_SYMBOL_GPL(mtk_md_dbm_fill);
+
+/*
  * eccci/ccci_modem.c: "MD bank4 is remap to nearest 32M aligned address", so the modem's view of
  * a non-cacheable share memory address is its offset from the 32 MiB boundary below it, plus
  * 0x40000000.

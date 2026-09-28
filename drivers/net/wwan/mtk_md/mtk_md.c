@@ -1427,6 +1427,7 @@ static int mtk_md_handshake(struct mtk_md *md)
 	const struct mtk_md_md_query *q;
 	struct mtk_md_ap_query aq;
 	struct mtk_md_ccci_hdr up = { };
+	__le32 dbm[MTK_MD_DBM_WORDS];
 	void __iomem *sram;
 	unsigned int bad;
 	size_t len;
@@ -1470,6 +1471,10 @@ static int mtk_md_handshake(struct mtk_md *md)
 	sram = md->ap_ccif + APCCIF_CHDATA + CCIF_SRAM_UP_HEADER;
 	mtk_md_sram_write(sram, &up, sizeof(up));
 	mtk_md_sram_write(sram + sizeof(up), &aq, sizeof(aq));
+
+	/* the modem checks its power budget block once NVRAM is loaded; vendor fills it here */
+	mtk_md_dbm_fill(dbm);
+	memcpy(md->smem_va + MTK_MD_SMEM_DBM_OFFSET, dbm, sizeof(dbm));
 
 	ret = mtk_md_ccif_send(md, CCIF_CH_SRAM);
 	if (ret) {

@@ -120,6 +120,19 @@ config LEDS_OSRAM_AMS_AS3668
 	  To compile this driver as a module, choose M here: the module
 	  will be called leds-as3668.
 
+config LEDS_AW9524
+	tristate "LED support for the Awinic AW9523/AW9524 in LED mode"
+	depends on LEDS_CLASS && I2C && OF
+	select REGMAP_I2C
+	help
+	  Constant-current LED driver for the Awinic AW9523B/AW9524 I/O
+	  expanders with their pins in LED mode.
+
+config LEDS_AW9524_KUNIT_TEST
+	tristate "KUnit tests for the AW9524 LED driver" if !KUNIT_ALL_TESTS
+	depends on LEDS_AW9524 && KUNIT
+	default KUNIT_ALL_TESTS
+
 config LEDS_AW200XX
 	tristate "LED support for Awinic AW20036/AW20054/AW20072/AW20108"
 	depends on LEDS_CLASS

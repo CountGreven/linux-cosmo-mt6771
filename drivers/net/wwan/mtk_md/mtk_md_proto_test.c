@@ -568,7 +568,67 @@ static void ring_full_and_bad(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -EBADMSG);
 }
 
+/* The modem's first request on the Cosmo, as it arrived: SIM1's hot-plug source pin */
+static const u8 rpc_eint_req[] = {
+	0x00, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00,		/* data[0], length 68 */
+	0x20, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,		/* channel 32, assert, index 0 */
+	0x05, 0x40, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,		/* 0x4005, three parameters */
+	0x17, 0x00, 0x00, 0x00, 'M', 'D', '1', '_', 'S', 'I', 'M', '1', '_', 'H', 'O', 'T',
+	'_', 'P', 'L', 'U', 'G', '_', 'E', 'I', 'N', 'T', 0x00, 0x00,
+	0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+	0x04, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,		/* type 6: source pin */
+};
+
+static void rpc_parse(struct kunit *test)
+{
+	struct mtk_md_rpc_req req;
+	u8 bad[sizeof(rpc_eint_req)];
+
+	KUNIT_ASSERT_EQ(test, sizeof(rpc_eint_req), (size_t)68);
+	KUNIT_ASSERT_EQ(test, mtk_md_rpc_parse(rpc_eint_req, sizeof(rpc_eint_req), &req), 0);
+	KUNIT_EXPECT_EQ(test, req.op, 0x4005U);
+	KUNIT_EXPECT_EQ(test, req.argc, 3U);
+	KUNIT_EXPECT_EQ(test, req.arg_len[0], 23U);
+	KUNIT_EXPECT_STREQ(test, (const char *)req.arg[0], "MD1_SIM1_HOT_PLUG_EINT");
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(req.arg[2]), 6U);
+
+	/* a length that runs past the message, and too many parameters */
+	memcpy(bad, rpc_eint_req, sizeof(bad));
+	put_le32(bad + 24, 200);
+	KUNIT_EXPECT_EQ(test, mtk_md_rpc_parse(bad, sizeof(bad), &req), -EINVAL);
+	memcpy(bad, rpc_eint_req, sizeof(bad));
+	put_le32(bad + 20, 7);
+	KUNIT_EXPECT_EQ(test, mtk_md_rpc_parse(bad, sizeof(bad), &req), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_rpc_parse(bad, 20, &req), -EINVAL);
+}
+
+static void rpc_build(struct kunit *test)
+{
+	const struct mtk_md_ccci_hdr *req = (const void *)rpc_eint_req;
+	u32 ok = 0, pin = 1, three = 0x0a0b0c;
+	const void *arg[] = { &ok, &pin, &three };
+	u32 len[] = { 4, 4, 3 };
+	u8 buf[64];
+	int n;
+
+	n = mtk_md_rpc_build(buf, sizeof(buf), req, 0x4005, 3, arg, len);
+	KUNIT_ASSERT_EQ(test, n, 16 + 8 + 8 + 8 + 8);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 4), (u32)n);		/* data[1] */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 8) & 0xffff, 33U);	/* RPC_TX */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 12), 0U);		/* index back */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 16), 0xffff4005U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 20), 3U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 24), 4U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 36), 1U);		/* the pin */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 40), 3U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 44), 0x0a0b0cU);		/* padded with 0 */
+
+	KUNIT_EXPECT_EQ(test, mtk_md_rpc_build(buf, 40, req, 0x4005, 3, arg, len), -ENOSPC);
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
+	KUNIT_CASE(rpc_parse),
+	KUNIT_CASE(rpc_build),
 	KUNIT_CASE(ring_layout),
 	KUNIT_CASE(ring_framing),
 	KUNIT_CASE(ring_roundtrip_wraps),

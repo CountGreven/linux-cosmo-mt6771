@@ -255,4 +255,26 @@ void mtk_md_ring_rx_read(const struct mtk_md_ring *ring, void *out, u32 len);
 void mtk_md_ring_rx_consume(struct mtk_md_ring *ring, u32 len);
 int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len);
 
+/*
+ * RPC (eccci/port/port_rpc.c): the modem asks the AP for board facts. A request is the CCCI header,
+ * an operation id, a parameter count and that many {u32 length, data padded to 4 bytes}. The answer
+ * goes back on the paired channel with the operation id's top half set.
+ */
+#define MTK_MD_CH_RPC_RX		32
+#define MTK_MD_CH_RPC_TX		33
+#define MTK_MD_RPC_RESP			0xffff0000
+#define MTK_MD_RPC_MAX_ARGS		6
+#define MTK_MD_RPC_MAX_LEN		2048
+
+struct mtk_md_rpc_req {
+	u32 op;
+	u32 argc;
+	const u8 *arg[MTK_MD_RPC_MAX_ARGS];
+	u32 arg_len[MTK_MD_RPC_MAX_ARGS];
+};
+
+int mtk_md_rpc_parse(const void *msg, size_t len, struct mtk_md_rpc_req *req);
+int mtk_md_rpc_build(void *buf, size_t size, const struct mtk_md_ccci_hdr *req_hdr, u32 op,
+		     u32 argc, const void *const *arg, const u32 *arg_len);
+
 #endif /* __MTK_MD_PROTO_H__ */

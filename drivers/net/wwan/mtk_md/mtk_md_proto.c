@@ -514,5 +514,75 @@ int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len)
 }
 EXPORT_SYMBOL_GPL(mtk_md_ring_tx_write);
 
+/**
+ * mtk_md_rpc_parse() - split an RPC request into its parameters
+ * @msg: the whole message, CCCI header first
+ *
+ * The parameters point into @msg. Everything the modem wrote is checked against @len.
+ */
+int mtk_md_rpc_parse(const void *msg, size_t len, struct mtk_md_rpc_req *req)
+{
+	const u8 *p = msg, *end = p + len;
+	u32 i, n;
+
+	if (len < sizeof(struct mtk_md_ccci_hdr) + 8 || len > MTK_MD_RPC_MAX_LEN)
+		return -EINVAL;
+	p += sizeof(struct mtk_md_ccci_hdr);
+	req->op = get_unaligned_le32(p);
+	req->argc = get_unaligned_le32(p + 4);
+	p += 8;
+	if (req->argc > MTK_MD_RPC_MAX_ARGS)
+		return -EINVAL;
+
+	for (i = 0; i < req->argc; i++) {
+		if (end - p < 4)
+			return -EINVAL;
+		n = get_unaligned_le32(p);
+		p += 4;
+		if (n > end - p)
+			return -EINVAL;
+		req->arg[i] = p;
+		req->arg_len[i] = n;
+		p += min_t(size_t, ALIGN(n, 4), end - p);
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtk_md_rpc_parse);
+
+/**
+ * mtk_md_rpc_build() - the answer to an RPC request
+ * @req_hdr: the request's CCCI header; its first word and its buffer index go back unchanged
+ *
+ * Return: the length of the message in @buf, or -ENOSPC.
+ */
+int mtk_md_rpc_build(void *buf, size_t size, const struct mtk_md_ccci_hdr *req_hdr, u32 op,
+		     u32 argc, const void *const *arg, const u32 *arg_len)
+{
+	struct mtk_md_ccci_hdr *h = buf;
+	size_t pos = sizeof(*h) + 8;
+	u8 *p = buf;
+	u32 i;
+
+	if (argc > MTK_MD_RPC_MAX_ARGS || size < pos)
+		return -ENOSPC;
+	for (i = 0; i < argc; i++) {
+		if (pos + 4 + ALIGN(arg_len[i], 4) > min_t(size_t, size, MTK_MD_RPC_MAX_LEN))
+			return -ENOSPC;
+		put_unaligned_le32(arg_len[i], p + pos);
+		memset(p + pos + 4, 0, ALIGN(arg_len[i], 4));
+		memcpy(p + pos + 4, arg[i], arg_len[i]);
+		pos += 4 + ALIGN(arg_len[i], 4);
+	}
+
+	h->data[0] = req_hdr->data[0];
+	h->data[1] = cpu_to_le32(pos);
+	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_RPC_TX));
+	h->reserved = req_hdr->reserved;
+	put_unaligned_le32(op | MTK_MD_RPC_RESP, p + sizeof(*h));
+	put_unaligned_le32(argc, p + sizeof(*h) + 4);
+	return pos;
+}
+EXPORT_SYMBOL_GPL(mtk_md_rpc_build);
+
 MODULE_DESCRIPTION("MediaTek MT6771 modem protocol helpers");
 MODULE_LICENSE("GPL");

@@ -19,6 +19,7 @@
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/delay.h>
@@ -65,8 +66,28 @@
 #define MTK_MD_DHL_SIZE		(20 * SZ_1M)
 #define MTK_MD_BANK4_BASE	0x40000000	/* the modem's view of the AP's memory */
 #define MTK_MD_CACHE_OFFSET_DEF	0x8000000	/* when LK gives no md1_smem_cahce_offset */
-/* booting_start_id: mdwait_time 15 as the vendor's ccci_mdinit sets it, logging idle, normal boot */
+/* booting_start_id: mdwait_time 15 as the vendor's ccci_mdinit sets it, logging idle */
 #define MTK_MD_BOOTING_START_ID	0x000f0000
+
+/* RPC answers (port_rpc.h), and what the modem asks about its SIM hot-plug interrupts */
+#define MTK_MD_RPC_TXQ			1
+#define RPC_GET_TDD_EINT_NUM		0x4001
+#define RPC_GET_GPIO_NUM		0x4002
+#define RPC_GET_ADC_NUM			0x4003
+#define RPC_GET_EINT_ATTR		0x4005
+#define RPC_GET_GPIO_VAL		0x4006
+#define RPC_GET_ADC_VAL			0x4007
+#define RPC_LHIF_MAPPING		0x400d
+#define RPC_DTSI_QUERY			0x400e
+#define RPC_TRNG			0x4012
+#define RPC_ERR_NO_OP			(-1)
+#define RPC_ERR_PARAM			(-2)
+#define RPC_ERR_FUNC_FAIL		(-5)
+#define RPC_ERR_SIM_QUERY_TYPE		(-12)
+#define RPC_ERR_SIM_QUERY_STRING	(-11)
+#define MTK_MD_SIM_MAX			4
+#define MTK_MD_SIM_ATTRS		7	/* sim_hot_plug_eint_queryType */
+#define MTK_MD_DTSI_OUT_LEN		68	/* u32 value, char string[64] */
 
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
@@ -161,6 +182,8 @@ struct mtk_md {
 	spinlock_t tx_lock;		/* the transmit side of the queues, and tx_seq */
 	u16 tx_seq[MTK_MD_TX_SEQ_CHANNELS];
 	bool ready;			/* HS2 seen */
+	s32 sim[MTK_MD_SIM_MAX][MTK_MD_SIM_ATTRS];
+	bool sim_present[MTK_MD_SIM_MAX];
 	unsigned int rx_logged;
 
 	struct work_struct start_work;
@@ -244,7 +267,7 @@ static int mtk_md_read_lk(struct mtk_md *md)
 
 	ret = mtk_md_lk_find_tag(&info, "ccb_info", &tag, &tag_len);
 	if (ret || tag_len < 12)
-		return dev_err_probe(md->dev, -EINVAL, "lk: no cacheable share memory (ccb_info)\n");
+		return dev_err_probe(md->dev, -EINVAL, "lk: no cacheable share memory\n");
 	md->ccb_base = get_unaligned_le64(tag);
 	md->ccb_size = get_unaligned_le32(tag + 8);
 	if (mtk_md_lk_get_u32(&info, "md1_smem_cahce_offset", &v))
@@ -677,6 +700,47 @@ static void mtk_md_rf_supplies(struct mtk_md *md, bool modem)
 	}
 }
 
+/*
+ * The SIM hot-plug interrupts the modem asks about, from child nodes "sim-hot-plug-<n>". The
+ * values are the vendor's (port_rpc.c): the EINT number, polarity and sensitivity from its
+ * trigger type, debounce in ms, and three board settings the modem interprets itself.
+ */
+static void mtk_md_read_sims(struct mtk_md *md)
+{
+	struct device_node *np;
+	unsigned int sim, i;
+	char name[20];
+	u32 v;
+
+	for (sim = 0; sim < MTK_MD_SIM_MAX; sim++) {
+		for (i = 0; i < MTK_MD_SIM_ATTRS; i++)
+			md->sim[sim][i] = RPC_ERR_SIM_QUERY_TYPE;
+		snprintf(name, sizeof(name), "sim-hot-plug-%u", sim + 1);
+		np = of_get_child_by_name(md->dev->of_node, name);
+		if (!np)
+			continue;
+		md->sim_present[sim] = true;
+		if (!of_property_read_u32(np, "mediatek,eint", &v))
+			md->sim[sim][0] = v;
+		if (!of_property_read_u32(np, "mediatek,debounce-us", &v))
+			md->sim[sim][1] = v / 1000;
+		if (!of_property_read_u32(np, "mediatek,eint-trigger", &v)) {
+			/* rising and high are polarity 1; the edges are edge sensitive */
+			md->sim[sim][2] = !!(v & (IRQ_TYPE_EDGE_RISING | IRQ_TYPE_LEVEL_HIGH));
+			md->sim[sim][3] = !!(v & IRQ_TYPE_EDGE_BOTH);
+		}
+		if (!of_property_read_u32(np, "mediatek,socket-type", &v))
+			md->sim[sim][4] = v;
+		if (!of_property_read_u32(np, "mediatek,dedicated", &v))
+			md->sim[sim][5] = v;
+		if (!of_property_read_u32(np, "mediatek,source-pin", &v))
+			md->sim[sim][6] = v;
+		of_node_put(np);
+		dev_info(md->dev, "sim%u hot plug: eint %d, debounce %d ms, source pin %d\n",
+			 sim + 1, md->sim[sim][0], md->sim[sim][1], md->sim[sim][6]);
+	}
+}
+
 static int mtk_md_get_pmic(struct mtk_md *md)
 {
 	struct device_node *np;
@@ -831,7 +895,7 @@ static int mtk_md_rings_init(struct mtk_md *md)
  * md_ccif_op_send_skb(): one message into a queue, then its doorbell. The modem checks the
  * sequence per channel; FS and RPC carry the assert bit only until the modem is ready.
  */
-static int __maybe_unused mtk_md_send(struct mtk_md *md, unsigned int q, void *msg, u32 len)
+static int mtk_md_send(struct mtk_md *md, unsigned int q, void *msg, u32 len)
 {
 	struct mtk_md_ccci_hdr *h = msg;
 	u32 status = le32_to_cpu(h->status);
@@ -844,7 +908,10 @@ static int __maybe_unused mtk_md_send(struct mtk_md *md, unsigned int q, void *m
 
 	spin_lock_irqsave(&md->tx_lock, flags);
 	status &= MTK_MD_CCCI_CHANNEL;
-	status |= FIELD_PREP(MTK_MD_CCCI_SEQ, md->tx_seq[ch]) | MTK_MD_CCCI_ASSERT;
+	status |= FIELD_PREP(MTK_MD_CCCI_SEQ, md->tx_seq[ch]);
+	/* the file and RPC services may be preempted on the modem once it is ready */
+	if (!(md->ready && ch == MTK_MD_CH_RPC_TX))
+		status |= MTK_MD_CCCI_ASSERT;
 	h->status = cpu_to_le32(status);
 	ret = mtk_md_ring_tx_write(md->ring[q], msg, len);
 	if (!ret) {
@@ -855,11 +922,119 @@ static int __maybe_unused mtk_md_send(struct mtk_md *md, unsigned int q, void *m
 	return ret;
 }
 
+/* get_eint_attr_DTSVal(): one attribute of one SIM's hot-plug interrupt */
+static s32 mtk_md_rpc_eint_attr(struct mtk_md *md, const struct mtk_md_rpc_req *req, s32 *val)
+{
+	char name[32];
+	u32 type, sim;
+
+	if (req->argc < 3 || !req->arg_len[0] || req->arg_len[2] < 4)
+		return RPC_ERR_PARAM;
+	type = get_unaligned_le32(req->arg[2]);
+	if (type >= MTK_MD_SIM_ATTRS)
+		return RPC_ERR_SIM_QUERY_TYPE;
+
+	for (sim = 0; sim < MTK_MD_SIM_MAX; sim++) {
+		snprintf(name, sizeof(name), "MD1_SIM%u_HOT_PLUG_EINT", sim + 1);
+		if (req->arg_len[0] != strlen(name) + 1 ||
+		    memcmp(req->arg[0], name, req->arg_len[0]))
+			continue;
+		if (!md->sim_present[sim] || md->sim[sim][type] < 0)
+			break;
+		*val = md->sim[sim][type];
+		return 0;
+	}
+	return RPC_ERR_SIM_QUERY_STRING;
+}
+
+/* ccci_rpc_work_helper(): answer what the kernel answers; the modem hears "no op" for the rest */
+static void mtk_md_rpc(struct mtk_md *md, const u8 *msg, u32 len)
+{
+	const struct mtk_md_ccci_hdr *h = (const void *)msg;
+	struct mtk_md_rpc_req req;
+	u8 dtsi[MTK_MD_DTSI_OUT_LEN];
+	const void *arg[2];
+	u32 arg_len[2] = { 4, 4 }, argc = 2;
+	__le32 w[2] = { };
+	s32 ret, val = 0;
+	u8 *out;
+	int n;
+
+	if (mtk_md_rpc_parse(msg, len, &req)) {
+		dev_err(md->dev, "rpc: malformed request (%u bytes)\n", len);
+		return;
+	}
+	arg[0] = &w[0];
+	arg[1] = &w[1];
+
+	switch (req.op) {
+	case RPC_GET_EINT_ATTR:
+		ret = mtk_md_rpc_eint_attr(md, &req, &val);
+		w[0] = cpu_to_le32(ret);
+		w[1] = cpu_to_le32(ret ? ret : val);
+		dev_info(md->dev, "rpc: %.*s attribute %u: %d (%d)\n", (int)req.arg_len[0],
+			 req.arg[0], req.argc > 2 && req.arg_len[2] >= 4 ?
+			 get_unaligned_le32(req.arg[2]) : 0, val, ret);
+		break;
+	case RPC_DTSI_QUERY:
+		/* no board attributes for the modem: 0x0f everywhere is "not set" */
+		memset(dtsi, 0x0f, sizeof(dtsi));
+		arg[1] = dtsi;
+		arg_len[1] = sizeof(dtsi);
+		n = req.argc && req.arg_len[0] > 2 ? min_t(u32, req.arg_len[0] - 2, 64) : 0;
+		dev_info(md->dev, "rpc: board attribute %.*s: not set\n", n,
+			 n ? (const char *)req.arg[0] + 2 : "");
+		break;
+	case RPC_TRNG:
+		w[1] = cpu_to_le32(get_random_u32());
+		break;
+	case RPC_LHIF_MAPPING:
+		break;
+	case RPC_GET_TDD_EINT_NUM:
+	case RPC_GET_GPIO_NUM:
+	case RPC_GET_ADC_NUM:
+		/* no GPIO or ADC is lent to the modem on this board */
+		w[0] = cpu_to_le32(RPC_ERR_FUNC_FAIL);
+		w[1] = w[0];
+		dev_info(md->dev, "rpc: %#x for %.*s: none\n", req.op,
+			 req.argc ? (int)min_t(u32, req.arg_len[0], 64) : 0,
+			 req.argc ? (const char *)req.arg[0] : "");
+		break;
+	case RPC_GET_GPIO_VAL:
+	case RPC_GET_ADC_VAL:
+		w[0] = cpu_to_le32(RPC_ERR_FUNC_FAIL);
+		w[1] = w[0];
+		break;
+	default:
+		dev_warn(md->dev, "rpc: unhandled operation %#x, %u parameters\n",
+			 req.op, req.argc);
+		w[0] = cpu_to_le32(RPC_ERR_NO_OP);
+		argc = 1;
+		break;
+	}
+
+	out = kzalloc(MTK_MD_RPC_MAX_LEN, GFP_KERNEL);
+	if (!out)
+		return;
+	n = mtk_md_rpc_build(out, MTK_MD_RPC_MAX_LEN, h, req.op, argc, arg, arg_len);
+	if (n > 0)
+		n = mtk_md_send(md, MTK_MD_RPC_TXQ, out, n);
+	if (n < 0)
+		dev_err(md->dev, "rpc: answer to %#x not sent: %d\n", req.op, n);
+	kfree(out);
+}
+
 static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 len)
 {
 	const struct mtk_md_ccci_hdr *h = (const void *)msg;
 	u32 status = le32_to_cpu(h->status);
 	u32 ch = FIELD_GET(MTK_MD_CCCI_CHANNEL, status);
+
+	if (ch == MTK_MD_CH_RPC_RX) {
+		mtk_md_trace(md, "rx q%u rpc len %u\n", q, len);
+		mtk_md_rpc(md, msg, len);
+		return;
+	}
 
 	if (ch == MTK_MD_CH_CONTROL_RX) {
 		switch (mtk_md_ctrl_classify(h)) {
@@ -1349,6 +1524,7 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_get_pmic(md);
 	if (ret)
 		return ret;
+	mtk_md_read_sims(md);
 
 	for (i = 0; i < ARRAY_SIZE(md->clks); i++)
 		md->clks[i].id = mtk_md_clk_names[i];

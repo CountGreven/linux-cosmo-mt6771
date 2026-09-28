@@ -694,9 +694,17 @@ static int mt8183_afe_runtime_suspend(struct device *dev)
 	regmap_update_bits(afe->regmap, AFE_IRQ_MCU_CLR, 0xffff, 0xffff);
 	regmap_update_bits(afe->regmap, AFE_IRQ_MCU_CLR, 0xffff, 0xffff);
 
+	/*
+	 * The clock gates live in this shared syscon regmap, and cache-only
+	 * mode drops writes to them, so gate the clocks first.
+	 */
+	mt8183_afe_disable_clock(afe);
+
 	/* cache only */
 	regcache_cache_only(afe->regmap, true);
 	regcache_mark_dirty(afe->regmap);
+
+	return 0;
 
 skip_regmap:
 	return mt8183_afe_disable_clock(afe);
@@ -708,14 +716,20 @@ static int mt8183_afe_runtime_resume(struct device *dev)
 	struct mt8183_afe_private *afe_priv = afe->platform_priv;
 	int ret;
 
+	/* Leave cache-only mode first so the clock gate writes reach the hardware */
+	if (afe->regmap && !afe_priv->pm_runtime_bypass_reg_ctl)
+		regcache_cache_only(afe->regmap, false);
+
 	ret = mt8183_afe_enable_clock(afe);
-	if (ret)
+	if (ret) {
+		if (afe->regmap && !afe_priv->pm_runtime_bypass_reg_ctl)
+			regcache_cache_only(afe->regmap, true);
 		return ret;
+	}
 
 	if (!afe->regmap || afe_priv->pm_runtime_bypass_reg_ctl)
 		goto skip_regmap;
 
-	regcache_cache_only(afe->regmap, false);
 	regcache_sync(afe->regmap);
 
 	/* enable audio sys DCM for power saving */

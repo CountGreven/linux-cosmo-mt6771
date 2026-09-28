@@ -322,7 +322,23 @@
 	mediatek,ch-offset = <0x100>;
 	status = "okay";
 };
-&i2c3 { status = "okay"; };
+&i2c3 {
+	status = "okay";
+
+	/*
+	 * NXP PN553 (vendor nfc@28, libnfc-nxp.conf DEVICE_MODEL=PN553), own crystal. IRQ GPIO71
+	 * level high as the vendor requests it, VEN GPIO72, firmware download GPIO73.
+	 */
+	nfc@28 {
+		compatible = "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+		interrupts-extended = <&pio 71 IRQ_TYPE_LEVEL_HIGH>;
+		enable-gpios = <&pio 72 GPIO_ACTIVE_HIGH>;
+		firmware-gpios = <&pio 73 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_pins>;
+	};
+};
 &i2c4 {
 	mediatek,ch-offset = <0x100>;
 	status = "okay";
@@ -1225,6 +1241,46 @@
 };
 
 &pio {
+	nfc_pins: nfc-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO71__FUNC_GPIO71>;
+			input-enable;
+			bias-pull-down;
+		};
+	};
+
+	/* the vendor pn553 driver holds the ISO reset high and the eSE power off */
+	nfc-iso-rst-hog {
+		gpio-hog;
+		gpios = <66 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "nfc-iso-rst";
+	};
+
+	nfc-ese-pwr-hog {
+		gpio-hog;
+		gpios = <65 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "nfc-ese-pwr";
+	};
+
+	spi1_pins: spi1-pins {
+		pins-spi {
+			pinmux = <PINMUX_GPIO161__FUNC_SPI1_A_MI>,
+				 <PINMUX_GPIO162__FUNC_SPI1_A_CSB>,
+				 <PINMUX_GPIO163__FUNC_SPI1_A_MO>,
+				 <PINMUX_GPIO164__FUNC_SPI1_A_CLK>;
+		};
+	};
+
+	imu_pins: imu-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO4__FUNC_GPIO4>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+
 	light_sensor_pins: light-sensor-pins {
 		pins-irq {
 			pinmux = <PINMUX_GPIO6__FUNC_GPIO6>;
@@ -1278,5 +1334,26 @@
 				};
 			};
 		};
+	};
+};
+
+/* Accelerometer and gyroscope (vendor accelgyro@0 on spi1, direction 4) */
+&spi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins>;
+	status = "okay";
+
+	imu@0 {
+		compatible = "bosch,bmi160";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		interrupts-extended = <&pio 4 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-names = "INT1";
+		pinctrl-names = "default";
+		pinctrl-0 = <&imu_pins>;
+		/* vendor direction 4: x and z inverted; to be proven with a gravity test */
+		mount-matrix = "-1", "0", "0",
+			       "0", "1", "0",
+			       "0", "0", "-1";
 	};
 };

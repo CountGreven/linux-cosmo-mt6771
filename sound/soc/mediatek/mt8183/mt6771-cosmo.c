@@ -22,6 +22,9 @@ struct cosmo_priv {
 	bool speaker_on;
 	struct snd_soc_component *accdet;
 	struct snd_soc_jack headset;
+	struct notifier_block jack_nb;
+	bool speaker_was_enabled;
+	bool headphone_in;
 };
 
 static struct snd_soc_jack_pin cosmo_jack_pins[] = {
@@ -30,9 +33,27 @@ static struct snd_soc_jack_pin cosmo_jack_pins[] = {
 };
 
 /* The vendor switches the speaker amps off while anything is in the jack */
-static struct snd_soc_jack_pin cosmo_speaker_pin = {
-	.pin = "Speaker", .mask = SND_JACK_HEADPHONE, .invert = 1,
-};
+static int cosmo_jack_event(struct notifier_block *nb, unsigned long status, void *data)
+{
+	struct cosmo_priv *priv = container_of(nb, struct cosmo_priv, jack_nb);
+	struct snd_soc_jack *jack = data;
+	struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(jack->card);
+	bool in = status & SND_JACK_HEADPHONE;
+
+	if (in == priv->headphone_in)
+		return NOTIFY_OK;
+	priv->headphone_in = in;
+
+	if (in) {
+		priv->speaker_was_enabled = snd_soc_dapm_get_pin_status(dapm, "Speaker");
+		snd_soc_dapm_disable_pin(dapm, "Speaker");
+	} else if (priv->speaker_was_enabled) {
+		snd_soc_dapm_enable_pin(dapm, "Speaker");
+	}
+	snd_soc_dapm_sync(dapm);
+
+	return NOTIFY_OK;
+}
 
 /*
  * One speaker is wired with inverted polarity (the headphone jack is not), so while the
@@ -199,9 +220,8 @@ static int cosmo_late_probe(struct snd_soc_card *card)
 		if (ret)
 			return ret;
 
-		ret = snd_soc_jack_add_pins(&priv->headset, 1, &cosmo_speaker_pin);
-		if (ret)
-			return ret;
+		priv->jack_nb.notifier_call = cosmo_jack_event;
+		snd_soc_jack_notifier_register(&priv->headset, &priv->jack_nb);
 
 		/* After the codec probe: it forces ACCDET_CON13, detection clears it */
 		ret = mt6358_accdet_enable_jack_detect(priv->accdet, &priv->headset);

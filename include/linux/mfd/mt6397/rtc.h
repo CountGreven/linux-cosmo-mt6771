@@ -76,6 +76,7 @@ struct mt6397_rtc {
 	int                     irq;
 	u32                     addr_base;
 	const struct mtk_rtc_data *data;
+	int                     year_off;	/* tm_year of hardware year 0 */
 };
 
 #endif /* _LINUX_MFD_MT6397_RTC_H_ */

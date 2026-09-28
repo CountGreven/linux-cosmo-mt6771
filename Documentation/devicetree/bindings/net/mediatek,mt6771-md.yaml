@@ -34,6 +34,7 @@ properties:
       - description: modem clock switch
       - description: modem reset and watchdog block
       - description: modem boot control
+      - description: DVFSRC, whose voltage and memory requests the modem depends on
 
   reg-names:
     items:
@@ -45,6 +46,7 @@ properties:
       - const: md-clksw
       - const: md-rgu
       - const: md-boot
+      - const: dvfsrc
 
   interrupts:
     items:
@@ -180,9 +182,10 @@ examples:
                   <0 0x20140000 0 0x1000>,
                   <0 0x20150000 0 0x1000>,
                   <0 0x200f0000 0 0x1000>,
-                  <0 0x20000000 0 0x1000>;
+                  <0 0x20000000 0 0x1000>,
+                  <0 0x10012000 0 0x1000>;
             reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif",
-                        "md-pll", "md-clksw", "md-rgu", "md-boot";
+                        "md-pll", "md-clksw", "md-rgu", "md-boot", "dvfsrc";
             interrupts = <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>,
                          <GIC_SPI 151 IRQ_TYPE_LEVEL_LOW>,
                          <GIC_SPI 152 IRQ_TYPE_LEVEL_LOW>,

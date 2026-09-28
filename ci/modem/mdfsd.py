@@ -797,7 +797,13 @@ def main():
             sys.exit('--init-root needs --root')
         init_root(a.root)
     svc = Service(a.root, a.postfix, log)
-    fd = os.open(a.dev, os.O_RDWR)
+    # the device appears in probe just before the modem boots: be waiting for it
+    while True:
+        try:
+            fd = os.open(a.dev, os.O_RDWR)
+            break
+        except FileNotFoundError:
+            time.sleep(0.005)
     log('serving %s from %s' % (a.dev, a.root or 'the real directories'))
     while True:
         msg = os.read(fd, 8192)

@@ -34,6 +34,7 @@
 #include <linux/sizes.h>
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
+#include <linux/unaligned.h>
 
 #include "mtk_md_proto.h"
 #include "mtk_md_regs.h"
@@ -55,6 +56,18 @@
 #define MTK_MD_TX_SEQ_CHANNELS	256
 #define MTK_MD_RX_LOG_LIMIT	200	/* messages described in the log while ports are missing */
 
+/*
+ * The cacheable share memory as the vendor lays it out on 6293 (md1_6293_cacheable[] and
+ * ccb_configs[]): CCB data first, then the DHL raw buffer at 2 MiB.
+ */
+#define MTK_MD_CCB_DATA_SIZE	0x17c000
+#define MTK_MD_DHL_OFFSET	SZ_2M
+#define MTK_MD_DHL_SIZE		(20 * SZ_1M)
+#define MTK_MD_BANK4_BASE	0x40000000	/* the modem's view of the AP's memory */
+#define MTK_MD_CACHE_OFFSET_DEF	0x8000000	/* when LK gives no md1_smem_cahce_offset */
+/* booting_start_id: mdwait_time 15 as the vendor's ccci_mdinit sets it, logging idle, normal boot */
+#define MTK_MD_BOOTING_START_ID	0x000f0000
+
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
 
@@ -63,11 +76,30 @@
 
 enum { MTK_MD_RST_CLDMA_AO, MTK_MD_RST_CLDMA_PD, MTK_MD_RST_CCIF, MTK_MD_RST_NUM };
 
+/*
+ * "dvfsrc": the modem posts its voltage and memory frequency requests to the DVFSRC as soon as it
+ * has its runtime data. With that block's bus clock gated the write never completes and holds
+ * the interconnect: the whole SoC stops about 2.6 ms after the runtime data.
+ */
 static const char * const mtk_md_clk_names[] = {
-	"cldma", "ccif-ap", "ccif-md", "ccif1-ap", "ccif1-md", "ccif2-ap", "ccif2-md",
+	"cldma", "ccif-ap", "ccif-md", "ccif1-ap", "ccif1-md", "ccif2-ap", "ccif2-md", "dvfsrc",
 };
 
 /* A level interrupt nobody acknowledges starves the CPU it lands on: notice and mask it. */
+/*
+ * bring-up: log doorbells, messages and a register watch at error level, so that
+ * they reach the persistent console when the SoC stops
+ */
+static bool trace;
+module_param(trace, bool, 0444);
+
+#define mtk_md_trace(md, fmt, ...) \
+	do { if (trace) dev_err((md)->dev, "trace: " fmt, ##__VA_ARGS__); } while (0)
+
+/* bring-up: leave the CLDMA engine stopped, to see whether the data path is involved */
+static bool no_cldma;
+module_param(no_cldma, bool, 0444);
+
 /* bring-up: start the SPM firmware and stop there, to see that step on its own */
 static bool spm_only;
 module_param(spm_only, bool, 0444);
@@ -109,6 +141,13 @@ struct mtk_md {
 	struct mtk_md_lk_smem smem;
 	phys_addr_t smem_nc;		/* AP/MD1 non-cacheable share memory */
 	u32 smem_nc_size;
+	u64 ccb_base;			/* cacheable share memory (CCB data, DHL) */
+	u32 ccb_size;
+	u32 ccb_md_view;
+	u32 image_size;			/* what LK loaded, "md1img" */
+	u32 c2k_lte_mode;
+	u32 ps1_rat;
+	u32 ring_total;			/* bytes of normal CCIF queues */
 
 	/* One idle descriptor per CLDMA queue: four TX, then one RX. */
 	void *gpd;
@@ -136,7 +175,8 @@ static int mtk_md_read_lk(struct mtk_md *md)
 	struct device_node *chosen;
 	const void *prop;
 	void *map, *copy;
-	u32 v;
+	const void *tag;
+	u32 v, tag_len;
 	int len, ret;
 
 	chosen = of_find_node_by_path("/chosen");
@@ -202,6 +242,26 @@ static int mtk_md_read_lk(struct mtk_md *md)
 	if (!mtk_md_lk_get_u32(&info, "md1_phy_cap", &v))
 		dev_info(md->dev, "lk: md1_phy_cap %#x\n", v);
 
+	ret = mtk_md_lk_find_tag(&info, "ccb_info", &tag, &tag_len);
+	if (ret || tag_len < 12)
+		return dev_err_probe(md->dev, -EINVAL, "lk: no cacheable share memory (ccb_info)\n");
+	md->ccb_base = get_unaligned_le64(tag);
+	md->ccb_size = get_unaligned_le32(tag + 8);
+	if (mtk_md_lk_get_u32(&info, "md1_smem_cahce_offset", &v))
+		v = MTK_MD_CACHE_OFFSET_DEF;
+	md->ccb_md_view = MTK_MD_BANK4_BASE + v;
+	if (md->ccb_size < MTK_MD_DHL_OFFSET + MTK_MD_DHL_SIZE)
+		return dev_err_probe(md->dev, -EINVAL, "lk: cacheable share memory too small\n");
+	dev_info(md->dev, "lk: cacheable share memory %#llx+%#x (md view %#x)\n",
+		 md->ccb_base, md->ccb_size, md->ccb_md_view);
+
+	if (mtk_md_lk_get_u32(&info, "md1img", &md->image_size))
+		md->image_size = md->image.size;
+	if (mtk_md_lk_get_u32(&info, "opt_c2k_lte_mode", &md->c2k_lte_mode))
+		md->c2k_lte_mode = 0;
+	if (mtk_md_lk_get_u32(&info, "opt_ps1_rat", &md->ps1_rat))
+		md->ps1_rat = 0;
+
 	return 0;
 }
 
@@ -264,6 +324,7 @@ static irqreturn_t mtk_md_ccif_data_irq(int irq, void *data)
 	u32 ch = readl(md->ap_ccif + APCCIF_RCHNUM);
 
 	writel(ch & CCIF_DATA_CHANNELS, md->ap_ccif + APCCIF_ACK);
+	mtk_md_trace(md, "ccif data doorbell %#x\n", ch);
 	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CCIF0, irq))
 		dev_err(md->dev, "ccif data line: RCHNUM %#x\n", ch);
 
@@ -290,6 +351,7 @@ static irqreturn_t mtk_md_ccif_ctrl_irq(int irq, void *data)
 	u32 ch = readl(md->ap_ccif + APCCIF_RCHNUM);
 
 	writel(ch & CCIF_CTRL_CHANNELS, md->ap_ccif + APCCIF_ACK);
+	mtk_md_trace(md, "ccif control doorbell %#x\n", ch);
 	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CCIF1, irq))
 		dev_err(md->dev, "ccif control line: RCHNUM %#x\n", ch);
 
@@ -307,6 +369,7 @@ static irqreturn_t mtk_md_wdt_irq(int irq, void *data)
 {
 	struct mtk_md *md = data;
 
+	mtk_md_trace(md, "modem watchdog irq\n");
 	if (!mtk_md_irq_storm(md, MTK_MD_IRQ_WDT, irq))
 		dev_err_ratelimited(md->dev, "modem watchdog fired\n");
 	return IRQ_HANDLED;
@@ -321,6 +384,7 @@ static irqreturn_t mtk_md_cldma_irq(int irq, void *data)
 
 	writel(tx, md->cldma_pd + CLDMA_PD_L2TISAR0);
 	writel(rx, md->cldma_pd + CLDMA_PD_L2RISAR0);
+	mtk_md_trace(md, "cldma irq tx %#x rx %#x\n", tx, rx);
 	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CLDMA, irq))
 		dev_err(md->dev, "cldma: L2 tx %#x rx %#x, L3 tx %#x %#x rx %#x %#x\n", tx, rx,
 			readl(md->cldma_pd + CLDMA_PD_L3TISAR0),
@@ -748,6 +812,7 @@ static int mtk_md_rings_init(struct mtk_md *md)
 		buf += used;
 		left -= used;
 	}
+	md->ring_total = MTK_MD_SMEM_CCISM_SIZE - left;
 
 	buf = md->smem_va + MTK_MD_SMEM_CCISM_EXP_OFFSET;
 	left = MTK_MD_SMEM_CCISM_EXP_SIZE;
@@ -810,6 +875,9 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 		}
 	}
 
+	mtk_md_trace(md, "rx q%u ch %u len %u: %08x %08x %08x | %*ph\n", q, ch, len,
+		     le32_to_cpu(h->data[0]), le32_to_cpu(h->data[1]), le32_to_cpu(h->reserved),
+		     (int)min_t(u32, len - sizeof(*h), 16), msg + sizeof(*h));
 	if (md->rx_logged < MTK_MD_RX_LOG_LIMIT) {
 		md->rx_logged++;
 		dev_info(md->dev, "rx q%u ch %u seq %lu len %u: %08x %08x %08x | %*ph\n", q, ch,
@@ -849,6 +917,8 @@ enum mtk_md_rt_kind {
 	RT_SKIP,	/* the vendor has no case: nothing is appended */
 	RT_EMPTY,	/* header only */
 	RT_BOOT,
+	RT_IMAGE,	/* {AP physical address, size} of the image LK loaded */
+	RT_DHL,		/* {md view address, size} in the cacheable share memory */
 	RT_SHM,		/* {md view address, size} in the non-cacheable share memory */
 	RT_SHM_ZERO,	/* {0, 0} */
 	RT_MISC,	/* four words */
@@ -873,14 +943,14 @@ static const struct mtk_md_rt_src mtk_md_rt_srcs[MTK_MD_FEATURE_COUNT] = {
 	[MTK_MD_RT_MISC_INFO_RTC_32K_LESS]	= { RT_MISC },
 	[MTK_MD_RT_MISC_INFO_RANDOM_SEED_NUM]	= { RT_MISC },
 	[MTK_MD_RT_MISC_INFO_GPS_COCLOCK]	= { RT_MISC },
-	[MTK_MD_RT_MISC_INFO_SBP_ID]		= { RT_MISC, true },
+	[MTK_MD_RT_MISC_INFO_SBP_ID]		= { RT_MISC },
 	[MTK_MD_RT_MISC_INFO_CCCI]		= { RT_MISC },
 	[MTK_MD_RT_MISC_INFO_CLIB_TIME]		= { RT_MISC },
-	[MTK_MD_RT_MISC_INFO_C2K]		= { RT_MISC, true },
-	[MTK_MD_RT_MD_IMAGE_START_MEMORY]	= { RT_SHM_ZERO, true },
+	[MTK_MD_RT_MISC_INFO_C2K]		= { RT_MISC },
+	[MTK_MD_RT_MD_IMAGE_START_MEMORY]	= { RT_IMAGE },
 	[MTK_MD_RT_CCISM_SHARE_MEMORY]		= { RT_SHM, false, 64 * SZ_1K, 32 * SZ_1K },
-	[MTK_MD_RT_CCB_SHARE_MEMORY]		= { RT_MISC, true },
-	[MTK_MD_RT_DHL_RAW_SHARE_MEMORY]	= { RT_SHM_ZERO, true },
+	[MTK_MD_RT_CCB_SHARE_MEMORY]		= { RT_MISC },
+	[MTK_MD_RT_DHL_RAW_SHARE_MEMORY]	= { RT_DHL },
 	[MTK_MD_RT_DT_NETD_SHARE_MEMORY]	= { RT_SHM, false, 100 * SZ_1K, 4 * SZ_1K },
 	[MTK_MD_RT_DT_USB_SHARE_MEMORY]		= { RT_SHM, false, 104 * SZ_1K, 4 * SZ_1K },
 	[MTK_MD_RT_EE_AFTER_EPOF]		= { RT_MISC },
@@ -910,13 +980,24 @@ static int mtk_md_rt_one(struct mtk_md *md, u8 *buf, size_t size, size_t *pos, u
 	case RT_EMPTY:
 		break;
 	case RT_BOOT:
-		/* boot_channel CONTROL_RX; booting_start_id: normal boot, logging idle */
 		w[0] = cpu_to_le32(MTK_MD_CH_CONTROL_RX);
+		w[1] = cpu_to_le32(MTK_MD_BOOTING_START_ID);
 		len = 16;
+		break;
+	case RT_IMAGE:
+		w[0] = cpu_to_le32(lower_32_bits(md->image.base));
+		w[1] = cpu_to_le32(md->image_size);
+		len = 8;
+		break;
+	case RT_DHL:
+		w[0] = cpu_to_le32(md->ccb_md_view + MTK_MD_DHL_OFFSET);
+		w[1] = cpu_to_le32(MTK_MD_DHL_SIZE);
+		len = 8;
 		break;
 	case RT_SHM:
 		w[0] = cpu_to_le32(mtk_md_smem_md_view(md->smem_nc + src->off));
-		w[1] = cpu_to_le32(src->size);
+		/* the normal queues: what they take, not the whole region */
+		w[1] = cpu_to_le32(id == MTK_MD_RT_CCIF_SHARE_MEMORY ? md->ring_total : src->size);
 		len = 8;
 		break;
 	case RT_SHM_ZERO:
@@ -933,9 +1014,20 @@ static int mtk_md_rt_one(struct mtk_md *md, u8 *buf, size_t size, size_t *pos, u
 			w[0] = cpu_to_le32(lower_32_bits(now.tv_sec));
 			w[1] = cpu_to_le32(upper_32_bits(now.tv_sec));
 		} else if (id == MTK_MD_RT_CCB_SHARE_MEMORY) {
-			/* CCB control is non-cacheable; the data buffers are not mapped yet */
+			/* control in the non-cacheable share memory, data at the cacheable start */
 			w[0] = cpu_to_le32(mtk_md_smem_md_view(md->smem_nc + 96 * SZ_1K));
 			w[1] = cpu_to_le32(4 * SZ_1K);
+			w[2] = cpu_to_le32(md->ccb_md_view);
+			w[3] = cpu_to_le32(MTK_MD_CCB_DATA_SIZE);
+		} else if (id == MTK_MD_RT_MISC_INFO_SBP_ID) {
+			/* sbp code 0; the world modes the binary supports, as LK reports them */
+			w[1] = cpu_to_le32(md->ps1_rat);
+		} else if (id == MTK_MD_RT_MISC_INFO_C2K) {
+			/* opt_c2k_lte_mode 1: SVLTE, 2: SRLTE */
+			if (md->c2k_lte_mode == 1)
+				w[0] = cpu_to_le32(BIT(1));
+			else if (md->c2k_lte_mode == 2)
+				w[0] = cpu_to_le32(BIT(2));
 		}
 		break;
 	case RT_U32:
@@ -976,6 +1068,8 @@ static int mtk_md_write_runtime_data(struct mtk_md *md, const u8 *negotiated, si
 		goto out;
 
 	memcpy(md->smem_va + MTK_MD_SMEM_RUNTIME_OFFSET, buf, pos);
+	if (trace)
+		print_hex_dump(KERN_ERR, "mtk_md rt: ", DUMP_PREFIX_OFFSET, 16, 4, buf, pos, false);
 	*total = pos;
 out:
 	kfree(buf);
@@ -1025,8 +1119,8 @@ static int mtk_md_handshake(struct mtk_md *md)
 		return ret;
 	dev_info(md->dev, "step 11: %zu bytes of runtime data at md view %#x\n", len, rt_md);
 
-	/* STAND-IN: no cacheable share memory (CCB data, DHL) is described to the modem yet */
-	mtk_md_ap_query_fill(&aq, rt_md, mtk_md_smem_md_view(md->smem_nc), md->smem_nc_size, 0, 0);
+	mtk_md_ap_query_fill(&aq, rt_md, mtk_md_smem_md_view(md->smem_nc), md->smem_nc_size,
+			     md->ccb_md_view, md->ccb_size);
 	up.data[1] = cpu_to_le32(sizeof(up) + sizeof(aq));
 	up.status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_CONTROL_TX));
 	up.reserved = cpu_to_le32(MTK_MD_INIT_CHK_ID);
@@ -1040,7 +1134,66 @@ static int mtk_md_handshake(struct mtk_md *md)
 		return ret;
 	}
 	dev_info(md->dev, "step 12: runtime data sent\n");
+	mtk_md_trace(md, "runtime data sent\n");
 	return 0;
+}
+
+/* What the SoC does after the modem takes over: print each value when it changes */
+static void mtk_md_watch(struct mtk_md *md, unsigned int ms)
+{
+	static const struct {
+		const char *name;
+		int blk;	/* 0 spm, 1 infracfg */
+		unsigned int off;
+	} regs[] = {
+		{ "spm_r13_req_in", 0, 0x134 },
+		{ "spm_r15", 0, 0x13c },
+		{ "spm_fsm", 0, 0x178 },
+		{ "spm_src_req_sta", 0, 0x17c },
+		{ "spm_pwr_sta", 0, 0x180 },
+		{ "spm_src_rdy", 0, 0x194 },
+		{ "spm_r12_wake", 0, 0x130 },
+		{ "md1_pwr_con", 0, 0x320 },
+		{ "infra_prot_sta1", 1, 0x228 },
+		{ "infra_prot_sta1_1", 1, 0x258 },
+		{ "infra_md_srcclkena", 1, 0xf0c },
+	};
+	u32 last[ARRAY_SIZE(regs)] = { }, v;
+	ktime_t t0 = ktime_get(), end = ktime_add_ms(t0, ms), hb = t0;
+	unsigned int i, n = 0, rounds = 0, spin;
+	bool first = true;
+
+	/*
+	 * Busy-wait instead of sleeping, and count the rounds: if the rounds advance while the
+	 * clock stands still, the timer's reference clock has stopped.
+	 */
+	while (ktime_before(ktime_get(), end) && rounds < 200000000) {
+		for (i = 0; i < ARRAY_SIZE(regs); i++) {
+			regmap_read(regs[i].blk ? md->infracfg : md->scpsys, regs[i].off, &v);
+			if (first || v != last[i]) {
+				mtk_md_trace(md, "+%lldus %s %#x\n",
+					     ktime_us_delta(ktime_get(), t0), regs[i].name, v);
+				last[i] = v;
+			}
+		}
+		v = readl(md->ap_ccif + APCCIF_RCHNUM);
+		if (first || v != n) {
+			mtk_md_trace(md, "+%lldus ccif_rchnum %#x q0_rx_w %u\n",
+				     ktime_us_delta(ktime_get(), t0), v,
+				     le32_to_cpu(md->ring[0]->rx_write));
+			n = v;
+		}
+		first = false;
+		for (spin = 0; spin < 2000; spin++)
+			cpu_relax();
+		rounds++;
+		if (ktime_us_delta(ktime_get(), hb) >= 1000 || !(rounds % 4096)) {
+			mtk_md_trace(md, "hb round %u +%lldus\n", rounds,
+				     ktime_us_delta(ktime_get(), t0));
+			hb = ktime_get();
+		}
+	}
+	mtk_md_trace(md, "watch done\n");
 }
 
 static void mtk_md_start(struct work_struct *work)
@@ -1089,16 +1242,22 @@ static void mtk_md_start(struct work_struct *work)
 	enable_irq(md->irq_ccif0);
 	enable_irq(md->irq_cldma);
 
-	dev_info(md->dev, "step 6: cldma_reset (MTU %#x, SO_CFG enable)\n", CLDMA_MTU_SIZE);
-	mtk_md_cldma_reset(md);
+	if (no_cldma) {
+		mtk_md_trace(md, "cldma left stopped\n");
+	} else {
+		dev_info(md->dev, "step 6: cldma_reset (MTU %#x, SO_CFG enable)\n", CLDMA_MTU_SIZE);
+		mtk_md_cldma_reset(md);
 
-	dev_info(md->dev, "step 7: cldma_start (idle descriptors at %pad)\n", &md->gpd_dma);
-	mtk_md_cldma_start(md);
+		dev_info(md->dev, "step 7: cldma_start (idle descriptors at %pad)\n", &md->gpd_dma);
+		mtk_md_cldma_start(md);
+	}
 
 	dev_info(md->dev, "step 8: started, modem booting\n");
 	ret = mtk_md_handshake(md);
 	if (ret)
 		dev_err(md->dev, "handshake failed: %d\n", ret);
+	else if (trace)
+		mtk_md_watch(md, 2000);
 }
 
 static void mtk_md_teardown(void *data)

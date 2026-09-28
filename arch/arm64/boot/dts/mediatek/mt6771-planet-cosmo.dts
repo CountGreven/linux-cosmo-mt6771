@@ -28,12 +28,27 @@
 	 * (mt6370 charger node: cv 4400000, ichg 2050000, ieoc 150000). The charger driver programs
 	 * the voltage and the termination current and refuses to go above the maxima.
 	 */
+	/*
+	 * Capacity and OCV curve: the vendor gauge profile at 25 C (bat_setting/mt6771_battery_table.dtsi
+	 * battery0_profile_t1, MediaTek reference data), 4275.9 mAh down to its 3.40 V point. The
+	 * resistance is that profile's third column read as 0.1 mOhm (unit not stated in the source).
+	 */
 	battery: battery {
 		compatible = "simple-battery";
 		device-chemistry = "lithium-ion-polymer";
 		constant-charge-voltage-max-microvolt = <4400000>;
 		constant-charge-current-max-microamp = <2050000>;
 		charge-term-current-microamp = <150000>;
+		charge-full-design-microamp-hours = <4275900>;
+		voltage-min-design-microvolt = <3400000>;
+		factory-internal-resistance-micro-ohms = <170000>;
+		ocv-capacity-celsius = <25>;
+		ocv-capacity-table-0 = <4364700 100>, <4307738 95>, <4250256 90>, <4193949 85>,
+				       <4139577 80>, <4085567 75>, <4041958 70>, <3975215 65>,
+				       <3942221 60>, <3888566 55>, <3854915 50>, <3829528 45>,
+				       <3809099 40>, <3792341 35>, <3777940 30>, <3760049 25>,
+				       <3741745 20>, <3717367 15>, <3689589 10>, <3677789 5>,
+				       <3399901 0>;
 	};
 
 	aliases {
@@ -1542,8 +1557,15 @@
 	Avdd-supply = <&mt6358_vaud28_reg>;
 };
 
-/* Jack detection, vendor accdet node values (hw-spec/audio.org 2.4) */
+/* Jack detection, vendor accdet node values (hw-spec/audio.org 2.4); fuel gauge */
 &pmic {
+	battery {
+		compatible = "mediatek,mt6358-battery";
+		io-channels = <&pmic_adc MT6358_AUXADC_BATADC>;
+		io-channel-names = "vbat";
+		monitored-battery = <&battery>;
+	};
+
 	mt6358_accdet: accdet {
 		compatible = "mediatek,mt6358-accdet";
 		io-channels = <&pmic_adc MT6358_AUXADC_ACCDET>;

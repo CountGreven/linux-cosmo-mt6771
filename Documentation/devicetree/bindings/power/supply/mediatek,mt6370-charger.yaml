@@ -13,6 +13,9 @@ description: |
   This module is part of the MT6370 MFD device.
   Provides Battery Charger, Boost for OTG devices and BC1.2 detection.
 
+allOf:
+  - $ref: power-supply.yaml#
+
 properties:
   compatible:
     const: mediatek,mt6370-charger
@@ -91,6 +94,6 @@ required:
   - interrupt-names
   - io-channels
 
-additionalProperties: false
+unevaluatedProperties: false
 
 ...

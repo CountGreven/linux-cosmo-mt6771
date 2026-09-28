@@ -1341,6 +1341,7 @@
 &spi1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi1_pins>;
+	mediatek,pad-select = <0>;	/* the SPI1_A pads, GPIO161-164 */
 	status = "okay";
 
 	imu@0 {

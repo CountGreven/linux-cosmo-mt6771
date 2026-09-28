@@ -585,8 +585,6 @@
 			interrupts = <68>, <48>, <6>;
 			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
 			monitored-battery = <&battery>;
-			/* the Type-C/PD port supplies the charger: its current_max sets the input limit */
-			power-supplies = <&mt6370_tcpc>;
 			/*
 			 * All nine, in the binding's order: the driver indexes this list by channel
 			 * number (IBUS is [5]). With IBUS alone it read past the end of a one-entry

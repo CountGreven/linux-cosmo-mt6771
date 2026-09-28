@@ -11,6 +11,9 @@
 #include <linux/skbuff.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
+#include <linux/kernel_read_file.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/unaligned.h>
 
 #include <net/bluetooth/bluetooth.h>
@@ -21,6 +24,10 @@
 
 #define HCI_STP_RX_CHUNK	2048
 #define HCI_STP_TX_RETRIES	3
+
+/* the factory Bluetooth record: the address, most significant byte first, then radio settings */
+#define HCI_STP_NVRAM_PATH	"/mnt/vendor/nvdata/APCFG/APRDEB/BT_Addr"
+#define HCI_STP_OP_SET_BDADDR	0xfc1a
 
 struct hci_stp {
 	struct hci_dev *hdev;
@@ -283,13 +290,56 @@ static int hci_stp_send(struct hci_dev *hdev, struct sk_buff *skb)
 	return 0;
 }
 
+static int hci_stp_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+{
+	struct sk_buff *skb;
+
+	skb = __hci_cmd_sync(hdev, HCI_STP_OP_SET_BDADDR, sizeof(*bdaddr), bdaddr,
+			     HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb))
+		return PTR_ERR(skb);
+	kfree_skb(skb);
+	return 0;
+}
+
+/* without the factory address the controller answers to a default shared by every unit */
+static int hci_stp_setup(struct hci_dev *hdev)
+{
+	void *data = NULL;
+	size_t fsize = 0;
+	bdaddr_t bdaddr;
+	ssize_t n;
+	int ret;
+
+	n = kernel_read_file_from_path_initns(HCI_STP_NVRAM_PATH, 0, &data, sizeof(bdaddr),
+					      &fsize, READING_FIRMWARE);
+	if (n != sizeof(bdaddr)) {
+		bt_dev_warn(hdev, "no factory address (%s: %zd)", HCI_STP_NVRAM_PATH, n);
+		if (n >= 0)
+			vfree(data);
+		return 0;
+	}
+	baswap(&bdaddr, data);
+	vfree(data);
+
+	if (!bacmp(&bdaddr, BDADDR_ANY) || !bacmp(&bdaddr, BDADDR_NONE)) {
+		bt_dev_warn(hdev, "factory address is not set");
+		return 0;
+	}
+
+	ret = hci_stp_set_bdaddr(hdev, &bdaddr);
+	if (ret)
+		bt_dev_warn(hdev, "setting the factory address failed: %d", ret);
+	return 0;
+}
+
 static int __init hci_stp_init(void)
 {
 	struct hci_stp *bt;
 	struct hci_dev *hdev;
 	int ret;
 
-	bt = kzalloc(sizeof(*bt), GFP_KERNEL);
+	bt = kzalloc_obj(*bt);
 	if (!bt)
 		return -ENOMEM;
 
@@ -308,6 +358,8 @@ static int __init hci_stp_init(void)
 	hdev->close = hci_stp_close;
 	hdev->flush = hci_stp_flush;
 	hdev->send = hci_stp_send;
+	hdev->setup = hci_stp_setup;
+	hdev->set_bdaddr = hci_stp_set_bdaddr;
 
 	hci_stp = bt;
 	ret = hci_register_dev(hdev);

@@ -18,7 +18,8 @@ for k in connadp.ko btif/btif_drv.ko common/wmt_drv.ko wlan/adaptor/wmt_chrdev_w
     install -D -m 644 "$B/$k" "$S/$R/$D/$k"
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/$D/$k"
 done
-for k in net/bluetooth/bluetooth.ko crypto/ecdh_generic.ko crypto/kpp.ko crypto/ecc.ko; do
+for k in net/bluetooth/bluetooth.ko net/bluetooth/rfcomm/rfcomm.ko net/bluetooth/bnep/bnep.ko \
+         net/bluetooth/hidp/hidp.ko drivers/hid/uhid.ko crypto/ecdh_generic.ko crypto/kpp.ko crypto/ecc.ko; do
     install -D -m 644 "$T/$k" "$S/$R/kernel/$k"
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/kernel/$k"
 done

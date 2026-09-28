@@ -302,7 +302,22 @@
  *   GPIO175, INTN on GPIO12), which nothing else declares: LK drives it for its boot menu.
  * Controllers without known clients are left on for now so peripherals can be located from Linux.
  */
-&i2c0 { status = "okay"; };
+&i2c0 {
+	status = "okay";
+
+	/*
+	 * Novatek NT36672 TDDI touch (vendor cap_touch@62, NT36xxx driver). Firmware data sits at
+	 * address 0x01; the parameter block reads 1080x2160, 10 touches, rising IRQ, chip id 0x08.
+	 */
+	touchscreen@1 {
+		compatible = "novatek,nt36672a-ts";
+		reg = <0x01>;
+		interrupts-extended = <&pio 9 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&pio 156 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_pins>;
+	};
+};
 &i2c1 {
 	status = "okay";
 
@@ -1459,6 +1474,16 @@
 		mediatek,eint-level-pol = <IRQ_TYPE_LEVEL_LOW>;
 		mediatek,pwm-deb-setting = <0x500 0x500 1 0x1f0 0x800 0x800 0x20 0x44>;
 		mediatek,three-key-thr = <0 80 220 400>;
+	};
+};
+
+&pio {
+	touch_pins: touch-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO9__FUNC_GPIO9>;
+			input-enable;
+			bias-pull-up;
+		};
 	};
 };
 

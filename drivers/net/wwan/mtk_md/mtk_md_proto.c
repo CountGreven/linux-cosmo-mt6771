@@ -11,6 +11,7 @@
 #include <linux/bitfield.h>
 #include <linux/errno.h>
 #include <linux/export.h>
+#include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/math.h>
 #include <linux/overflow.h>
@@ -359,6 +360,158 @@ void mtk_md_ap_query_fill(struct mtk_md_ap_query *q, u32 ap_rt_addr, u32 noncach
 	q->tail = cpu_to_le32(MTK_MD_AP_QUERY_PATTERN);
 }
 EXPORT_SYMBOL_GPL(mtk_md_ap_query_fill);
+
+const u32 mtk_md_ring_rx_size[MTK_MD_RING_QUEUES] = {
+	80 * 1024, 80 * 1024, 40 * 1024, 80 * 1024, 20 * 1024, 20 * 1024, 64 * 1024, 0,
+};
+EXPORT_SYMBOL_GPL(mtk_md_ring_rx_size);
+
+const u32 mtk_md_ring_tx_size[MTK_MD_RING_QUEUES] = {
+	128 * 1024, 40 * 1024, 8 * 1024, 40 * 1024, 20 * 1024, 20 * 1024, 64 * 1024, 0,
+};
+EXPORT_SYMBOL_GPL(mtk_md_ring_tx_size);
+
+const u32 mtk_md_ring_exp_size[MTK_MD_RING_QUEUES] = {
+	12 * 1024, 32 * 1024, 8 * 1024, 0, 0, 0, 8 * 1024, 0,
+};
+EXPORT_SYMBOL_GPL(mtk_md_ring_exp_size);
+
+/**
+ * mtk_md_ring_create() - lay one queue out at the start of @buf
+ * @used: the bytes the queue takes, for the caller to place the next one
+ */
+struct mtk_md_ring *mtk_md_ring_create(void *buf, size_t buf_size, u32 rx_size, u32 tx_size,
+				       size_t *used)
+{
+	size_t len = MTK_MD_RING_CTL_LEN + rx_size + tx_size;
+	struct mtk_md_ring *ring = buf + 8;
+	__le32 *guard = buf;
+
+	if (buf_size < len)
+		return NULL;
+
+	memset(buf, 0, len);
+	guard[0] = cpu_to_le32(MTK_MD_RING_GUARD_HEAD);
+	guard[1] = cpu_to_le32(MTK_MD_RING_GUARD_HEAD);
+	guard = buf + len - 8;
+	guard[0] = cpu_to_le32(MTK_MD_RING_GUARD_TAIL);
+	guard[1] = cpu_to_le32(MTK_MD_RING_GUARD_TAIL);
+	ring->rx_length = cpu_to_le32(rx_size);
+	ring->tx_length = cpu_to_le32(tx_size);
+	if (used)
+		*used = len;
+	return ring;
+}
+EXPORT_SYMBOL_GPL(mtk_md_ring_create);
+
+static void mtk_md_ring_copy_out(const u8 *area, u32 length, u32 pos, void *out, u32 len)
+{
+	u32 first = min(len, length - pos);
+
+	memcpy(out, area + pos, first);
+	memcpy(out + first, area, len - first);
+}
+
+static void mtk_md_ring_copy_in(u8 *area, u32 length, u32 pos, const void *in, u32 len)
+{
+	u32 first = min(len, length - pos);
+
+	memcpy(area + pos, in, first);
+	memcpy(area, in + first, len - first);
+}
+
+/**
+ * mtk_md_ring_rx_peek() - the length of the next message from the modem
+ *
+ * Return: the length, -ENODATA when the queue holds no whole message, -EBADMSG when what it
+ * holds is not framed as a message. The pointers are the modem's to write, so they are checked.
+ */
+int mtk_md_ring_rx_peek(const struct mtk_md_ring *ring)
+{
+	u32 length = le32_to_cpu(ring->rx_length);
+	u32 read = le32_to_cpu(ring->rx_read);
+	u32 write = le32_to_cpu(ring->rx_write);
+	__le32 w[2];
+	u32 size, pkt;
+
+	if (!length || read >= length || write >= length)
+		return length ? -EBADMSG : -ENODATA;
+
+	size = write >= read ? write - read : write + length - read;
+	if (size < MTK_MD_RING_PKT_OVERHEAD + sizeof(struct mtk_md_ccci_hdr))
+		return -ENODATA;
+
+	mtk_md_ring_copy_out(ring->buffer, length, read, w, sizeof(w));
+	if (le32_to_cpu(w[0]) != MTK_MD_RING_PKT_HEAD)
+		return -EBADMSG;
+	pkt = le32_to_cpu(w[1]);
+	if (pkt > length)
+		return -EBADMSG;
+	if (ALIGN(pkt + MTK_MD_RING_PKT_OVERHEAD, 8) > size)
+		return -ENODATA;
+
+	mtk_md_ring_copy_out(ring->buffer, length,
+			     (read + ALIGN(pkt + MTK_MD_RING_PKT_OVERHEAD, 8) - 8) % length,
+			     w, sizeof(w));
+	if (le32_to_cpu(w[0]) != MTK_MD_RING_PKT_TAIL || le32_to_cpu(w[1]) != MTK_MD_RING_PKT_TAIL)
+		return -EBADMSG;
+
+	return pkt;
+}
+EXPORT_SYMBOL_GPL(mtk_md_ring_rx_peek);
+
+/* Copy out the message mtk_md_ring_rx_peek() found; @len is what it returned. */
+void mtk_md_ring_rx_read(const struct mtk_md_ring *ring, void *out, u32 len)
+{
+	u32 length = le32_to_cpu(ring->rx_length);
+
+	mtk_md_ring_copy_out(ring->buffer, length, (le32_to_cpu(ring->rx_read) + 8) % length,
+			     out, len);
+}
+EXPORT_SYMBOL_GPL(mtk_md_ring_rx_read);
+
+void mtk_md_ring_rx_consume(struct mtk_md_ring *ring, u32 len)
+{
+	u32 length = le32_to_cpu(ring->rx_length);
+	u32 read = le32_to_cpu(ring->rx_read);
+
+	read = ALIGN(read + len + MTK_MD_RING_PKT_OVERHEAD, 8);
+	ring->rx_read = cpu_to_le32(read >= length ? read - length : read);
+}
+EXPORT_SYMBOL_GPL(mtk_md_ring_rx_consume);
+
+/**
+ * mtk_md_ring_tx_write() - queue one message for the modem
+ *
+ * Return: 0, or -ENOSPC when the queue cannot take it now. One byte always stays free.
+ */
+int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len)
+{
+	u32 length = le32_to_cpu(ring->tx_length);
+	u32 read = le32_to_cpu(ring->tx_read);
+	u32 write = le32_to_cpu(ring->tx_write);
+	u8 *area = ring->buffer + le32_to_cpu(ring->rx_length);
+	__le32 head[2] = { cpu_to_le32(MTK_MD_RING_PKT_HEAD), cpu_to_le32(len) };
+	__le32 tail[2] = { cpu_to_le32(MTK_MD_RING_PKT_TAIL), cpu_to_le32(MTK_MD_RING_PKT_TAIL) };
+	u32 need = ALIGN(len + MTK_MD_RING_PKT_OVERHEAD, 8);
+	u32 room;
+
+	if (!len || !length || read >= length || write >= length)
+		return -EINVAL;
+
+	room = read > write ? read - write - 1 : length - write - 1 + read;
+	if (need >= room)
+		return -ENOSPC;
+
+	mtk_md_ring_copy_in(area, length, write, head, sizeof(head));
+	mtk_md_ring_copy_in(area, length, (write + 8) % length, data, len);
+	mtk_md_ring_copy_in(area, length, (write + need - 8) % length, tail, sizeof(tail));
+	/* the message before the pointer that announces it */
+	mb();
+	ring->tx_write = cpu_to_le32((write + need) % length);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtk_md_ring_tx_write);
 
 MODULE_DESCRIPTION("MediaTek MT6771 modem protocol helpers");
 MODULE_LICENSE("GPL");

@@ -46,6 +46,13 @@
 #define MTK_MD_LK_STASH_OFFSET	(SZ_1M - SZ_8K)
 #define MTK_MD_LK_STASH_MAGIC	0x4b4c444d	/* "MDLK" */
 
+#define MTK_MD_SMEM_CCISM_OFFSET	(160 * SZ_1K)
+#define MTK_MD_SMEM_CCISM_SIZE	(705 * SZ_1K)
+#define MTK_MD_SMEM_CCISM_EXP_OFFSET	(865 * SZ_1K)
+#define MTK_MD_SMEM_CCISM_EXP_SIZE	(121 * SZ_1K)
+#define MTK_MD_TX_SEQ_CHANNELS	256
+#define MTK_MD_RX_LOG_LIMIT	200	/* messages described in the log while ports are missing */
+
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
 
@@ -58,8 +65,19 @@ static const char * const mtk_md_clk_names[] = {
 	"cldma", "ccif-ap", "ccif-md", "ccif1-ap", "ccif1-md", "ccif2-ap", "ccif2-md",
 };
 
+/* A level interrupt nobody acknowledges starves the CPU it lands on: notice and mask it. */
+struct mtk_md_irq_guard {
+	unsigned long window;
+	unsigned int count;
+};
+
+#define MTK_MD_IRQ_STORM	1000	/* interrupts within 100 ms */
+
+enum { MTK_MD_IRQ_CLDMA, MTK_MD_IRQ_CCIF0, MTK_MD_IRQ_CCIF1, MTK_MD_IRQ_WDT, MTK_MD_IRQ_NUM };
+
 struct mtk_md {
 	struct device *dev;
+	struct mtk_md_irq_guard guard[MTK_MD_IRQ_NUM];
 	void __iomem *cldma_ao;
 	void __iomem *cldma_pd;
 	void __iomem *ap_ccif;
@@ -88,6 +106,16 @@ struct mtk_md {
 	/* One idle descriptor per CLDMA queue: four TX, then one RX. */
 	void *gpd;
 	dma_addr_t gpd_dma;
+
+	void *smem_va;			/* the AP/MD1 share memory, mapped for the driver's life */
+	struct mtk_md_ring *ring[MTK_MD_RING_QUEUES];
+	struct mtk_md_ring *ring_exp[MTK_MD_RING_QUEUES];
+	struct work_struct rx_work;
+	unsigned long rx_pending;	/* one bit per queue with a doorbell to serve */
+	spinlock_t tx_lock;		/* the transmit side of the queues, and tx_seq */
+	u16 tx_seq[MTK_MD_TX_SEQ_CHANNELS];
+	bool ready;			/* HS2 seen */
+	unsigned int rx_logged;
 
 	struct work_struct start_work;
 	struct completion hs1_done;
@@ -206,6 +234,22 @@ static void mtk_md_sram_clear(void __iomem *sram)
 		writel(0, sram + i);
 }
 
+static bool mtk_md_irq_storm(struct mtk_md *md, unsigned int which, int irq)
+{
+	struct mtk_md_irq_guard *g = &md->guard[which];
+
+	if (time_after(jiffies, g->window + HZ / 10)) {
+		g->window = jiffies;
+		g->count = 0;
+	}
+	if (++g->count < MTK_MD_IRQ_STORM)
+		return false;
+
+	disable_irq_nosync(irq);
+	dev_err(md->dev, "irq %d (line %u) fires without end, masked\n", irq, which);
+	return true;
+}
+
 /* The data line (md_ccif_isr): ring queues 0-7 and the SRAM mailbox. */
 static irqreturn_t mtk_md_ccif_data_irq(int irq, void *data)
 {
@@ -213,15 +257,21 @@ static irqreturn_t mtk_md_ccif_data_irq(int irq, void *data)
 	u32 ch = readl(md->ap_ccif + APCCIF_RCHNUM);
 
 	writel(ch & CCIF_DATA_CHANNELS, md->ap_ccif + APCCIF_ACK);
+	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CCIF0, irq))
+		dev_err(md->dev, "ccif data line: RCHNUM %#x\n", ch);
 
 	if (ch & BIT(CCIF_CH_SRAM)) {
 		mtk_md_sram_read(md->ap_ccif + APCCIF_CHDATA + CCIF_SRAM_DL_HEADER, md->hs1,
 				 sizeof(md->hs1));
 		complete(&md->hs1_done);
 	}
-	if (ch & CCIF_DATA_CHANNELS & ~BIT(CCIF_CH_SRAM))
-		dev_info_ratelimited(md->dev, "ccif: ring doorbell %#lx, rings not implemented\n",
-				     ch & CCIF_DATA_CHANNELS & ~BIT(CCIF_CH_SRAM));
+	if (ch & GENMASK(MTK_MD_RING_QUEUES - 1, 0)) {
+		unsigned long q, queues = ch & GENMASK(MTK_MD_RING_QUEUES - 1, 0);
+
+		for_each_set_bit(q, &queues, MTK_MD_RING_QUEUES)
+			set_bit(q, &md->rx_pending);
+		schedule_work(&md->rx_work);
+	}
 
 	return IRQ_HANDLED;
 }
@@ -233,6 +283,8 @@ static irqreturn_t mtk_md_ccif_ctrl_irq(int irq, void *data)
 	u32 ch = readl(md->ap_ccif + APCCIF_RCHNUM);
 
 	writel(ch & CCIF_CTRL_CHANNELS, md->ap_ccif + APCCIF_ACK);
+	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CCIF1, irq))
+		dev_err(md->dev, "ccif control line: RCHNUM %#x\n", ch);
 
 	if (ch & BIT(CCIF_CH_EXCEPTION_INIT))
 		dev_err(md->dev, "ccif: modem exception (EXCEPTION_INIT)\n");
@@ -248,7 +300,8 @@ static irqreturn_t mtk_md_wdt_irq(int irq, void *data)
 {
 	struct mtk_md *md = data;
 
-	dev_err(md->dev, "modem watchdog fired\n");
+	if (!mtk_md_irq_storm(md, MTK_MD_IRQ_WDT, irq))
+		dev_err_ratelimited(md->dev, "modem watchdog fired\n");
 	return IRQ_HANDLED;
 }
 
@@ -261,6 +314,12 @@ static irqreturn_t mtk_md_cldma_irq(int irq, void *data)
 
 	writel(tx, md->cldma_pd + CLDMA_PD_L2TISAR0);
 	writel(rx, md->cldma_pd + CLDMA_PD_L2RISAR0);
+	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CLDMA, irq))
+		dev_err(md->dev, "cldma: L2 tx %#x rx %#x, L3 tx %#x %#x rx %#x %#x\n", tx, rx,
+			readl(md->cldma_pd + CLDMA_PD_L3TISAR0),
+			readl(md->cldma_pd + CLDMA_PD_L3TISAR1),
+			readl(md->cldma_pd + CLDMA_PD_L3RISAR0),
+			readl(md->cldma_pd + CLDMA_PD_L3RISAR1));
 	dev_info_ratelimited(md->dev, "cldma: tx %#x rx %#x, queues not implemented\n", tx, rx);
 
 	return IRQ_HANDLED;
@@ -576,21 +635,129 @@ static int mtk_md_let_go(struct mtk_md *md)
 }
 
 /* ccci_md_clear_smem(): the modem expects its share memory zeroed on the first start */
-static int mtk_md_clear_smem(struct mtk_md *md)
+static void mtk_md_clear_smem(struct mtk_md *md)
 {
-	void __iomem *smem = ioremap_wc(md->smem_nc, md->smem_nc_size);
+	__le32 *stash = md->smem_va + MTK_MD_LK_STASH_OFFSET;
 
-	if (!smem)
-		return -ENOMEM;
-	memset_io(smem, 0, md->smem_nc_size);
+	memset(md->smem_va, 0, md->smem_nc_size);
 	if (md->smem_nc == md->lk.base && md->smem_nc_size >= SZ_1M &&
 	    md->lk.size <= SZ_8K - 8) {
-		writel(MTK_MD_LK_STASH_MAGIC, smem + MTK_MD_LK_STASH_OFFSET);
-		writel(md->lk.size, smem + MTK_MD_LK_STASH_OFFSET + 4);
-		memcpy_toio(smem + MTK_MD_LK_STASH_OFFSET + 8, md->lk_tags, md->lk.size);
+		stash[0] = cpu_to_le32(MTK_MD_LK_STASH_MAGIC);
+		stash[1] = cpu_to_le32(md->lk.size);
+		memcpy(&stash[2], md->lk_tags, md->lk.size);
 	}
-	iounmap(smem);
+}
+
+/* md_ccif_ring_buf_init() and md_ccif_exp_ring_buf_init() */
+static int mtk_md_rings_init(struct mtk_md *md)
+{
+	void *buf = md->smem_va + MTK_MD_SMEM_CCISM_OFFSET;
+	size_t left = MTK_MD_SMEM_CCISM_SIZE, used;
+	int q;
+
+	for (q = 0; q < MTK_MD_RING_QUEUES; q++) {
+		md->ring[q] = mtk_md_ring_create(buf, left, mtk_md_ring_rx_size[q],
+						 mtk_md_ring_tx_size[q], &used);
+		if (!md->ring[q])
+			return -ENOSPC;
+		buf += used;
+		left -= used;
+	}
+
+	buf = md->smem_va + MTK_MD_SMEM_CCISM_EXP_OFFSET;
+	left = MTK_MD_SMEM_CCISM_EXP_SIZE;
+	for (q = 0; q < MTK_MD_RING_QUEUES; q++) {
+		md->ring_exp[q] = mtk_md_ring_create(buf, left, mtk_md_ring_exp_size[q],
+						     mtk_md_ring_exp_size[q], &used);
+		if (!md->ring_exp[q])
+			return -ENOSPC;
+		buf += used;
+		left -= used;
+	}
 	return 0;
+}
+
+/*
+ * md_ccif_op_send_skb(): one message into a queue, then its doorbell. The modem checks the
+ * sequence per channel; FS and RPC carry the assert bit only until the modem is ready.
+ */
+static int __maybe_unused mtk_md_send(struct mtk_md *md, unsigned int q, void *msg, u32 len)
+{
+	struct mtk_md_ccci_hdr *h = msg;
+	u32 status = le32_to_cpu(h->status);
+	u32 ch = FIELD_GET(MTK_MD_CCCI_CHANNEL, status);
+	unsigned long flags;
+	int ret;
+
+	if (q >= MTK_MD_RING_QUEUES || len < sizeof(*h) || ch >= MTK_MD_TX_SEQ_CHANNELS)
+		return -EINVAL;
+
+	spin_lock_irqsave(&md->tx_lock, flags);
+	status &= MTK_MD_CCCI_CHANNEL;
+	status |= FIELD_PREP(MTK_MD_CCCI_SEQ, md->tx_seq[ch]) | MTK_MD_CCCI_ASSERT;
+	h->status = cpu_to_le32(status);
+	ret = mtk_md_ring_tx_write(md->ring[q], msg, len);
+	if (!ret) {
+		md->tx_seq[ch]++;
+		ret = mtk_md_ccif_send(md, q);
+	}
+	spin_unlock_irqrestore(&md->tx_lock, flags);
+	return ret;
+}
+
+static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 len)
+{
+	const struct mtk_md_ccci_hdr *h = (const void *)msg;
+	u32 status = le32_to_cpu(h->status);
+	u32 ch = FIELD_GET(MTK_MD_CCCI_CHANNEL, status);
+
+	if (ch == MTK_MD_CH_CONTROL_RX) {
+		switch (mtk_md_ctrl_classify(h)) {
+		case MTK_MD_CTRL_HS2:
+			md->ready = true;
+			dev_info(md->dev, "step 13: HS2, md_state 3 -> 4: the modem is ready\n");
+			return;
+		case MTK_MD_CTRL_EXCEPTION:
+			dev_err(md->dev, "control: the modem reports an exception\n");
+			return;
+		default:
+			break;
+		}
+	}
+
+	if (md->rx_logged < MTK_MD_RX_LOG_LIMIT) {
+		md->rx_logged++;
+		dev_info(md->dev, "rx q%u ch %u seq %lu len %u: %08x %08x %08x | %*ph\n", q, ch,
+			 FIELD_GET(MTK_MD_CCCI_SEQ, status), len, le32_to_cpu(h->data[0]),
+			 le32_to_cpu(h->data[1]), le32_to_cpu(h->reserved),
+			 (int)min_t(u32, len - sizeof(*h), 32), msg + sizeof(*h));
+	}
+}
+
+/* ccif_rx_collect() */
+static void mtk_md_rx_work(struct work_struct *work)
+{
+	struct mtk_md *md = container_of(work, struct mtk_md, rx_work);
+	unsigned int q;
+	u8 *msg;
+	int len;
+
+	for_each_set_bit(q, &md->rx_pending, MTK_MD_RING_QUEUES) {
+		clear_bit(q, &md->rx_pending);
+		while ((len = mtk_md_ring_rx_peek(md->ring[q])) > 0) {
+			msg = kmalloc(len, GFP_KERNEL);
+			if (!msg)
+				return;
+			mtk_md_ring_rx_read(md->ring[q], msg, len);
+			mtk_md_rx_one(md, q, msg, len);
+			kfree(msg);
+			mtk_md_ring_rx_consume(md->ring[q], len);
+		}
+		if (len == -EBADMSG)
+			dev_err_ratelimited(md->dev, "rx q%u: not a message (read %u write %u)\n",
+					    q, le32_to_cpu(md->ring[q]->rx_read),
+					    le32_to_cpu(md->ring[q]->rx_write));
+	}
 }
 
 enum mtk_md_rt_kind {
@@ -703,8 +870,6 @@ static int mtk_md_rt_one(struct mtk_md *md, u8 *buf, size_t size, size_t *pos, u
 /* ccci_md_prepare_runtime_data(): the TLVs, into the AP half of the runtime data region. */
 static int mtk_md_write_runtime_data(struct mtk_md *md, const u8 *negotiated, size_t *total)
 {
-	phys_addr_t rt = md->smem_nc + MTK_MD_SMEM_RUNTIME_OFFSET;
-	void __iomem *dst;
 	size_t pos = 0;
 	unsigned int i;
 	u8 *buf;
@@ -725,13 +890,7 @@ static int mtk_md_write_runtime_data(struct mtk_md *md, const u8 *negotiated, si
 	if (ret)
 		goto out;
 
-	dst = ioremap_wc(rt, MTK_MD_SMEM_RUNTIME_AP_SIZE);
-	if (!dst) {
-		ret = -ENOMEM;
-		goto out;
-	}
-	memcpy_toio(dst, buf, pos);
-	iounmap(dst);
+	memcpy(md->smem_va + MTK_MD_SMEM_RUNTIME_OFFSET, buf, pos);
 	*total = pos;
 out:
 	kfree(buf);
@@ -795,8 +954,7 @@ static int mtk_md_handshake(struct mtk_md *md)
 		dev_err(md->dev, "step 12: CCIF SRAM channel busy\n");
 		return ret;
 	}
-	/* HS2 (md_state 3 -> 4) arrives through CCIF ring queue 0, which is not implemented */
-	dev_info(md->dev, "step 12: runtime data sent, HS2 not handled yet\n");
+	dev_info(md->dev, "step 12: runtime data sent\n");
 	return 0;
 }
 
@@ -813,9 +971,10 @@ static void mtk_md_start(struct work_struct *work)
 	}
 	md->clks_on = true;
 
-	ret = mtk_md_clear_smem(md);
+	mtk_md_clear_smem(md);
+	ret = mtk_md_rings_init(md);
 	if (ret) {
-		dev_err(md->dev, "share memory: %d\n", ret);
+		dev_err(md->dev, "ring queues do not fit the share memory\n");
 		return;
 	}
 
@@ -863,6 +1022,7 @@ static void mtk_md_teardown(void *data)
 	disable_irq(md->irq_ccif0);
 	disable_irq(md->irq_ccif1);
 	disable_irq(md->irq_wdt);
+	cancel_work_sync(&md->rx_work);
 	mtk_md_power_off(md);
 	if (md->clks_on)
 		clk_bulk_disable_unprepare(ARRAY_SIZE(md->clks), md->clks);
@@ -881,6 +1041,8 @@ static int mtk_md_request_irq(struct mtk_md *md, const char *name, irq_handler_t
 	ret = devm_request_irq(md->dev, *irq, fn, IRQF_NO_AUTOEN, dev_name(md->dev), md);
 	if (ret)
 		return dev_err_probe(md->dev, ret, "irq %s\n", name);
+	/* bring-up: keep a runaway line off the CPU that serves everything else */
+	irq_set_affinity(*irq, cpumask_of(cpumask_last(cpu_online_mask)));
 	dev_info(md->dev, "irq %s: %d\n", name, *irq);
 	return 0;
 }
@@ -897,6 +1059,8 @@ static int mtk_md_probe(struct platform_device *pdev)
 	md->dev = dev;
 	init_completion(&md->hs1_done);
 	INIT_WORK(&md->start_work, mtk_md_start);
+	INIT_WORK(&md->rx_work, mtk_md_rx_work);
+	spin_lock_init(&md->tx_lock);
 
 	md->cldma_ao = devm_platform_ioremap_resource_byname(pdev, "cldma-ao");
 	if (IS_ERR(md->cldma_ao))
@@ -972,6 +1136,12 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_read_lk(md);
 	if (ret)
 		return ret;
+
+	if (md->smem_nc_size < SZ_1M)
+		return dev_err_probe(dev, -EINVAL, "share memory smaller than the 6293 layout\n");
+	md->smem_va = devm_memremap(dev, md->smem_nc, md->smem_nc_size, MEMREMAP_WC);
+	if (IS_ERR(md->smem_va))
+		return dev_err_probe(dev, PTR_ERR(md->smem_va), "share memory\n");
 
 	ret = devm_add_action_or_reset(dev, mtk_md_teardown, md);
 	if (ret)

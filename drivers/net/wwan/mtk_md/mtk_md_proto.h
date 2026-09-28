@@ -85,6 +85,7 @@ struct mtk_md_ccci_hdr {
 
 #define MTK_MD_CCCI_CHANNEL		GENMASK(15, 0)
 #define MTK_MD_CCCI_SEQ			GENMASK(30, 16)
+#define MTK_MD_CCCI_ASSERT		BIT(31)
 
 #define MTK_MD_CH_CONTROL_RX		0
 #define MTK_MD_CH_CONTROL_TX		1
@@ -215,5 +216,43 @@ struct mtk_md_ap_query {
 
 void mtk_md_ap_query_fill(struct mtk_md_ap_query *q, u32 ap_rt_addr, u32 noncached_start,
 			  u32 noncached_size, u32 cached_start, u32 cached_size);
+
+/*
+ * The CCIF ring queues (eccci/hif/ccci_ringbuf.c). A queue is one block of share memory: two
+ * guard words, the control words of both directions, the receive area, the transmit area, two
+ * guard words. "Receive" and "transmit" are the AP's view; the modem uses the same block with
+ * the roles swapped. A message is framed by a marker and its length in front and two markers
+ * behind, and takes a multiple of eight bytes.
+ */
+#define MTK_MD_RING_GUARD_HEAD		0xee0000ee
+#define MTK_MD_RING_GUARD_TAIL		0xff0000ff
+#define MTK_MD_RING_PKT_HEAD		0xaabbaabb
+#define MTK_MD_RING_PKT_TAIL		0xccddeeff
+#define MTK_MD_RING_PKT_OVERHEAD	16
+#define MTK_MD_RING_QUEUES		8
+
+struct mtk_md_ring {
+	__le32 rx_read;
+	__le32 rx_write;
+	__le32 rx_length;
+	__le32 tx_read;
+	__le32 tx_write;
+	__le32 tx_length;
+	u8 buffer[];
+};
+
+#define MTK_MD_RING_CTL_LEN		(8 + sizeof(struct mtk_md_ring) + 8)
+
+/* md1 on 6293: the normal queues fill SMEM_USER_CCISM_MCU, the exception queues _MCU_EXP */
+extern const u32 mtk_md_ring_rx_size[MTK_MD_RING_QUEUES];
+extern const u32 mtk_md_ring_tx_size[MTK_MD_RING_QUEUES];
+extern const u32 mtk_md_ring_exp_size[MTK_MD_RING_QUEUES];	/* both directions */
+
+struct mtk_md_ring *mtk_md_ring_create(void *buf, size_t buf_size, u32 rx_size, u32 tx_size,
+				       size_t *used);
+int mtk_md_ring_rx_peek(const struct mtk_md_ring *ring);
+void mtk_md_ring_rx_read(const struct mtk_md_ring *ring, void *out, u32 len);
+void mtk_md_ring_rx_consume(struct mtk_md_ring *ring, u32 len);
+int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len);
 
 #endif /* __MTK_MD_PROTO_H__ */

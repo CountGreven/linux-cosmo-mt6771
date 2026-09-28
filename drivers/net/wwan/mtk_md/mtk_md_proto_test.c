@@ -9,6 +9,7 @@
  */
 
 #include <kunit/test.h>
+#include <linux/unaligned.h>
 #include <linux/string.h>
 
 #include "mtk_md_proto.h"
@@ -437,7 +438,139 @@ static void ap_query(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, b[152], 0x49);
 }
 
+/* The queue the modem would see: the same block with the directions swapped. */
+static struct mtk_md_ring *ring_peer(struct kunit *test, const struct mtk_md_ring *ring)
+{
+	u32 rx = le32_to_cpu(ring->rx_length), tx = le32_to_cpu(ring->tx_length);
+	struct mtk_md_ring *peer;
+
+	peer = kunit_kzalloc(test, sizeof(*peer) + rx + tx, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, peer);
+	peer->rx_read = ring->tx_read;
+	peer->rx_write = ring->tx_write;
+	peer->rx_length = ring->tx_length;
+	peer->tx_read = ring->rx_read;
+	peer->tx_write = ring->rx_write;
+	peer->tx_length = ring->rx_length;
+	memcpy(peer->buffer, ring->buffer + rx, tx);
+	memcpy(peer->buffer + tx, ring->buffer, rx);
+	return peer;
+}
+
+static void ring_layout(struct kunit *test)
+{
+	size_t total = 0, used;
+	u8 *buf;
+	int q;
+
+	/* the vendor's tables fill the two regions of the 6293 share memory */
+	for (q = 0; q < MTK_MD_RING_QUEUES; q++)
+		total += MTK_MD_RING_CTL_LEN + mtk_md_ring_rx_size[q] + mtk_md_ring_tx_size[q];
+	KUNIT_EXPECT_LE(test, total, (size_t)705 * 1024);
+	total = 0;
+	for (q = 0; q < MTK_MD_RING_QUEUES; q++)
+		total += MTK_MD_RING_CTL_LEN + 2 * mtk_md_ring_exp_size[q];
+	KUNIT_EXPECT_LE(test, total, (size_t)121 * 1024);
+
+	buf = kunit_kzalloc(test, 256, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	KUNIT_EXPECT_NULL(test, mtk_md_ring_create(buf, 40 + 64 + 32 - 1, 64, 32, &used));
+	KUNIT_ASSERT_NOT_NULL(test, mtk_md_ring_create(buf, 256, 64, 32, &used));
+	KUNIT_EXPECT_EQ(test, used, (size_t)40 + 64 + 32);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf), 0xee0000eeU);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 4), 0xee0000eeU);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 16), 64U);	/* rx length */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 28), 32U);	/* tx length */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + used - 8), 0xff0000ffU);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + used - 4), 0xff0000ffU);
+}
+
+static void ring_framing(struct kunit *test)
+{
+	static const u8 msg[21] = "0123456789abcdefghij";
+	struct mtk_md_ring *ring;
+	u8 *buf, *tx;
+
+	buf = kunit_kzalloc(test, 512, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ring = mtk_md_ring_create(buf, 512, 128, 128, NULL);
+	KUNIT_ASSERT_NOT_NULL(test, ring);
+	tx = ring->buffer + 128;
+
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -ENODATA);
+	KUNIT_ASSERT_EQ(test, mtk_md_ring_tx_write(ring, msg, sizeof(msg)), 0);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(tx), 0xaabbaabbU);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(tx + 4), 21U);
+	KUNIT_EXPECT_MEMEQ(test, tx + 8, msg, sizeof(msg));
+	/* 21 bytes are padded to 24; then the two tail markers */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(tx + 32), 0xccddeeffU);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(tx + 36), 0xccddeeffU);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(ring->tx_write), 40U);
+}
+
+static void ring_roundtrip_wraps(struct kunit *test)
+{
+	struct mtk_md_ring *ring, *peer;
+	u8 msg[40], out[40];
+	int i, round;
+	u8 *buf;
+
+	buf = kunit_kzalloc(test, 512, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ring = mtk_md_ring_create(buf, 512, 96, 96, NULL);
+	KUNIT_ASSERT_NOT_NULL(test, ring);
+
+	/* 56 bytes a message in a 96-byte area: every second one wraps */
+	for (round = 0; round < 7; round++) {
+		for (i = 0; i < sizeof(msg); i++)
+			msg[i] = round * 16 + i;
+		KUNIT_ASSERT_EQ(test, mtk_md_ring_tx_write(ring, msg, sizeof(msg)), 0);
+
+		peer = ring_peer(test, ring);
+		KUNIT_ASSERT_EQ(test, mtk_md_ring_rx_peek(peer), (int)sizeof(msg));
+		mtk_md_ring_rx_read(peer, out, sizeof(out));
+		KUNIT_EXPECT_MEMEQ(test, out, msg, sizeof(msg));
+		mtk_md_ring_rx_consume(peer, sizeof(msg));
+		KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(peer), -ENODATA);
+		ring->tx_read = peer->rx_read;
+	}
+}
+
+static void ring_full_and_bad(struct kunit *test)
+{
+	struct mtk_md_ring *ring;
+	u8 msg[40] = { 1 };
+	u8 *buf;
+
+	buf = kunit_kzalloc(test, 512, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buf);
+	ring = mtk_md_ring_create(buf, 512, 96, 96, NULL);
+	KUNIT_ASSERT_NOT_NULL(test, ring);
+
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_tx_write(ring, msg, sizeof(msg)), 0);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_tx_write(ring, msg, sizeof(msg)), -ENOSPC);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_tx_write(ring, msg, 0), -EINVAL);
+
+	/* what the modem wrote is not trusted: pointers and framing are checked */
+	ring->rx_write = cpu_to_le32(40);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -EBADMSG);
+	put_le32(ring->buffer, 0xaabbaabb);
+	put_le32(ring->buffer + 4, 24);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -EBADMSG);	/* no tail */
+	put_le32(ring->buffer + 32, 0xccddeeff);
+	put_le32(ring->buffer + 36, 0xccddeeff);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), 24);
+	put_le32(ring->buffer + 4, 4000);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -EBADMSG);
+	ring->rx_write = cpu_to_le32(96);
+	KUNIT_EXPECT_EQ(test, mtk_md_ring_rx_peek(ring), -EBADMSG);
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
+	KUNIT_CASE(ring_layout),
+	KUNIT_CASE(ring_framing),
+	KUNIT_CASE(ring_roundtrip_wraps),
+	KUNIT_CASE(ring_full_and_bad),
 	KUNIT_CASE(smem_md_view),
 	KUNIT_CASE(ap_query),
 	KUNIT_CASE(lk_hdr_captured),

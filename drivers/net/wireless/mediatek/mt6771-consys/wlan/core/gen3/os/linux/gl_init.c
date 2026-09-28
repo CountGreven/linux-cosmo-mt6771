@@ -2052,6 +2052,7 @@ static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *nam
 static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 {
 	P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+	BOOLEAN fgWasUsingAis = prGlueInfo->fgMonUsingAis;
 
 	if (!wdev->netdev || wdev->netdev != prGlueInfo->prMonDevHandler)
 		return -EOPNOTSUPP;
@@ -2066,8 +2067,20 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	if (prGlueInfo->prMonBssInfo) {
 		wlanMonBssFree(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo);
 		prGlueInfo->prMonBssInfo = NULL;
-	} else if (wlan_mon_prefer_ais) {
-		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex);
+	} else if (fgWasUsingAis) {
+		/*
+		 * We activated prAisBssInfo ourselves to borrow it (never a real STA connection --
+		 * fgMonUsingAis only gets set on that path), so it is ours to deactivate again. Left
+		 * active=1 forever, as it was until this fix, every later mon0 add within the same boot
+		 * sees IS_NET_ACTIVE()==TRUE and silently falls back to the own-secondary-BSS path
+		 * instead -- which does not get real ACKs -- explaining a same-boot regression from a
+		 * confirmed working run to persistent TXS BIP_ERROR on every later add/del cycle.
+		 */
+		P_BSS_INFO_T prAis = prGlueInfo->prAdapter->prAisBssInfo;
+
+		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		UNSET_NET_ACTIVE(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		nicDeactivateNetwork(prGlueInfo->prAdapter, prAis->ucBssIndex);
 	}
 	prGlueInfo->prMonDevHandler = NULL;
 	cfg80211_unregister_netdevice(wdev->netdev);

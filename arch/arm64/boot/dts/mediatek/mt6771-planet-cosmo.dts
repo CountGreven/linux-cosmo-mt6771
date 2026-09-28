@@ -585,6 +585,8 @@
 			interrupts = <68>, <48>, <6>;
 			interrupt-names = "uvp_d_evt", "attach_i", "mivr";
 			monitored-battery = <&battery>;
+			/* the Type-C/PD port supplies the charger: its current_max sets the input limit */
+			power-supplies = <&mt6370_tcpc>;
 			/*
 			 * All nine, in the binding's order: the driver indexes this list by channel
 			 * number (IBUS is [5]). With IBUS alone it read past the end of a one-entry
@@ -657,7 +659,7 @@
 		};
 
 		/* live tree mt6370pd,intr_gpio = <&pio 41 0>; gpio-361 is "type_c_port0-IRQ" */
-		tcpc {
+		mt6370_tcpc: tcpc {
 			compatible = "mediatek,mt6370-tcpc";
 			interrupts-extended = <&pio 41 IRQ_TYPE_LEVEL_LOW>;
 			status = "okay";

@@ -1667,7 +1667,12 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 		     prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO);
 	if (prReq->fgFixedRate)
 		nicTxSetPktFixedRateOption(prMsduInfo, prReq->u2RateCode, FIX_BW_20, FALSE, FALSE);
-	if (prReq->fgRetryLimit)
+	/* Broadcast has no ACK to retry against; qmEnqueueTxPackets already forces unlimited retry
+	 * for it unless MSDU_OPT_MANUAL_RETRY_LIMIT is set. A caller's explicit retry limit
+	 * (aireplay-ng's NOACK radiotap flag requests 0) sets exactly that flag and overrides it,
+	 * which failed immediately in testing. Let BMCAST keep the driver's own default.
+	 */
+	if (prReq->fgRetryLimit && ucStaRecIndex != STA_REC_INDEX_BMCAST)
 		nicTxSetPktRetryLimit(prMsduInfo, prReq->ucRetryLimit);
 	nicTxConfigPktControlFlag(prMsduInfo, MSDU_CONTROL_FLAG_FORCE_TX, TRUE);
 

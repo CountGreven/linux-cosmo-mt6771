@@ -49,6 +49,12 @@ properties:
 
   debounce-delay-ms: true
 
+  rescan-while-pressed-ms:
+    description:
+      Scan the matrix at this interval, in milliseconds, while any key is down, instead of
+      waiting for a row interrupt. A row held low by one key does not signal a second key on
+      the same row, so without this such key presses are lost.
+
   col-scan-delay-us:
     description:
       Delay, measured in microseconds, that is needed

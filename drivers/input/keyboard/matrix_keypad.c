@@ -28,6 +28,8 @@ struct matrix_keypad {
 	unsigned int all_cols_on_delay_us;
 	/* key debounce interval in milli-second */
 	unsigned int debounce_ms;
+	/* scan interval while any key is down, 0 to wait for the row IRQs */
+	unsigned int rescan_ms;
 	bool drive_inactive_cols;
 
 	struct gpio_desc *row_gpios[MATRIX_MAX_ROWS];
@@ -170,6 +172,15 @@ static void matrix_keypad_scan(struct work_struct *work)
 	memcpy(keypad->last_key_state, new_state, sizeof(new_state));
 
 	activate_all_cols(keypad, true);
+
+	/*
+	 * A row that is already low because of a held key raises no IRQ when another key on it goes
+	 * down, so keep scanning until everything is released.
+	 */
+	if (keypad->rescan_ms && memchr_inv(new_state, 0, sizeof(new_state))) {
+		schedule_delayed_work(&keypad->work, msecs_to_jiffies(keypad->rescan_ms));
+		return;
+	}
 
 	/* Enable IRQs again */
 	scoped_guard(spinlock_irq, &keypad->lock) {
@@ -417,6 +428,8 @@ static int matrix_keypad_probe(struct platform_device *pdev)
 		device_property_read_bool(&pdev->dev, "drive-inactive-cols");
 	device_property_read_u32(&pdev->dev, "debounce-delay-ms",
 				 &keypad->debounce_ms);
+	device_property_read_u32(&pdev->dev, "rescan-while-pressed-ms",
+				 &keypad->rescan_ms);
 	device_property_read_u32(&pdev->dev, "col-scan-delay-us",
 				 &keypad->col_scan_delay_us);
 	device_property_read_u32(&pdev->dev, "all-cols-on-delay-us",

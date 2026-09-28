@@ -1,5 +1,5 @@
-# Speakers, headphones and earpiece share DL1; the mics share UL1. Built-in devices win until
-# the jack has a detection control.
+# Speakers, headphones and earpiece share DL1; the mics share UL1. The jack devices follow the
+# accdet jack controls.
 
 SectionVerb {
 	Value {
@@ -28,7 +28,7 @@ SectionDevice."Speaker" {
 	Value {
 		PlaybackPCM "hw:cosmo,0"
 		PlaybackChannels 2
-		PlaybackPriority 200
+		PlaybackPriority 100
 	}
 }
 
@@ -49,7 +49,8 @@ SectionDevice."Headphones" {
 	Value {
 		PlaybackPCM "hw:cosmo,0"
 		PlaybackChannels 2
-		PlaybackPriority 100
+		PlaybackPriority 200
+		JackControl "Headphone Jack"
 	}
 }
 
@@ -96,7 +97,7 @@ SectionDevice."Mic" {
 	Value {
 		CapturePCM "hw:cosmo,1"
 		CaptureChannels 2
-		CapturePriority 200
+		CapturePriority 100
 	}
 }
 
@@ -120,6 +121,7 @@ SectionDevice."Headset" {
 	Value {
 		CapturePCM "hw:cosmo,1"
 		CaptureChannels 2
-		CapturePriority 100
+		CapturePriority 200
+		JackControl "Headset Mic Jack"
 	}
 }

@@ -128,9 +128,10 @@
 				 <&infracfg CLK_INFRA_CCIF1_AP>,
 				 <&infracfg CLK_INFRA_CCIF1_MD>,
 				 <&infracfg CLK_INFRA_CCIF2_AP>,
-				 <&infracfg CLK_INFRA_CCIF2_MD>;
+				 <&infracfg CLK_INFRA_CCIF2_MD>,
+				 <&infracfg CLK_INFRA_DVFSRC>;
 			clock-names = "cldma", "ccif-ap", "ccif-md", "ccif1-ap",
-				      "ccif1-md", "ccif2-ap", "ccif2-md";
+				      "ccif1-md", "ccif2-ap", "ccif2-md", "dvfsrc";
 			resets = <&infracfg MT8183_INFRACFG_AO_CLDMA_AO_SW_RST>,
 				 <&infracfg MT8183_INFRACFG_AO_CLDMA_SW_RST>,
 				 <&infracfg MT8183_INFRACFG_AO_AP_MD_CCIF_SW_RST>;

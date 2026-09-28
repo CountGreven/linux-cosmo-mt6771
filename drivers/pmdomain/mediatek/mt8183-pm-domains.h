@@ -25,6 +25,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_CONN] = {
 		.name = "conn",
+		.caps = MTK_SCPD_ACTIVE_WAKEUP,
 		.sta_mask = PWR_STATUS_CONN,
 		.ctl_offs = 0x032c,
 		.pwr_sta_offs = 0x0180,

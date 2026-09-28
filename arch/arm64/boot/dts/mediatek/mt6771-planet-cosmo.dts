@@ -1265,9 +1265,13 @@
 	};
 
 	spi1_pins: spi1-pins {
-		pins-spi {
-			pinmux = <PINMUX_GPIO161__FUNC_SPI1_A_MI>,
-				 <PINMUX_GPIO162__FUNC_SPI1_A_CSB>,
+		pins-miso {
+			pinmux = <PINMUX_GPIO161__FUNC_SPI1_A_MI>;
+			input-enable;
+		};
+
+		pins-out {
+			pinmux = <PINMUX_GPIO162__FUNC_SPI1_A_CSB>,
 				 <PINMUX_GPIO163__FUNC_SPI1_A_MO>,
 				 <PINMUX_GPIO164__FUNC_SPI1_A_CLK>;
 		};

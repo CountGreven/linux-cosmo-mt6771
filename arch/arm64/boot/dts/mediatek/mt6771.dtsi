@@ -110,8 +110,13 @@
 			reg = <0 0x10014000 0 0x1000>,
 			      <0 0x1021b000 0 0x1000>,
 			      <0 0x10209000 0 0x1000>,
-			      <0 0x1020a000 0 0x1000>;
-			reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif";
+			      <0 0x1020a000 0 0x1000>,
+			      <0 0x20140000 0 0x1000>,
+			      <0 0x20150000 0 0x1000>,
+			      <0 0x200f0000 0 0x1000>,
+			      <0 0x20000000 0 0x1000>;
+			reg-names = "cldma-ao", "cldma-pd", "ap-ccif", "md-ccif",
+				    "md-pll", "md-clksw", "md-rgu", "md-boot";
 			interrupts = <GIC_SPI 173 IRQ_TYPE_LEVEL_HIGH>,
 				     <GIC_SPI 151 IRQ_TYPE_LEVEL_LOW>,
 				     <GIC_SPI 152 IRQ_TYPE_LEVEL_LOW>,
@@ -130,6 +135,10 @@
 				 <&infracfg MT8183_INFRACFG_AO_CLDMA_SW_RST>,
 				 <&infracfg MT8183_INFRACFG_AO_AP_MD_CCIF_SW_RST>;
 			reset-names = "cldma-ao", "cldma-pd", "ccif";
+			mediatek,scpsys = <&scpsys>;
+			mediatek,infracfg = <&infracfg>;
+			mediatek,topckgen = <&topckgen>;
+			mediatek,apmixedsys = <&apmixedsys>;
 			status = "disabled";
 		};
 	};

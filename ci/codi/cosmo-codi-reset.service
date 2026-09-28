@@ -1,0 +1,10 @@
+[Unit]
+Description=Reset the cover display MCU (the vendor kernel does this at every boot)
+ConditionKernelVersion=!4.*
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/codi-reset
+
+[Install]
+WantedBy=multi-user.target

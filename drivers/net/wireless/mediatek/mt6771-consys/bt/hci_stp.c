@@ -405,6 +405,8 @@ static int __init hci_stp_init(void)
 	hdev->send = hci_stp_send;
 	hdev->setup = hci_stp_setup;
 	hdev->set_bdaddr = hci_stp_set_bdaddr;
+	/* the controller forgets the address when the function or the chip is reset */
+	hci_set_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
 
 	hci_stp = bt;
 	schedule_delayed_work(&bt->register_work, 0);

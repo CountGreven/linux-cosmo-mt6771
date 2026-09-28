@@ -1686,9 +1686,7 @@ static void mtk_md_start(struct work_struct *work)
 	struct mtk_md *md = container_of(work, struct mtk_md, start_work);
 	int ret;
 
-	if (mtk_md_vcorefs(md) || spm_only)
-		return;
-
+	/* the DVFSRC registers hang the bus while its clock is gated, so clocks come first */
 	dev_info(md->dev, "step 1: clocks on\n");
 	ret = clk_bulk_prepare_enable(ARRAY_SIZE(md->clks), md->clks);
 	if (ret) {
@@ -1696,6 +1694,9 @@ static void mtk_md_start(struct work_struct *work)
 		return;
 	}
 	md->clks_on = true;
+
+	if (mtk_md_vcorefs(md) || spm_only)
+		return;
 
 	ret = mtk_md_clear_smem(md);
 	if (ret) {

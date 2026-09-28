@@ -731,6 +731,12 @@ static int bmi160_chip_init(struct bmi160_data *data, bool use_spi)
 		ret = regmap_read(data->regmap, BMI160_REG_DUMMY, &val);
 		if (ret)
 			goto disable_regulator;
+		/*
+		 * The chip is suspended after the soft reset; an access
+		 * issued right after the dummy read returns 0xff.
+		 */
+		usleep_range(BMI160_SUSPENDED_WRITE_USLEEP,
+			     BMI160_SUSPENDED_WRITE_USLEEP + 1);
 	}
 
 	ret = regmap_read(data->regmap, BMI160_REG_CHIP_ID, &val);

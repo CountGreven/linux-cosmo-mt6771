@@ -12,6 +12,7 @@
 #include <dt-bindings/clock/mt8183-clk.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/usb/pd.h>
+#include <dt-bindings/iio/adc/mediatek,mt6358-auxadc.h>
 #include "mt6771.dtsi"
 /* The MT6358 PMIC, so regulators exist at all. LK reports its chip code as 0x5820, which the vendor
  * kernel's mtk_pmic_info.h defines as PMIC6358_E2_CID_CODE. Otto Pflueger's tree includes it too. */
@@ -1205,6 +1206,38 @@
 				 <PINMUX_GPIO11__FUNC_GPIO11>;
 			input-enable;
 			bias-pull-up;
+		};
+	};
+};
+
+/*
+ * Battery temperature (hw-spec/power.org): 10 kOhm NTC on the MT6358 BATON pin to ground, pulled up
+ * by 24 kOhm to VBIF28 (2.8 V), the vendor's Fg_Temperature_Table = Murata NCP15XH103. The vendor
+ * powers the phone off at 60 C (BATTERY_SHUTDOWN_TEMPERATURE).
+ */
+/ {
+	battery_ntc: thermistor {
+		compatible = "murata,ncp15xh103";
+		io-channels = <&pmic_adc MT6358_AUXADC_BAT_TEMP>;
+		pullup-uv = <2800000>;
+		pullup-ohm = <24000>;
+		pulldown-ohm = <0>;
+		#thermal-sensor-cells = <0>;
+	};
+
+	thermal-zones {
+		battery-thermal {
+			polling-delay-passive = <2000>;
+			polling-delay = <5000>;
+			thermal-sensors = <&battery_ntc>;
+
+			trips {
+				battery_crit: battery-crit {
+					temperature = <60000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
 		};
 	};
 };

@@ -90,6 +90,11 @@ enum mt6370_irq {
 	MT6370_IRQ_MAX
 };
 
+#define MT6370_AICR_SDP_UA	500000
+#define MT6370_AICR_CDP_UA	1500000
+#define MT6370_AICR_DCP_UA	3200000
+#define MT6370_ICHG_MIN_UA	900000
+
 struct mt6370_priv {
 	struct device *dev;
 	struct iio_channel *iio_adcs;
@@ -261,6 +266,46 @@ static int mt6370_chg_otg_of_parse_cb(struct device_node *of,
 				  MT6370_OTG_PIN_EN_MASK);
 }
 
+/*
+ * Input and charge current from the source: the BC1.2 type (SDP 500 mA, CDP 1.5 A, DCP 3.2 A, as
+ * the vendor charger manager uses) raised to what a Type-C or PD source advertises through the
+ * supplying power supply; full charge current once the input allows 1.5 A.
+ */
+static void mt6370_chg_update_limits(struct mt6370_priv *priv)
+{
+	union power_supply_propval val;
+	int aicr;
+
+	switch (priv->psy_usb_type) {
+	case POWER_SUPPLY_USB_TYPE_DCP:
+		aicr = MT6370_AICR_DCP_UA;
+		break;
+	case POWER_SUPPLY_USB_TYPE_CDP:
+		aicr = MT6370_AICR_CDP_UA;
+		break;
+	default:
+		aicr = MT6370_AICR_SDP_UA;
+		break;
+	}
+
+	if (!power_supply_get_property_from_supplier(priv->psy, POWER_SUPPLY_PROP_CURRENT_MAX,
+						     &val) && val.intval > aicr)
+		aicr = min(val.intval, MT6370_AICR_DCP_UA);
+
+	mt6370_chg_field_set(priv, F_IAICR, aicr);
+	mt6370_chg_field_set(priv, F_ICHG, aicr >= MT6370_AICR_CDP_UA ? priv->ichg_max :
+				       MT6370_ICHG_MIN_UA);
+}
+
+static void mt6370_chg_external_power_changed(struct power_supply *psy)
+{
+	struct mt6370_priv *priv = power_supply_get_drvdata(psy);
+
+	mutex_lock(&priv->attach_lock);
+	mt6370_chg_update_limits(priv);
+	mutex_unlock(&priv->attach_lock);
+}
+
 static void mt6370_chg_bc12_work_func(struct work_struct *work)
 {
 	struct mt6370_priv *priv = container_of(work, struct mt6370_priv,
@@ -312,6 +357,8 @@ static void mt6370_chg_bc12_work_func(struct work_struct *work)
 		priv->psy_usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
 		break;
 	}
+
+	mt6370_chg_update_limits(priv);
 
 bc12_work_func_out:
 	mutex_unlock(&priv->attach_lock);
@@ -658,6 +705,7 @@ static const struct power_supply_desc mt6370_chg_psy_desc = {
 	.get_property = mt6370_chg_get_property,
 	.set_property = mt6370_chg_set_property,
 	.property_is_writeable = mt6370_chg_property_is_writeable,
+	.external_power_changed = mt6370_chg_external_power_changed,
 	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
 			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |

@@ -31,6 +31,12 @@
 
 struct hci_stp {
 	struct hci_dev *hdev;
+	struct delayed_work register_work;
+	unsigned int launch_tries;
+	unsigned int nvram_tries;
+	bool registered;
+	bool have_bdaddr;
+	bdaddr_t bdaddr;
 	struct work_struct rx_work;
 	struct sk_buff *rx_skb;
 	unsigned int rx_need;
@@ -38,6 +44,8 @@ struct hci_stp {
 	bool in_reset;
 	u8 rx_chunk[HCI_STP_RX_CHUNK];
 };
+
+bool wmt_dev_self_launch_done(void);
 
 /* the STP and WMT callbacks carry no context pointer */
 static struct hci_stp *hci_stp;
@@ -302,42 +310,78 @@ static int hci_stp_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 	return 0;
 }
 
-/* without the factory address the controller answers to a default shared by every unit */
-static int hci_stp_setup(struct hci_dev *hdev)
+static int hci_stp_read_bdaddr(struct hci_stp *bt)
 {
 	void *data = NULL;
 	size_t fsize = 0;
-	bdaddr_t bdaddr;
 	ssize_t n;
-	int ret;
 
-	n = kernel_read_file_from_path_initns(HCI_STP_NVRAM_PATH, 0, &data, sizeof(bdaddr),
+	/* from a kworker a plain path resolves in the initial rootfs; this looks in init's root */
+	n = kernel_read_file_from_path_initns(HCI_STP_NVRAM_PATH, 0, &data, sizeof(bt->bdaddr),
 					      &fsize, READING_FIRMWARE);
-	if (n != sizeof(bdaddr)) {
-		bt_dev_warn(hdev, "no factory address (%s: %zd)", HCI_STP_NVRAM_PATH, n);
-		if (n >= 0)
-			vfree(data);
-		return 0;
-	}
-	baswap(&bdaddr, data);
+	if (n < 0)
+		return n;
+	if (n == sizeof(bt->bdaddr))
+		baswap(&bt->bdaddr, data);
 	vfree(data);
 
-	if (!bacmp(&bdaddr, BDADDR_ANY) || !bacmp(&bdaddr, BDADDR_NONE)) {
-		bt_dev_warn(hdev, "factory address is not set");
-		return 0;
-	}
+	if (n != sizeof(bt->bdaddr) || !bacmp(&bt->bdaddr, BDADDR_ANY) ||
+	    !bacmp(&bt->bdaddr, BDADDR_NONE))
+		return -EINVAL;
+	bt->have_bdaddr = true;
+	return 0;
+}
 
-	ret = hci_stp_set_bdaddr(hdev, &bdaddr);
+/* without the factory address the controller answers to a default shared by every unit */
+static int hci_stp_setup(struct hci_dev *hdev)
+{
+	struct hci_stp *bt = hci_get_drvdata(hdev);
+	int ret;
+
+	if (!bt->have_bdaddr)
+		return 0;
+
+	ret = hci_stp_set_bdaddr(hdev, &bt->bdaddr);
 	if (ret)
 		bt_dev_warn(hdev, "setting the factory address failed: %d", ret);
 	return 0;
+}
+
+/*
+ * The core powers a new device on at once, so registration waits for the WMT
+ * launch, and up to half a minute for nvdata, which is a separate mount.
+ */
+static void hci_stp_register_work(struct work_struct *work)
+{
+	struct hci_stp *bt = container_of(work, struct hci_stp, register_work.work);
+	int ret;
+
+	if (!wmt_dev_self_launch_done()) {
+		if (++bt->launch_tries < 120)
+			schedule_delayed_work(&bt->register_work, HZ);
+		else
+			pr_err("hci_stp: WMT core never became ready, no Bluetooth\n");
+		return;
+	}
+	if (!bt->have_bdaddr && hci_stp_read_bdaddr(bt) && ++bt->nvram_tries < 30) {
+		schedule_delayed_work(&bt->register_work, HZ);
+		return;
+	}
+	if (!bt->have_bdaddr)
+		pr_warn("hci_stp: no factory address in %s\n", HCI_STP_NVRAM_PATH);
+
+	ret = hci_register_dev(bt->hdev);
+	if (ret < 0) {
+		pr_err("hci_stp: registering the HCI device failed: %d\n", ret);
+		return;
+	}
+	bt->registered = true;
 }
 
 static int __init hci_stp_init(void)
 {
 	struct hci_stp *bt;
 	struct hci_dev *hdev;
-	int ret;
 
 	bt = kzalloc_obj(*bt);
 	if (!bt)
@@ -350,6 +394,7 @@ static int __init hci_stp_init(void)
 	}
 
 	INIT_WORK(&bt->rx_work, hci_stp_rx_work);
+	INIT_DELAYED_WORK(&bt->register_work, hci_stp_register_work);
 	bt->hdev = hdev;
 	hci_set_drvdata(hdev, bt);
 
@@ -362,13 +407,7 @@ static int __init hci_stp_init(void)
 	hdev->set_bdaddr = hci_stp_set_bdaddr;
 
 	hci_stp = bt;
-	ret = hci_register_dev(hdev);
-	if (ret < 0) {
-		hci_stp = NULL;
-		hci_free_dev(hdev);
-		kfree(bt);
-		return ret;
-	}
+	schedule_delayed_work(&bt->register_work, 0);
 	return 0;
 }
 
@@ -376,7 +415,9 @@ static void __exit hci_stp_exit(void)
 {
 	struct hci_stp *bt = hci_stp;
 
-	hci_unregister_dev(bt->hdev);
+	cancel_delayed_work_sync(&bt->register_work);
+	if (bt->registered)
+		hci_unregister_dev(bt->hdev);
 	hci_stp = NULL;
 	hci_free_dev(bt->hdev);
 	kfree(bt);

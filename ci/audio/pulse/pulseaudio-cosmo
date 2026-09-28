@@ -1,0 +1,7 @@
+#!/bin/sh
+# The rootfs is shared with the vendor 4.4 boot, which needs Gemian's Android HAL (droid) config;
+# under the mainline kernel use the native ALSA config instead.
+case "$(uname -r)" in
+4.*) exec /usr/bin/pulseaudio --daemonize=no "$@" ;;
+*) exec /usr/bin/pulseaudio --daemonize=no -n -F /etc/pulse/default.pa.mainline "$@" ;;
+esac

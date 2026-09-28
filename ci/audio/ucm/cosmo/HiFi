@@ -1,0 +1,125 @@
+# Speakers, headphones and earpiece share DL1; the mics share UL1. Built-in devices win until
+# the jack has a detection control.
+
+SectionVerb {
+	Value {
+		TQ "HiFi"
+	}
+	EnableSequence [
+	]
+	DisableSequence [
+	]
+}
+
+SectionDevice."Speaker" {
+	Comment "Speakers"
+	ConflictingDevice [
+		"Headphones"
+		"Earpiece"
+	]
+	EnableSequence [
+		cdev "hw:cosmo"
+		cset "name='Speaker Switch' on"
+	]
+	DisableSequence [
+		cdev "hw:cosmo"
+		cset "name='Speaker Switch' off"
+	]
+	Value {
+		PlaybackPCM "hw:cosmo,0"
+		PlaybackChannels 2
+		PlaybackPriority 200
+	}
+}
+
+SectionDevice."Headphones" {
+	Comment "Headphones"
+	ConflictingDevice [
+		"Speaker"
+		"Earpiece"
+	]
+	EnableSequence [
+		cdev "hw:cosmo"
+		cset "name='Headphone Switch' on"
+	]
+	DisableSequence [
+		cdev "hw:cosmo"
+		cset "name='Headphone Switch' off"
+	]
+	Value {
+		PlaybackPCM "hw:cosmo,0"
+		PlaybackChannels 2
+		PlaybackPriority 100
+	}
+}
+
+SectionDevice."Earpiece" {
+	Comment "Earpiece"
+	ConflictingDevice [
+		"Speaker"
+		"Headphones"
+	]
+	EnableSequence [
+		cdev "hw:cosmo"
+		cset "name='RCV Mux' Voice Playback"
+		cset "name='Earpiece Switch' on"
+	]
+	DisableSequence [
+		cdev "hw:cosmo"
+		cset "name='Earpiece Switch' off"
+		cset "name='RCV Mux' Open"
+	]
+	Value {
+		PlaybackPCM "hw:cosmo,0"
+		PlaybackChannels 2
+		PlaybackPriority 50
+	}
+}
+
+SectionDevice."Mic" {
+	Comment "Built-in microphones"
+	ConflictingDevice [
+		"Headset"
+	]
+	EnableSequence [
+		cdev "hw:cosmo"
+		cset "name='PGA L Mux' AIN0"
+		cset "name='PGA R Mux' AIN2"
+		cset "name='Main Mic Switch' on"
+		cset "name='Second Mic Switch' on"
+	]
+	DisableSequence [
+		cdev "hw:cosmo"
+		cset "name='Main Mic Switch' off"
+		cset "name='Second Mic Switch' off"
+	]
+	Value {
+		CapturePCM "hw:cosmo,1"
+		CaptureChannels 2
+		CapturePriority 200
+	}
+}
+
+SectionDevice."Headset" {
+	Comment "Headset microphone"
+	ConflictingDevice [
+		"Mic"
+	]
+	EnableSequence [
+		cdev "hw:cosmo"
+		cset "name='PGA L Mux' AIN1"
+		cset "name='PGA R Mux' AIN1"
+		cset "name='Headset Mic Switch' on"
+	]
+	DisableSequence [
+		cdev "hw:cosmo"
+		cset "name='Headset Mic Switch' off"
+		cset "name='PGA L Mux' AIN0"
+		cset "name='PGA R Mux' AIN2"
+	]
+	Value {
+		CapturePCM "hw:cosmo,1"
+		CaptureChannels 2
+		CapturePriority 100
+	}
+}

@@ -133,4 +133,64 @@ struct cldma_rgpd {
 #define CCIF_DATA_CHANNELS		GENMASK(15, 0)
 #define CCIF_CTRL_CHANNELS		GENMASK(30, 15)	/* md_cd_ccif_isr(): 0xffff << 15 */
 
+/* SPM (scpsys): the MD1 power switch, clk-mt6771-pg.c:spm_mtcmos_ctrl_md1() in the 4.4 BSP */
+#define SPM_PWR_STATUS			0x0180
+#define SPM_PWR_STATUS_2ND		0x0184
+#define SPM_MD1_PWR_CON			0x0320
+#define SPM_MD_SRAM_ISO_CON		0x0394
+#define SPM_MD_EXTRA_PWR_CON		0x0398
+#define SPM_PWR_STATUS_MD1		BIT(0)
+#define SPM_PWR_RST_B			BIT(0)
+#define SPM_PWR_ISO			BIT(1)
+#define SPM_PWR_ON			BIT(2)
+#define SPM_PWR_ON_2ND			BIT(3)
+#define SPM_PWR_CLK_DIS			BIT(4)
+#define SPM_MD1_SRAM_PDN		BIT(8)
+
+/* infracfg_ao */
+#define INFRA_PERI2MD_PROT_STA		0x0228
+#define INFRA_MD2PERI_PROT_STA		0x0258
+#define INFRA_PERI2MD_PROT_SET		0x02a0
+#define INFRA_PERI2MD_PROT_CLR		0x02a4
+#define INFRA_MD2PERI_PROT_SET		0x02a8
+#define INFRA_MD2PERI_PROT_CLR		0x02ac
+#define INFRA_PERI2MD_PROT		BIT(7)
+#define INFRA_MD1_PROT			(BIT(3) | BIT(4))
+#define INFRA_MD2PERI_PROT		BIT(6)
+#define INFRA_AP2MD_DUMMY		0x0370	/* bit 0: the modem may reach the AP */
+#define INFRA_CLDMA_CTRL		0x0c00
+#define INFRA_CLDMA_IP_BUSY_MASK	BIT(1)
+#define INFRA_MD_SRCCLKENA		0x0f0c
+#define INFRA_MD_SRCCLKENA_MASK		GENMASK(7, 0)
+#define INFRA_MD_SRCCLKENA_MD1		0x21
+
+/* topckgen CLK_MODE: the modem's 26 MHz and 32 kHz gates; apmixedsys AP_PLL_CON0 */
+#define TOPCKGEN_CLK_MODE		0x0000
+#define TOPCKGEN_MD_CLK_GATES		(BIT(8) | BIT(9))
+#define APMIXED_AP_PLL_CON0		0x0000
+#define APMIXED_CLKSQ1_LPF_EN		BIT(1)
+
+/* The modem's own registers the AP writes before releasing it (md1_pll_init() and around) */
+#define MD_PLL_VERSION			0x0000
+#define MD_PLL_SRCLKENA_SETTLE		0x0004
+#define MD_PLL_CLKSW_REQ		0x0010
+#define MD_PLL_CLKSW_REQ_VAL		0x00100010
+#define MD_PLL_CON(n)			(0x0040 + 8 * (n))	/* 0x40 .. 0x60 */
+#define MD_PLL_CON_6			0x0064
+#define MD_PLL_DFS			0x0104
+#define MD_PLL_INT_MASK0		0x0314
+#define MD_PLL_INT_MASK1		0x0318
+#define MD_PLL_STATUS			0x0c00
+#define MD_PLL_STATUS_BUSY		BIT(14)
+#define MD_PLL_INIT_DONE		0x0f00
+#define MD_PLL_INIT_DONE_VAL		0x62930000
+#define MD_CLKSW_CKSEL			0x0020
+#define MD_CLKSW_CKEN			0x0024
+#define MD_CLKSW_CKEN2			0x0028
+#define MD_CLKSW_STATUS			0x0084
+#define MD_CLKSW_STATUS_READY		BIT(15)
+#define MD_RGU_WDT_MODE			0x0100
+#define MD_RGU_WDT_MODE_OFF		0x55000030
+#define MD_BOOT_VECTOR_EN		0x0024
+
 #endif /* __MTK_MD_REGS_H__ */

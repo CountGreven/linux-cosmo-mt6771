@@ -8,9 +8,9 @@
  * CLDMA start, and then the first exchange over CCIF SRAM -- the modem's feature query (HS1) and
  * the AP's runtime data. Every step is logged, numbered as in the design note (14-modem.org).
  *
- * Skeleton: the modem power-on is not implemented. It needs an MD1 power domain that mainline's
- * MT8183 SPM driver does not have, the vmodem rail and the modem PLL setup, so on hardware the
- * sequence stops at that step. Nothing here has run on a device yet.
+ * The MD1 power switch is driven from here through the SPM and infracfg syscons: mainline's
+ * MT8183 power domains do not include it. The handshake stops after the runtime data: HS2 and
+ * everything after it need the CCIF ring queues.
  */
 
 #include <linux/bitfield.h>
@@ -19,10 +19,14 @@
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/delay.h>
+#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/random.h>
+#include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/sizes.h>
@@ -34,6 +38,8 @@
 
 /* BOOT_TIMEOUT in eccci/fsm/ccci_fsm_internal.h covers HS1 and HS2 together */
 #define MTK_MD_HS_TIMEOUT_MS	30000
+#define MTK_MD_POLL_US		1000
+#define MTK_MD_POLL_TIMEOUT_US	1000000
 
 /* The CCCI MTU (3456) plus the CCCI header's allowance, less the header: AP_CCMNI_MTU */
 #define MTK_MD_CCMNI_MTU	(CLDMA_MTU_SIZE - sizeof(struct mtk_md_ccci_hdr))
@@ -50,6 +56,15 @@ struct mtk_md {
 	void __iomem *cldma_pd;
 	void __iomem *ap_ccif;
 	void __iomem *md_ccif;
+	void __iomem *md_pll;
+	void __iomem *md_clksw;
+	void __iomem *md_rgu;
+	void __iomem *md_boot;
+	struct regmap *scpsys;
+	struct regmap *infracfg;
+	struct regmap *topckgen;
+	struct regmap *apmixed;
+	bool powered;
 	int irq_cldma, irq_ccif0, irq_ccif1, irq_wdt;
 	struct clk_bulk_data clks[ARRAY_SIZE(mtk_md_clk_names)];
 	struct reset_control_bulk_data resets[MTK_MD_RST_NUM];
@@ -299,20 +314,226 @@ static void mtk_md_cldma_hw_reset(struct mtk_md *md)
 	reset_control_deassert(md->resets[MTK_MD_RST_CLDMA_AO].rstc);
 	reset_control_assert(md->resets[MTK_MD_RST_CLDMA_PD].rstc);
 	reset_control_deassert(md->resets[MTK_MD_RST_CLDMA_PD].rstc);
-	/* TODO: the vendor also sets infracfg 0xc00 bit 1 (CLDMA_IP_BUSY_MASK); no handle to it. */
+	regmap_set_bits(md->infracfg, INFRA_CLDMA_CTRL, INFRA_CLDMA_IP_BUSY_MASK);
+}
+
+/* spm_mtcmos_ctrl_md1(STA_POWER_DOWN) */
+static void mtk_md_mtcmos_off(struct mtk_md *md)
+{
+	u32 v;
+
+	regmap_write(md->infracfg, INFRA_PERI2MD_PROT_SET, INFRA_PERI2MD_PROT);
+	regmap_read_poll_timeout(md->infracfg, INFRA_PERI2MD_PROT_STA, v, v & INFRA_PERI2MD_PROT,
+				 MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	regmap_write(md->infracfg, INFRA_PERI2MD_PROT_SET, INFRA_MD1_PROT);
+	regmap_read_poll_timeout(md->infracfg, INFRA_PERI2MD_PROT_STA, v,
+				 (v & INFRA_MD1_PROT) == INFRA_MD1_PROT,
+				 MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	regmap_write(md->infracfg, INFRA_MD2PERI_PROT_SET, INFRA_MD2PERI_PROT);
+	regmap_read_poll_timeout(md->infracfg, INFRA_MD2PERI_PROT_STA, v, v & INFRA_MD2PERI_PROT,
+				 MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+
+	regmap_set_bits(md->scpsys, SPM_MD_EXTRA_PWR_CON, BIT(0));
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_CLK_DIS);
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ISO);
+	regmap_clear_bits(md->scpsys, SPM_MD_SRAM_ISO_CON, BIT(0));
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_MD1_SRAM_PDN);
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ON);
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ON_2ND);
+	regmap_read_poll_timeout(md->scpsys, SPM_PWR_STATUS, v, !(v & SPM_PWR_STATUS_MD1),
+				 MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+}
+
+/* spm_mtcmos_ctrl_md1(STA_POWER_ON), in the vendor's order */
+static int mtk_md_mtcmos_on(struct mtk_md *md)
+{
+	u32 v;
+	int ret;
+
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_RST_B);
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ON);
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ON_2ND);
+	ret = regmap_read_poll_timeout(md->scpsys, SPM_PWR_STATUS, v, v & SPM_PWR_STATUS_MD1,
+				       MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (!ret)
+		ret = regmap_read_poll_timeout(md->scpsys, SPM_PWR_STATUS_2ND, v,
+					       v & SPM_PWR_STATUS_MD1,
+					       MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (ret) {
+		dev_err(md->dev, "step 4: MD1 power switch did not acknowledge\n");
+		mtk_md_mtcmos_off(md);
+		return ret;
+	}
+
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_MD1_SRAM_PDN);
+	regmap_set_bits(md->scpsys, SPM_MD_SRAM_ISO_CON, BIT(0));
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_ISO);
+	regmap_clear_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_CLK_DIS);
+	regmap_set_bits(md->scpsys, SPM_MD1_PWR_CON, SPM_PWR_RST_B);
+	regmap_clear_bits(md->scpsys, SPM_MD_EXTRA_PWR_CON, BIT(0));
+
+	regmap_write(md->infracfg, INFRA_PERI2MD_PROT_CLR, INFRA_MD1_PROT);
+	regmap_write(md->infracfg, INFRA_MD2PERI_PROT_CLR, INFRA_MD2PERI_PROT);
+	regmap_write(md->infracfg, INFRA_PERI2MD_PROT_CLR, INFRA_PERI2MD_PROT);
+	return 0;
+}
+
+/* md1_pll_init() */
+static int mtk_md_pll_init(struct mtk_md *md)
+{
+	static const u32 pll_con[] = {
+		0x80213c00, 0x80204e00, 0x80229e00, 0x80171400, 0x801713b1,
+	};
+	unsigned int tries;
+	u32 v;
+	int i, ret;
+
+	ret = readl_poll_timeout(md->md_pll + MD_PLL_VERSION, v, v, 20000, MTK_MD_POLL_TIMEOUT_US);
+	if (ret) {
+		dev_err(md->dev, "step 4: the modem's PLL block does not answer\n");
+		return ret;
+	}
+	dev_info(md->dev, "step 4: modem PLL version %#x\n", v);
+
+	regmap_set_bits(md->apmixed, APMIXED_AP_PLL_CON0, APMIXED_CLKSQ1_LPF_EN);
+	usleep_range(100, 200);
+
+	writel(0x02020e93, md->md_pll + MD_PLL_SRCLKENA_SETTLE);
+	for (i = ARRAY_SIZE(pll_con) - 1; i >= 0; i--)
+		writel(pll_con[i], md->md_pll + MD_PLL_CON(i));
+
+	ret = readl_poll_timeout(md->md_pll + MD_PLL_STATUS, v, !(v & MD_PLL_STATUS_BUSY),
+				 MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (ret) {
+		dev_err(md->dev, "step 4: modem PLL stays busy\n");
+		return ret;
+	}
+	writel(readl(md->md_pll + MD_PLL_CON_6) & ~BIT(7), md->md_pll + MD_PLL_CON_6);
+	writel(0x04c43100, md->md_pll + MD_PLL_DFS);
+
+	/* the vendor rewrites the request every fifth read until it sticks */
+	for (tries = 0; tries < 50; tries++) {
+		if (!(tries % 5))
+			writel(MD_PLL_CLKSW_REQ_VAL, md->md_pll + MD_PLL_CLKSW_REQ);
+		msleep(20);
+		if (readl(md->md_pll + MD_PLL_CLKSW_REQ) == MD_PLL_CLKSW_REQ_VAL)
+			break;
+	}
+	if (tries == 50) {
+		dev_err(md->dev, "step 4: modem clock switch request not taken\n");
+		return -ETIMEDOUT;
+	}
+
+	ret = readl_poll_timeout(md->md_clksw + MD_CLKSW_STATUS, v, v & MD_CLKSW_STATUS_READY,
+				 20000, MTK_MD_POLL_TIMEOUT_US);
+	if (ret) {
+		dev_err(md->dev, "step 4: modem clock switch not ready (%#x)\n", v);
+		return ret;
+	}
+
+	writel(readl(md->md_clksw + MD_CLKSW_CKEN) | 0x3, md->md_clksw + MD_CLKSW_CKEN);
+	writel(readl(md->md_clksw + MD_CLKSW_CKEN) | 0x058103fc, md->md_clksw + MD_CLKSW_CKEN);
+	writel(readl(md->md_clksw + MD_CLKSW_CKEN2) | 0x10, md->md_clksw + MD_CLKSW_CKEN2);
+	writel(1, md->md_clksw + MD_CLKSW_CKSEL);
+	writel(0xffff, md->md_pll + MD_PLL_INT_MASK0);
+	writel(0xffff, md->md_pll + MD_PLL_INT_MASK1);
+	writel(MD_PLL_INIT_DONE_VAL, md->md_pll + MD_PLL_INIT_DONE);
+	return 0;
+}
+
+/* md_cd_power_off() */
+static void mtk_md_power_off(struct mtk_md *md)
+{
+	if (!md->powered)
+		return;
+	mtk_md_mtcmos_off(md);
+	regmap_clear_bits(md->infracfg, INFRA_MD_SRCCLKENA, INFRA_MD_SRCCLKENA_MASK);
+	regmap_set_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
+	md->powered = false;
+	dev_info(md->dev, "modem powered off\n");
 }
 
 /*
- * md_cd_power_on() and md_cd_let_md_go(). Not implemented: see the file header. What the vendor
- * does, for whoever writes it: topckgen CLK_MODE bits 8/9 clear, vmodem on, MD1 MTCMOS (SPM
- * 0x320) on, infracfg 0xf0c low byte 0x21, bus protection released, the MD PLL table at
- * 0x20140000/0x20150000, the MD watchdog off (0x200f0100 = 0x55000030), then the boot vector
- * enable (0x20000024 = 1).
+ * md_cd_power_on(). The rails need nothing: vmodem and vsram_others are always on, the RF rails
+ * follow the modem's own clock request, and the modem's clock buffer is left on by LK.
  */
 static int mtk_md_power_on(struct mtk_md *md)
 {
-	dev_err(md->dev, "step 4: modem power-on not implemented (MD1 domain, vmodem, MD PLL)\n");
-	return -EOPNOTSUPP;
+	u32 v;
+	int ret;
+
+	regmap_clear_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
+
+	ret = mtk_md_mtcmos_on(md);
+	if (ret)
+		return ret;
+	md->powered = true;
+	regmap_read(md->scpsys, SPM_MD1_PWR_CON, &v);
+	dev_info(md->dev, "step 4: MD1 power switch on (MD1_PWR_CON %#x)\n", v);
+
+	/* md1_pre_access_md_reg(): the AP may reach the modem, not the other way round */
+	regmap_clear_bits(md->infracfg, INFRA_AP2MD_DUMMY, BIT(0));
+	regmap_write(md->infracfg, INFRA_MD2PERI_PROT_SET, INFRA_MD2PERI_PROT);
+	ret = regmap_read_poll_timeout(md->infracfg, INFRA_MD2PERI_PROT_STA, v,
+				       v & INFRA_MD2PERI_PROT,
+				       MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (ret) {
+		dev_err(md->dev, "step 4: modem-to-AP bus protection not acknowledged\n");
+		goto err;
+	}
+
+	regmap_update_bits(md->infracfg, INFRA_MD_SRCCLKENA, INFRA_MD_SRCCLKENA_MASK,
+			   INFRA_MD_SRCCLKENA_MD1);
+
+	ret = mtk_md_pll_init(md);
+	if (ret)
+		goto err;
+	dev_info(md->dev, "step 4: modem PLL set up\n");
+
+	writel(MD_RGU_WDT_MODE_OFF, md->md_rgu + MD_RGU_WDT_MODE);
+	return 0;
+err:
+	mtk_md_power_off(md);
+	return ret;
+}
+
+/* md_cd_let_md_go() */
+static int mtk_md_let_go(struct mtk_md *md)
+{
+	u32 v;
+	int ret;
+
+	writel(1, md->md_boot + MD_BOOT_VECTOR_EN);
+	dev_info(md->dev, "step 4b: boot vector enable reads %#x\n",
+		 readl(md->md_boot + MD_BOOT_VECTOR_EN));
+
+	/* md1_post_access_md_reg(): now the modem may reach the AP, not the other way round */
+	regmap_write(md->infracfg, INFRA_PERI2MD_PROT_SET, INFRA_PERI2MD_PROT);
+	ret = regmap_read_poll_timeout(md->infracfg, INFRA_PERI2MD_PROT_STA, v,
+				       v & INFRA_PERI2MD_PROT,
+				       MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (ret)
+		return ret;
+	regmap_write(md->infracfg, INFRA_MD2PERI_PROT_CLR, INFRA_MD2PERI_PROT);
+	ret = regmap_read_poll_timeout(md->infracfg, INFRA_MD2PERI_PROT_STA, v,
+				       !(v & INFRA_MD2PERI_PROT),
+				       MTK_MD_POLL_US, MTK_MD_POLL_TIMEOUT_US);
+	if (ret)
+		return ret;
+	regmap_set_bits(md->infracfg, INFRA_AP2MD_DUMMY, BIT(0));
+	return 0;
+}
+
+/* ccci_md_clear_smem(): the modem expects its share memory zeroed on the first start */
+static int mtk_md_clear_smem(struct mtk_md *md)
+{
+	void __iomem *smem = ioremap_wc(md->smem_nc, md->smem_nc_size);
+
+	if (!smem)
+		return -ENOMEM;
+	memset_io(smem, 0, md->smem_nc_size);
+	iounmap(smem);
+	return 0;
 }
 
 enum mtk_md_rt_kind {
@@ -535,6 +756,12 @@ static void mtk_md_start(struct work_struct *work)
 	}
 	md->clks_on = true;
 
+	ret = mtk_md_clear_smem(md);
+	if (ret) {
+		dev_err(md->dev, "share memory: %d\n", ret);
+		return;
+	}
+
 	dev_info(md->dev, "step 2: CCIF reset, SRAM cleared\n");
 	mtk_md_ccif_reset(md);
 
@@ -544,6 +771,13 @@ static void mtk_md_start(struct work_struct *work)
 	ret = mtk_md_power_on(md);
 	if (ret)
 		return;
+
+	ret = mtk_md_let_go(md);
+	if (ret) {
+		dev_err(md->dev, "step 4b: releasing the modem: %d\n", ret);
+		mtk_md_power_off(md);
+		return;
+	}
 
 	dev_info(md->dev, "step 5: interrupts on\n");
 	enable_irq(md->irq_wdt);
@@ -568,6 +802,11 @@ static void mtk_md_teardown(void *data)
 	struct mtk_md *md = data;
 
 	cancel_work_sync(&md->start_work);
+	disable_irq(md->irq_cldma);
+	disable_irq(md->irq_ccif0);
+	disable_irq(md->irq_ccif1);
+	disable_irq(md->irq_wdt);
+	mtk_md_power_off(md);
 	if (md->clks_on)
 		clk_bulk_disable_unprepare(ARRAY_SIZE(md->clks), md->clks);
 }
@@ -614,7 +853,31 @@ static int mtk_md_probe(struct platform_device *pdev)
 	md->md_ccif = devm_platform_ioremap_resource_byname(pdev, "md-ccif");
 	if (IS_ERR(md->md_ccif))
 		return PTR_ERR(md->md_ccif);
-	dev_info(dev, "mapped cldma-ao, cldma-pd, ap-ccif, md-ccif\n");
+	md->md_pll = devm_platform_ioremap_resource_byname(pdev, "md-pll");
+	if (IS_ERR(md->md_pll))
+		return PTR_ERR(md->md_pll);
+	md->md_clksw = devm_platform_ioremap_resource_byname(pdev, "md-clksw");
+	if (IS_ERR(md->md_clksw))
+		return PTR_ERR(md->md_clksw);
+	md->md_rgu = devm_platform_ioremap_resource_byname(pdev, "md-rgu");
+	if (IS_ERR(md->md_rgu))
+		return PTR_ERR(md->md_rgu);
+	md->md_boot = devm_platform_ioremap_resource_byname(pdev, "md-boot");
+	if (IS_ERR(md->md_boot))
+		return PTR_ERR(md->md_boot);
+
+	md->scpsys = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,scpsys");
+	if (IS_ERR(md->scpsys))
+		return dev_err_probe(dev, PTR_ERR(md->scpsys), "scpsys\n");
+	md->infracfg = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,infracfg");
+	if (IS_ERR(md->infracfg))
+		return dev_err_probe(dev, PTR_ERR(md->infracfg), "infracfg\n");
+	md->topckgen = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,topckgen");
+	if (IS_ERR(md->topckgen))
+		return dev_err_probe(dev, PTR_ERR(md->topckgen), "topckgen\n");
+	md->apmixed = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,apmixedsys");
+	if (IS_ERR(md->apmixed))
+		return dev_err_probe(dev, PTR_ERR(md->apmixed), "apmixedsys\n");
 
 	for (i = 0; i < ARRAY_SIZE(md->clks); i++)
 		md->clks[i].id = mtk_md_clk_names[i];
@@ -678,5 +941,5 @@ static struct platform_driver mtk_md_driver = {
 };
 module_platform_driver(mtk_md_driver);
 
-MODULE_DESCRIPTION("MediaTek MT6771 integrated modem (skeleton)");
+MODULE_DESCRIPTION("MediaTek MT6771 integrated modem");
 MODULE_LICENSE("GPL");

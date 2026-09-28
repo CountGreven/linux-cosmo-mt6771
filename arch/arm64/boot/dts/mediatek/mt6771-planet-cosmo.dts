@@ -303,7 +303,21 @@
  * Controllers without known clients are left on for now so peripherals can be located from Linux.
  */
 &i2c0 { status = "okay"; };
-&i2c1 { status = "okay"; };
+&i2c1 {
+	status = "okay";
+
+	/*
+	 * Ambient light and proximity (vendor alsps@48, stk3x1x). The ID register reads 0x12, an
+	 * STK3311 variant the stk3310 driver knows.
+	 */
+	light-sensor@48 {
+		compatible = "sensortek,stk3311";
+		reg = <0x48>;
+		interrupts-extended = <&pio 6 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&light_sensor_pins>;
+	};
+};
 &i2c2 {
 	mediatek,ch-offset = <0x100>;
 	status = "okay";
@@ -1211,6 +1225,14 @@
 };
 
 &pio {
+	light_sensor_pins: light-sensor-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO6__FUNC_GPIO6>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+
 	gpio_keys_pins: gpio-keys-pins {
 		pins-keys {
 			pinmux = <PINMUX_GPIO8__FUNC_GPIO8>,

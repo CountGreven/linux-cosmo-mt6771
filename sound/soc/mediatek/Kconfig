@@ -156,6 +156,7 @@ config SND_SOC_MT6771_COSMO
 	select SND_SOC_MT6358
 	select SND_SOC_AW8738
 	select SND_SOC_SIMPLE_AMPLIFIER
+	select SND_SOC_MT6358_ACCDET if IIO
 	help
 	  This adds the ASoC machine driver for the Planet Cosmo Communicator
 	  (MT6771 with the MT6358 codec and GPIO speaker amplifiers).

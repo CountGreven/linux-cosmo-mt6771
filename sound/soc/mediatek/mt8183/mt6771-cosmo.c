@@ -9,13 +9,29 @@
 
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <sound/jack.h>
 #include <sound/soc.h>
+
+#include "../../codecs/mt6358-accdet.h"
 
 struct cosmo_priv {
 	bool phase_fix;
 	bool speaker_on;
+	struct snd_soc_component *accdet;
+	struct snd_soc_jack headset;
+};
+
+static struct snd_soc_jack_pin cosmo_jack_pins[] = {
+	{ .pin = "Headphone", .mask = SND_JACK_HEADPHONE },
+	{ .pin = "Headset Mic", .mask = SND_JACK_MICROPHONE },
+};
+
+/* The vendor switches the speaker amps off while anything is in the jack */
+static struct snd_soc_jack_pin cosmo_speaker_pin = {
+	.pin = "Speaker", .mask = SND_JACK_HEADPHONE, .invert = 1,
 };
 
 /*
@@ -168,8 +184,30 @@ static int cosmo_late_probe(struct snd_soc_card *card)
 	struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(card);
 
 	/* The earpiece switch is a stereo simple amplifier with one side wired */
+	struct cosmo_priv *priv = snd_soc_card_get_drvdata(card);
+	int ret;
+
 	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch INR");
 	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch OUTR");
+
+	if (priv->accdet) {
+		ret = snd_soc_card_jack_new_pins(card, "Headset Jack", SND_JACK_HEADSET |
+						 SND_JACK_BTN_0 | SND_JACK_BTN_1 |
+						 SND_JACK_BTN_2 | SND_JACK_BTN_3,
+						 &priv->headset, cosmo_jack_pins,
+						 ARRAY_SIZE(cosmo_jack_pins));
+		if (ret)
+			return ret;
+
+		ret = snd_soc_jack_add_pins(&priv->headset, 1, &cosmo_speaker_pin);
+		if (ret)
+			return ret;
+
+		/* After the codec probe: it forces ACCDET_CON13, detection clears it */
+		ret = mt6358_accdet_enable_jack_detect(priv->accdet, &priv->headset);
+		if (ret)
+			return ret;
+	}
 
 	return snd_soc_dapm_sync(dapm);
 }
@@ -194,7 +232,7 @@ static int cosmo_probe(struct platform_device *pdev)
 	struct snd_soc_card *card = &cosmo_card;
 	struct snd_soc_dai_link *link;
 	struct cosmo_priv *priv;
-	struct device_node *platform;
+	struct device_node *platform, *np;
 	int i, n, ret;
 
 	platform = of_parse_phandle(dev->of_node, "mediatek,platform", 0);
@@ -225,6 +263,21 @@ static int cosmo_probe(struct platform_device *pdev)
 	}
 	priv->phase_fix = true;
 	snd_soc_card_set_drvdata(card, priv);
+
+	np = of_parse_phandle(dev->of_node, "mediatek,accdet", 0);
+	if (np) {
+		struct platform_device *accdet_pdev = of_find_device_by_node(np);
+
+		of_node_put(np);
+		if (accdet_pdev) {
+			priv->accdet = snd_soc_lookup_component(&accdet_pdev->dev, NULL);
+			put_device(&accdet_pdev->dev);
+		}
+		if (!priv->accdet) {
+			ret = dev_err_probe(dev, -EPROBE_DEFER, "accdet not ready\n");
+			goto out;
+		}
+	}
 
 	card->dev = dev;
 	ret = devm_snd_soc_register_card(dev, card);

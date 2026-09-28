@@ -22,6 +22,10 @@ properties:
     $ref: /schemas/types.yaml#/definitions/phandle
     description: The audio front end.
 
+  mediatek,accdet:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: The MT6358 accessory detection block, for the headset jack.
+
   aux-devs:
     $ref: /schemas/types.yaml#/definitions/phandle-array
     items:

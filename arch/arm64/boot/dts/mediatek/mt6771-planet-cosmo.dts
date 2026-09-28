@@ -1133,5 +1133,6 @@
 };
 
 &modem {
+	mediatek,pmic = <&pmic>;
 	status = "okay";
 };

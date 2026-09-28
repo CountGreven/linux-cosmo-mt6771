@@ -25,6 +25,13 @@ config MT6771_CONSYS
 
 	  Say N. If unsure, say N.
 
+config MT6771_CONSYS_BT
+	tristate "MediaTek MT6771 CONSYS Bluetooth"
+	depends on MT6771_CONSYS && BT
+	help
+	  Bluetooth function of the CONSYS combo radio as a kernel HCI
+	  device, on the STP transport of the wifi stack.
+
 # The vendor Makefiles and sources test these by their vendor names. They
 # are fixed for the one chip this directory supports and are not meant to
 # be set by hand.

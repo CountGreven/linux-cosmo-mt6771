@@ -118,6 +118,32 @@ properties:
       The MT6358 PMIC. Its RF supplies (VFE28, VRF18, VRF12) are handed to the
       modem's clock request while the modem runs.
 
+patternProperties:
+  "^sim-hot-plug-[1-4]$":
+    type: object
+    additionalProperties: false
+    description:
+      How the board detects a card in SIM slot <n>. The modem asks for this
+      at start; a slot without a node (an eSIM) reports no hot-plug interrupt.
+    properties:
+      mediatek,eint:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: The modem-side EINT number of the card-detect line.
+      mediatek,eint-trigger:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: IRQ_TYPE_* trigger of the card-detect line.
+      mediatek,debounce-us:
+        description: Card-detect debounce time.
+      mediatek,socket-type:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Socket type as the modem firmware numbers it.
+      mediatek,dedicated:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Non-zero if the line is dedicated to the modem.
+      mediatek,source-pin:
+        $ref: /schemas/types.yaml#/definitions/uint32
+        description: Card-detect source pin as the modem firmware numbers it.
+
 required:
   - compatible
   - reg

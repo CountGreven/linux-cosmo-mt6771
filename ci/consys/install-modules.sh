@@ -19,7 +19,8 @@ for k in connadp.ko btif/btif_drv.ko common/wmt_drv.ko wlan/adaptor/wmt_chrdev_w
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/$D/$k"
 done
 for k in net/bluetooth/bluetooth.ko net/bluetooth/rfcomm/rfcomm.ko net/bluetooth/bnep/bnep.ko \
-         net/bluetooth/hidp/hidp.ko drivers/hid/uhid.ko crypto/ecdh_generic.ko crypto/kpp.ko crypto/ecc.ko; do
+         net/bluetooth/hidp/hidp.ko drivers/hid/uhid.ko crypto/ecdh_generic.ko crypto/kpp.ko crypto/ecc.ko \
+         drivers/net/wwan/wwan.ko drivers/net/wwan/mtk_md/mtk_md.ko; do
     install -D -m 644 "$T/$k" "$S/$R/kernel/$k"
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/kernel/$k"
 done
@@ -27,4 +28,6 @@ for f in modules.order modules.builtin modules.builtin.modinfo; do [ -e "$T/$f" 
 echo "installing the wifi and bluetooth modules for $R"
 tar -C "$S" -cf - "$R" | ssh -o BatchMode=yes "$H" "sudo -n tar -C /lib/modules -xf - --no-same-owner 2>/dev/null
     echo hci_stp | sudo -n tee /etc/modules-load.d/cosmo-bluetooth.conf >/dev/null
+    # the modem is started by hand during bring-up: keep udev from loading its driver
+    echo "blacklist mtk_md" | sudo -n tee /etc/modprobe.d/cosmo-modem.conf >/dev/null
     sudo -n depmod -a $R && grep -c mediatek,wifi /lib/modules/$R/modules.alias && ls /lib/modules"

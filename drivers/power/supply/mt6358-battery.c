@@ -50,6 +50,12 @@
 #define MT6358_BAT_LOW_COLD_UV		3200000
 #define MT6358_BAT_COLD_DECI_C		50
 
+/* Vendor charger manager (mtk_charger.c charger_check_status) temperature window, 0.1 C */
+#define MT6358_BAT_CHG_STOP_HOT		550
+#define MT6358_BAT_CHG_RESUME_HOT	500
+#define MT6358_BAT_CHG_STOP_COLD	-100
+#define MT6358_BAT_CHG_RESUME_COLD	0
+
 struct mt6358_battery {
 	struct device *dev;
 	struct regmap *regmap;
@@ -65,6 +71,7 @@ struct mt6358_battery {
 	s64 car0;		/* counter at the anchor, uAh */
 	int soc;		/* permille */
 	unsigned int low_count;
+	bool temp_inhibit;
 };
 
 VISIBLE_IF_KUNIT int mt6358_bat_current_ua(u16 raw)
@@ -109,7 +116,9 @@ EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_soc_permille);
 
 VISIBLE_IF_KUNIT bool mt6358_bat_temp_inhibit(bool inhibited, int deci_c)
 {
-	return inhibited;
+	if (inhibited)
+		return deci_c >= MT6358_BAT_CHG_RESUME_HOT || deci_c < MT6358_BAT_CHG_RESUME_COLD;
+	return deci_c >= MT6358_BAT_CHG_STOP_HOT || deci_c < MT6358_BAT_CHG_STOP_COLD;
 }
 EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_temp_inhibit);
 
@@ -217,6 +226,34 @@ static int mt6358_bat_ocv_soc(struct mt6358_battery *bat, int *ocv_uv)
 	return power_supply_batinfo_ocv2cap(bat->info, *ocv_uv, temp / 10) * 10;
 }
 
+static void mt6358_bat_temp_check(struct mt6358_battery *bat)
+{
+	union power_supply_propval val;
+	struct power_supply *chg;
+	bool inhibit;
+	int temp;
+
+	if (mt6358_bat_read_temp(&temp))
+		return;
+
+	inhibit = mt6358_bat_temp_inhibit(bat->temp_inhibit, temp);
+	if (inhibit == bat->temp_inhibit)
+		return;
+
+	chg = power_supply_get_by_name("mt6370-charger");
+	if (!chg)
+		return;
+
+	val.intval = inhibit ? POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE :
+			       POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO;
+	if (!power_supply_set_property(chg, POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR, &val)) {
+		bat->temp_inhibit = inhibit;
+		dev_warn(bat->dev, "battery at %d.%d C, charging %s\n", temp / 10, abs(temp % 10),
+			 inhibit ? "stopped" : "resumed");
+	}
+	power_supply_put(chg);
+}
+
 static void mt6358_bat_low_voltage_check(struct mt6358_battery *bat, int uv, int ua)
 {
 	int temp = 250, floor;
@@ -255,6 +292,7 @@ static void mt6358_bat_update(struct mt6358_battery *bat)
 
 	if (!mt6358_bat_read_voltage(bat, &uv) && !mt6358_bat_read_current(bat, &ua))
 		mt6358_bat_low_voltage_check(bat, uv, ua);
+	mt6358_bat_temp_check(bat);
 	mutex_unlock(&bat->lock);
 
 	if (bat->soc / 10 != old / 10)

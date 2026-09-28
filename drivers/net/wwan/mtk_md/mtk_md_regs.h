@@ -147,6 +147,36 @@ struct cldma_rgpd {
 #define SPM_PWR_CLK_DIS			BIT(4)
 #define SPM_MD1_SRAM_PDN		BIT(8)
 
+#define SPM_PCM_REG15_DATA		0x013c	/* non-zero while the SPM firmware runs */
+
+/*
+ * The SPM firmware lives in the secure firmware, which starts it on request
+ * (spm_v4/mtk_spm.c and mtk_spm_vcorefs_mt6771.c in the 4.4 BSP).
+ */
+#define MTK_SIP_KERNEL_SPM_VCOREFS_ARGS	0xc2000220
+#define MTK_SIP_KERNEL_SPM_ARGS		0xc2000228
+#define SPM_ARGS_SPMFW_IDX		0
+#define SPMFW_LP4X_2CH_3733		0
+#define VCOREFS_SMC_CMD_INIT		0	/* argument: the current operating point */
+#define VCOREFS_SMC_CMD_GO		1	/* argument: the flags below */
+#define SPM_FLAG_DIS_VCORE_DVS		BIT(3)
+#define SPM_FLAG_DIS_VCORE_DFS		BIT(4)
+#define SPM_FLAG_RUN_COMMON_SCENARIO	BIT(10)
+#define SPM_FLAG_DISABLE_MMSYS_DVFS	BIT(15)
+
+/*
+ * MT6358 PMIC: which inputs may switch an LDO on. The vendor kernel hands the
+ * modem's RF supplies to SRCLKEN1, the modem's clock request (pmic_lp_api.c).
+ */
+#define MT6358_LDO_VFE28_OP_EN		0x1c0a
+#define MT6358_LDO_VFE28_OP_CFG		0x1c10
+#define MT6358_LDO_VRF18_OP_EN		0x1c1e
+#define MT6358_LDO_VRF18_OP_CFG		0x1c24
+#define MT6358_LDO_VRF12_OP_EN		0x1c32
+#define MT6358_LDO_VRF12_OP_CFG		0x1c38
+#define MT6358_LDO_OP_SW		BIT(0)
+#define MT6358_LDO_OP_HW1		BIT(2)	/* SRCLKEN1 */
+
 /* infracfg_ao */
 #define INFRA_PERI2MD_PROT_STA		0x0228
 #define INFRA_MD2PERI_PROT_STA		0x0258

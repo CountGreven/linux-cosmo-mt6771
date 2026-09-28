@@ -13,6 +13,7 @@
  * everything after it need the CCIF ring queues.
  */
 
+#include <linux/arm-smccc.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
@@ -24,6 +25,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/random.h>
 #include <linux/regmap.h>
@@ -66,6 +68,10 @@ static const char * const mtk_md_clk_names[] = {
 };
 
 /* A level interrupt nobody acknowledges starves the CPU it lands on: notice and mask it. */
+/* bring-up: start the SPM firmware and stop there, to see that step on its own */
+static bool spm_only;
+module_param(spm_only, bool, 0444);
+
 struct mtk_md_irq_guard {
 	unsigned long window;
 	unsigned int count;
@@ -90,6 +96,7 @@ struct mtk_md {
 	struct regmap *infracfg;
 	struct regmap *topckgen;
 	struct regmap *apmixed;
+	struct regmap *pmic;
 	bool powered;
 	int irq_cldma, irq_ccif0, irq_ccif1, irq_wdt;
 	struct clk_bulk_data clks[ARRAY_SIZE(mtk_md_clk_names)];
@@ -551,12 +558,87 @@ static int mtk_md_pll_init(struct mtk_md *md)
 	return 0;
 }
 
+/*
+ * spm_check_status_before_dvfs(): the vendor holds a VCORE request around the modem start, and
+ * making that request starts the SPM firmware if it is not running. Without the firmware nothing
+ * answers the modem's clock and memory requests and the whole SoC stops when the modem first
+ * goes idle. Voltage and memory frequency scaling stay off: only the requests are served.
+ */
+static int mtk_md_spm_firmware(struct mtk_md *md)
+{
+	struct arm_smccc_res res;
+	u32 v;
+
+	regmap_read(md->scpsys, SPM_PCM_REG15_DATA, &v);
+	if (v) {
+		dev_info(md->dev, "spm: firmware running (r15 %#x)\n", v);
+		return 0;
+	}
+
+	arm_smccc_smc(MTK_SIP_KERNEL_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0,
+		      0, 0, 0, 0, &res);
+	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_INIT, 0, 0,
+		      0, 0, 0, 0, &res);
+	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_GO,
+		      SPM_FLAG_RUN_COMMON_SCENARIO | SPM_FLAG_DIS_VCORE_DVS |
+		      SPM_FLAG_DIS_VCORE_DFS | SPM_FLAG_DISABLE_MMSYS_DVFS, 0,
+		      0, 0, 0, 0, &res);
+
+	if (regmap_read_poll_timeout(md->scpsys, SPM_PCM_REG15_DATA, v, v, MTK_MD_POLL_US,
+				     MTK_MD_POLL_TIMEOUT_US)) {
+		dev_err(md->dev, "spm: the firmware did not start\n");
+		return -ETIMEDOUT;
+	}
+	dev_info(md->dev, "spm: firmware started (r15 %#x)\n", v);
+	return 0;
+}
+
+static const struct {
+	unsigned int op_en, op_cfg;
+} mtk_md_rf_ldos[] = {
+	{ MT6358_LDO_VFE28_OP_EN, MT6358_LDO_VFE28_OP_CFG },
+	{ MT6358_LDO_VRF18_OP_EN, MT6358_LDO_VRF18_OP_CFG },
+	{ MT6358_LDO_VRF12_OP_EN, MT6358_LDO_VRF12_OP_CFG },
+};
+
+/* The RF supplies follow the modem's clock request while it runs, and are off otherwise */
+static void mtk_md_rf_supplies(struct mtk_md *md, bool modem)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(mtk_md_rf_ldos); i++) {
+		regmap_write(md->pmic, mtk_md_rf_ldos[i].op_cfg, 0);
+		regmap_write(md->pmic, mtk_md_rf_ldos[i].op_en,
+			     modem ? MT6358_LDO_OP_HW1 : MT6358_LDO_OP_SW);
+	}
+}
+
+static int mtk_md_get_pmic(struct mtk_md *md)
+{
+	struct device_node *np;
+	struct platform_device *pdev;
+
+	np = of_parse_phandle(md->dev->of_node, "mediatek,pmic", 0);
+	if (!np)
+		return dev_err_probe(md->dev, -ENODEV, "no mediatek,pmic\n");
+	pdev = of_find_device_by_node(np->parent);
+	of_node_put(np);
+	if (!pdev)
+		return -EPROBE_DEFER;
+
+	/* the PMIC's registers belong to its bus, the PMIC wrapper */
+	md->pmic = dev_get_regmap(&pdev->dev, NULL);
+	put_device(&pdev->dev);
+	return md->pmic ? 0 : -EPROBE_DEFER;
+}
+
 /* md_cd_power_off() */
 static void mtk_md_power_off(struct mtk_md *md)
 {
 	if (!md->powered)
 		return;
 	mtk_md_mtcmos_off(md);
+	mtk_md_rf_supplies(md, false);
 	regmap_clear_bits(md->infracfg, INFRA_MD_SRCCLKENA, INFRA_MD_SRCCLKENA_MASK);
 	regmap_set_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
 	md->powered = false;
@@ -564,8 +646,8 @@ static void mtk_md_power_off(struct mtk_md *md)
 }
 
 /*
- * md_cd_power_on(). The rails need nothing: vmodem and vsram_others are always on, the RF rails
- * follow the modem's own clock request, and the modem's clock buffer is left on by LK.
+ * md_cd_power_on(). vmodem and vsram_others are always on and LK leaves the modem's clock buffer
+ * on; the RF rails are handed to the modem's clock request.
  */
 static int mtk_md_power_on(struct mtk_md *md)
 {
@@ -573,10 +655,13 @@ static int mtk_md_power_on(struct mtk_md *md)
 	int ret;
 
 	regmap_clear_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
+	mtk_md_rf_supplies(md, true);
 
 	ret = mtk_md_mtcmos_on(md);
-	if (ret)
+	if (ret) {
+		mtk_md_rf_supplies(md, false);
 		return ret;
+	}
 	md->powered = true;
 	regmap_read(md->scpsys, SPM_MD1_PWR_CON, &v);
 	dev_info(md->dev, "step 4: MD1 power switch on (MD1_PWR_CON %#x)\n", v);
@@ -963,6 +1048,9 @@ static void mtk_md_start(struct work_struct *work)
 	struct mtk_md *md = container_of(work, struct mtk_md, start_work);
 	int ret;
 
+	if (mtk_md_spm_firmware(md) || spm_only)
+		return;
+
 	dev_info(md->dev, "step 1: clocks on\n");
 	ret = clk_bulk_prepare_enable(ARRAY_SIZE(md->clks), md->clks);
 	if (ret) {
@@ -1099,6 +1187,9 @@ static int mtk_md_probe(struct platform_device *pdev)
 	md->apmixed = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,apmixedsys");
 	if (IS_ERR(md->apmixed))
 		return dev_err_probe(dev, PTR_ERR(md->apmixed), "apmixedsys\n");
+	ret = mtk_md_get_pmic(md);
+	if (ret)
+		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(md->clks); i++)
 		md->clks[i].id = mtk_md_clk_names[i];

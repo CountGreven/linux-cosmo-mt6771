@@ -317,6 +317,15 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&light_sensor_pins>;
 	};
+
+	/* Vendor msensor@0c, direction 2: x and y inverted; to be proven with a compass */
+	magnetometer@c {
+		compatible = "voltafield,af6133e";
+		reg = <0x0c>;
+		mount-matrix = "-1", "0", "0",
+			       "0", "-1", "0",
+			       "0", "0", "1";
+	};
 };
 &i2c2 {
 	mediatek,ch-offset = <0x100>;

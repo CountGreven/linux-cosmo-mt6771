@@ -2091,6 +2091,21 @@ static int wlanMonSetChannel(struct wiphy *wiphy, struct net_device *dev, struct
 		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo->ucBssIndex);
 		wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prMonBssInfo->ucBssIndex,
 					       chandef);
+	} else if (prGlueInfo->fgMonUsingAis) {
+		/*
+		 * Borrowing AIS: wlanMonAddIface only set prAisBssInfo's own band/channel once, at add
+		 * time, to the monitor's still-default channel. A later channel change (the normal case
+		 * -- injecting against a real target is essentially never on that default channel) must
+		 * be mirrored onto the borrowed BSS the same way, or its stored channel stays stale while
+		 * the RF and the channel-privilege grant move to the new one -- three-way mismatch, real
+		 * TX failures (BIP_ERROR seen live), not caught until injection was actually exercised
+		 * off-default-channel.
+		 */
+		P_BSS_INFO_T prAis = prGlueInfo->prAdapter->prAisBssInfo;
+
+		wlanMonBssSetChannel(prGlueInfo->prAdapter, prAis, chandef);
+		wlanMonAbortChannelPrivilege(prGlueInfo->prAdapter, prAis->ucBssIndex);
+		wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prAis->ucBssIndex, chandef);
 	}
 
 	prGlueInfo->rMonChandef = *chandef;

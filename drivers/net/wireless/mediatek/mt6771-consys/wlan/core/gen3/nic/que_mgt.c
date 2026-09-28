@@ -1190,6 +1190,17 @@ VOID qmDetermineStaRecIndex(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInf
 				return;
 			}
 		}
+		/* No real AP association (prStaRecOfAP unset): a genuinely connected client always has
+		 * one and is handled above, unconditionally, regardless of destination, since every
+		 * frame physically goes to the AP first. Only reachable here while disconnected, which
+		 * is exactly injection's case; a broadcast destination there is real (ARP-replay-style
+		 * frames are always broadcast) and has a real STA_REC_INDEX_BMCAST already resolved by
+		 * the caller, which the generic per-STA loop below cannot match.
+		 */
+		if (IS_BMCAST_MAC_ADDR(prMsduInfo->aucEthDestAddr)) {
+			prMsduInfo->ucStaRecIndex = STA_REC_INDEX_BMCAST;
+			return;
+		}
 		break;
 
 	case OP_MODE_P2P_DEVICE:

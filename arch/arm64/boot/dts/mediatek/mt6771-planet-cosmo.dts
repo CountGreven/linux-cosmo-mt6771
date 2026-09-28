@@ -1135,4 +1135,14 @@
 &modem {
 	mediatek,pmic = <&pmic>;
 	status = "okay";
+
+	/* the nano-SIM slot; SIM2 is the soldered eSIM, which has no hot-plug interrupt */
+	sim-hot-plug-1 {
+		mediatek,eint = <0>;
+		mediatek,eint-trigger = <IRQ_TYPE_LEVEL_LOW>;
+		mediatek,debounce-us = <100000>;
+		mediatek,socket-type = <0>;
+		mediatek,dedicated = <0>;
+		mediatek,source-pin = <1>;
+	};
 };

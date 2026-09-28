@@ -124,6 +124,46 @@ struct mtk_md_net {
 
 #define MTK_MD_FS_RX_BACKLOG	32
 
+/* port_cfg.c md1_ccci_ports[], the char ports user space talks to (6293, no MD3) */
+struct mtk_md_cport_desc {
+	const char *name;
+	u8 tx, rx, q;
+	bool user_header;	/* PORT_F_USER_HEADER: the CCCI header passes through */
+	bool keep_closed;	/* port_char_recv_skb(): queued even with nobody reading */
+};
+
+static const struct mtk_md_cport_desc mtk_md_cports[] = {
+	{ "ccci_aud", 5, 4, 0, true, true },
+	{ "ccci_md_log_ctrl", 8, 6, 1 },
+	{ "ttyC2", 40, 38, 1 },
+	{ "ttyC3", 61, 60, 1 },
+	{ "ttyC1", 43, 42, 2 },
+	{ "ccci_imsv", 52, 53, 6 },
+	{ "ccci_imsc", 54, 55, 6 },
+	{ "ccci_imsa", 56, 57, 6 },
+	{ "ccci_imsdc", 58, 59, 6 },
+	{ "ccci_it", 51, 50, 0, true },
+	{ "ccci_lb_it", 63, 62, 0 },
+	{ "ccci_mdl_monitor", 95, 94, 1 },
+	{ "ccci_imsem", 101, 102, 6 },
+	{ "ccci_imsm", 170, 169, 1 },
+	{ "ccci_woa", 172, 171, 1 },
+	{ "ccci_ss_xcap", 174, 173, 1 },
+	{ "ccci_bip", 176, 175, 1 },
+};
+
+#define MTK_MD_CPORTS		ARRAY_SIZE(mtk_md_cports)
+#define MTK_MD_CPORT_BACKLOG	32	/* char ports' rx_length_th */
+
+struct mtk_md_cport {
+	struct miscdevice misc;
+	const struct mtk_md_cport_desc *desc;
+	struct mtk_md *md;
+	struct sk_buff_head rx;
+	wait_queue_head_t wq;
+	atomic_t open;
+};
+
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
 
@@ -235,6 +275,7 @@ struct mtk_md {
 	u16 tx_seq[MTK_MD_TX_SEQ_CHANNELS];
 	bool ready;			/* HS2 seen */
 	struct wwan_port *at_port;
+	struct mtk_md_cport cport[MTK_MD_CPORTS];
 	struct miscdevice fs_misc;
 	struct sk_buff_head fs_rx;
 	wait_queue_head_t fs_wq;
@@ -1478,6 +1519,179 @@ static void mtk_md_fs_rx(struct mtk_md *md, const u8 *msg, u32 len)
 	wake_up_interruptible(&md->fs_wq);
 }
 
+/* port_char_recv_skb() and port_recv_skb() for the vendor char ports */
+static bool mtk_md_cport_rx(struct mtk_md *md, u32 ch, const u8 *msg, u32 len)
+{
+	const u32 hdr = sizeof(struct mtk_md_ccci_hdr);
+	struct mtk_md_cport *cp = NULL;
+	struct sk_buff *skb;
+	u32 skip;
+	int i;
+
+	for (i = 0; i < MTK_MD_CPORTS; i++)
+		if (mtk_md_cports[i].rx == ch)
+			cp = &md->cport[i];
+	if (!cp)
+		return false;
+	if (!atomic_read(&cp->open) && !cp->desc->keep_closed)
+		return true;
+	if (skb_queue_len(&cp->rx) >= MTK_MD_CPORT_BACKLOG) {
+		dev_warn_ratelimited(md->dev, "%s: backlog full, dropped\n", cp->desc->name);
+		return true;
+	}
+	skip = cp->desc->user_header ? 0 : hdr;
+	if (len < skip)
+		return true;
+	skb = alloc_skb(len - skip, GFP_KERNEL);
+	if (!skb)
+		return true;
+	skb_put_data(skb, msg + skip, len - skip);
+	skb_queue_tail(&cp->rx, skb);
+	wake_up_interruptible(&cp->wq);
+	return true;
+}
+
+static struct mtk_md_cport *mtk_md_cport_of(struct file *file)
+{
+	return container_of(file->private_data, struct mtk_md_cport, misc);
+}
+
+static int mtk_md_cport_open(struct inode *inode, struct file *file)
+{
+	struct mtk_md_cport *cp = mtk_md_cport_of(file);
+
+	if (atomic_cmpxchg(&cp->open, 0, 1))
+		return -EBUSY;
+	return 0;
+}
+
+static int mtk_md_cport_release(struct inode *inode, struct file *file)
+{
+	struct mtk_md_cport *cp = mtk_md_cport_of(file);
+
+	if (!cp->desc->keep_closed)
+		skb_queue_purge(&cp->rx);
+	atomic_set(&cp->open, 0);
+	return 0;
+}
+
+/* port_dev_read(): one message per read */
+static ssize_t mtk_md_cport_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+	struct mtk_md_cport *cp = mtk_md_cport_of(file);
+	struct sk_buff *skb;
+	ssize_t ret;
+
+	for (;;) {
+		skb = skb_dequeue(&cp->rx);
+		if (skb)
+			break;
+		if (file->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		ret = wait_event_interruptible(cp->wq, !skb_queue_empty(&cp->rx));
+		if (ret)
+			return ret;
+	}
+	if (count < skb->len) {
+		skb_queue_head(&cp->rx, skb);
+		return -EMSGSIZE;
+	}
+	ret = copy_to_user(buf, skb->data, skb->len) ? -EFAULT : skb->len;
+	consume_skb(skb);
+	return ret;
+}
+
+/* port_dev_write(): up to CCCI_MTU of payload, the header built unless the user supplies it */
+static ssize_t mtk_md_cport_write(struct file *file, const char __user *buf, size_t count,
+				  loff_t *ppos)
+{
+	struct mtk_md_cport *cp = mtk_md_cport_of(file);
+	const u32 hdr = sizeof(struct mtk_md_ccci_hdr);
+	struct mtk_md *md = cp->md;
+	struct mtk_md_ccci_hdr *h;
+	size_t len;
+	u8 *msg;
+	int ret;
+
+	if (!md->ready)
+		return -ENODEV;
+	if (cp->desc->user_header ? count < hdr || count > MTK_MD_CCCI_MTU + hdr :
+	    !count || count > MTK_MD_CCCI_MTU)
+		return -EINVAL;
+	len = cp->desc->user_header ? count : count + hdr;
+	msg = kzalloc(len, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+	if (copy_from_user(msg + len - count, buf, count)) {
+		kfree(msg);
+		return -EFAULT;
+	}
+	h = (struct mtk_md_ccci_hdr *)msg;
+	if (!cp->desc->user_header)
+		h->data[1] = cpu_to_le32(len);
+	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, cp->desc->tx));
+	ret = mtk_md_send(md, cp->desc->q, msg, len);
+	kfree(msg);
+	return ret ? ret : count;
+}
+
+static __poll_t mtk_md_cport_poll(struct file *file, poll_table *wait)
+{
+	struct mtk_md_cport *cp = mtk_md_cport_of(file);
+	__poll_t mask = cp->md->ready ? EPOLLOUT | EPOLLWRNORM : 0;
+
+	poll_wait(file, &cp->wq, wait);
+	if (!skb_queue_empty(&cp->rx))
+		mask |= EPOLLIN | EPOLLRDNORM;
+	return mask;
+}
+
+static const struct file_operations mtk_md_cport_fops = {
+	.owner = THIS_MODULE,
+	.open = mtk_md_cport_open,
+	.release = mtk_md_cport_release,
+	.read = mtk_md_cport_read,
+	.write = mtk_md_cport_write,
+	.poll = mtk_md_cport_poll,
+	.llseek = noop_llseek,
+};
+
+static void mtk_md_cports_unregister(void *data)
+{
+	struct mtk_md *md = data;
+	int i;
+
+	for (i = 0; i < MTK_MD_CPORTS; i++) {
+		misc_deregister(&md->cport[i].misc);
+		skb_queue_purge(&md->cport[i].rx);
+	}
+}
+
+static int mtk_md_cports_register(struct mtk_md *md)
+{
+	int i, ret;
+
+	for (i = 0; i < MTK_MD_CPORTS; i++) {
+		struct mtk_md_cport *cp = &md->cport[i];
+
+		cp->desc = &mtk_md_cports[i];
+		cp->md = md;
+		skb_queue_head_init(&cp->rx);
+		init_waitqueue_head(&cp->wq);
+		cp->misc.minor = MISC_DYNAMIC_MINOR;
+		cp->misc.name = cp->desc->name;
+		cp->misc.fops = &mtk_md_cport_fops;
+		cp->misc.parent = md->dev;
+		ret = misc_register(&cp->misc);
+		if (ret) {
+			while (--i >= 0)
+				misc_deregister(&md->cport[i].misc);
+			return ret;
+		}
+	}
+	return devm_add_action_or_reset(md->dev, mtk_md_cports_unregister, md);
+}
+
 static struct mtk_md *mtk_md_fs_md(struct file *file)
 {
 	return container_of(file->private_data, struct mtk_md, fs_misc);
@@ -1683,6 +1897,9 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 		mtk_md_at_rx(md, msg, len);
 		return;
 	}
+
+	if (mtk_md_cport_rx(md, ch, msg, len))
+		return;
 
 	if (ch == MTK_MD_CH_RPC_RX) {
 		mtk_md_trace(md, "rx q%u rpc len %u\n", q, len);
@@ -2268,6 +2485,10 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_at_register(md);
 	if (ret)
 		return dev_err_probe(dev, ret, "AT port\n");
+
+	ret = mtk_md_cports_register(md);
+	if (ret)
+		return dev_err_probe(dev, ret, "vendor char ports\n");
 
 	ret = wwan_register_ops(dev, &mtk_md_wwan_ops, md, WWAN_NO_DEFAULT_LINK);
 	if (ret)

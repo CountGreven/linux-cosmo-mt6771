@@ -769,14 +769,10 @@ static int mt6359_auxadc_read_raw(struct iio_dev *indio_dev,
 	int ret;
 
 	if (mask == IIO_CHAN_INFO_SCALE) {
+		/* mV per count: the divider ratio times the reference over the full scale */
 		*val = desc->r_ratio.numerator * cinfo->vref_mV;
-
-		if (desc->r_ratio.denominator > 1) {
-			*val2 = desc->r_ratio.denominator;
-			return IIO_VAL_FRACTIONAL;
-		}
-
-		return IIO_VAL_INT;
+		*val2 = max(desc->r_ratio.denominator, 1) << chan->scan_type.realbits;
+		return IIO_VAL_FRACTIONAL;
 	}
 
 	scoped_guard(mutex, &adc_dev->lock) {

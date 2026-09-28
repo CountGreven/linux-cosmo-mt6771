@@ -267,6 +267,9 @@ static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	WMT_STEP_DO_ACTIONS_FUNC(STEP_TRIGGER_POINT_WHEN_AP_SUSPEND);
 
+	/* CONNSYS runs on across AP suspend (vendor SPM keeps it powered): keep the CONN domain on */
+	device_set_awake_path(&pdev->dev);
+
 	return 0;
 }
 

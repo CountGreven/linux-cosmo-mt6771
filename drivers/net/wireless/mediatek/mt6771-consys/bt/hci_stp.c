@@ -25,9 +25,22 @@
 #define HCI_STP_RX_CHUNK	2048
 #define HCI_STP_TX_RETRIES	3
 
-/* the factory Bluetooth record: the address, most significant byte first, then radio settings */
 #define HCI_STP_NVRAM_PATH	"/mnt/vendor/nvdata/APCFG/APRDEB/BT_Addr"
 #define HCI_STP_OP_SET_BDADDR	0xfc1a
+#define HCI_STP_OP_SET_RADIO	0xfc79
+#define HCI_STP_OP_SET_SLEEP	0xfc7a
+#define HCI_STP_OP_SET_TX_OFFSET	0xfc93
+
+/* the start of the factory Bluetooth record, as far as the vendor's init sequence uses it */
+struct hci_stp_nvram {
+	u8 addr[6];	/* most significant byte first */
+	u8 voice[2];
+	u8 codec[4];
+	u8 radio[6];
+	u8 sleep[7];
+	u8 feature[2];
+	u8 tx_offset[3];
+} __packed;
 
 struct hci_stp {
 	struct hci_dev *hdev;
@@ -35,8 +48,9 @@ struct hci_stp {
 	unsigned int launch_tries;
 	unsigned int nvram_tries;
 	bool registered;
-	bool have_bdaddr;
+	bool have_nvram;
 	bdaddr_t bdaddr;
+	struct hci_stp_nvram nvram;
 	struct work_struct rx_work;
 	struct sk_buff *rx_skb;
 	unsigned int rx_need;
@@ -298,52 +312,77 @@ static int hci_stp_send(struct hci_dev *hdev, struct sk_buff *skb)
 	return 0;
 }
 
-static int hci_stp_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+static int hci_stp_vendor_cmd(struct hci_dev *hdev, u16 opcode, const void *param, u32 len)
 {
 	struct sk_buff *skb;
 
-	skb = __hci_cmd_sync(hdev, HCI_STP_OP_SET_BDADDR, sizeof(*bdaddr), bdaddr,
-			     HCI_INIT_TIMEOUT);
+	skb = __hci_cmd_sync(hdev, opcode, len, param, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb))
 		return PTR_ERR(skb);
 	kfree_skb(skb);
 	return 0;
 }
 
-static int hci_stp_read_bdaddr(struct hci_stp *bt)
+static int hci_stp_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+{
+	return hci_stp_vendor_cmd(hdev, HCI_STP_OP_SET_BDADDR, bdaddr, sizeof(*bdaddr));
+}
+
+static int hci_stp_read_nvram(struct hci_stp *bt)
 {
 	void *data = NULL;
 	size_t fsize = 0;
 	ssize_t n;
 
 	/* from a kworker a plain path resolves in the initial rootfs; this looks in init's root */
-	n = kernel_read_file_from_path_initns(HCI_STP_NVRAM_PATH, 0, &data, sizeof(bt->bdaddr),
+	n = kernel_read_file_from_path_initns(HCI_STP_NVRAM_PATH, 0, &data, sizeof(bt->nvram),
 					      &fsize, READING_FIRMWARE);
 	if (n < 0)
 		return n;
-	if (n == sizeof(bt->bdaddr))
-		baswap(&bt->bdaddr, data);
+	if (n == sizeof(bt->nvram))
+		memcpy(&bt->nvram, data, sizeof(bt->nvram));
 	vfree(data);
-
-	if (n != sizeof(bt->bdaddr) || !bacmp(&bt->bdaddr, BDADDR_ANY) ||
-	    !bacmp(&bt->bdaddr, BDADDR_NONE))
+	if (n != sizeof(bt->nvram))
 		return -EINVAL;
-	bt->have_bdaddr = true;
+
+	baswap(&bt->bdaddr, (bdaddr_t *)bt->nvram.addr);
+	if (!bacmp(&bt->bdaddr, BDADDR_ANY) || !bacmp(&bt->bdaddr, BDADDR_NONE))
+		return -EINVAL;
+	bt->have_nvram = true;
 	return 0;
 }
 
-/* without the factory address the controller answers to a default shared by every unit */
+/*
+ * What the vendor's userspace sends for this chip before the first reset.
+ * Without it the controller answers to a default address shared by every
+ * unit and runs on default radio and sleep settings.
+ */
 static int hci_stp_setup(struct hci_dev *hdev)
 {
 	struct hci_stp *bt = hci_get_drvdata(hdev);
+	const struct hci_stp_nvram *nv = &bt->nvram;
+	const struct {
+		u16 opcode;
+		const void *param;
+		u32 len;
+	} cmds[] = {
+		{ HCI_STP_OP_SET_BDADDR, &bt->bdaddr, sizeof(bt->bdaddr) },
+		{ HCI_STP_OP_SET_RADIO, nv->radio, sizeof(nv->radio) },
+		{ HCI_STP_OP_SET_TX_OFFSET, nv->tx_offset, sizeof(nv->tx_offset) },
+		{ HCI_STP_OP_SET_SLEEP, nv->sleep, sizeof(nv->sleep) },
+	};
+	unsigned int i;
 	int ret;
 
-	if (!bt->have_bdaddr)
+	if (!bt->have_nvram)
 		return 0;
 
-	ret = hci_stp_set_bdaddr(hdev, &bt->bdaddr);
-	if (ret)
-		bt_dev_warn(hdev, "setting the factory address failed: %d", ret);
+	for (i = 0; i < ARRAY_SIZE(cmds); i++) {
+		ret = hci_stp_vendor_cmd(hdev, cmds[i].opcode, cmds[i].param, cmds[i].len);
+		if (ret)
+			bt_dev_warn(hdev, "factory setting 0x%04x failed: %d",
+				    cmds[i].opcode, ret);
+	}
 	return 0;
 }
 
@@ -363,12 +402,12 @@ static void hci_stp_register_work(struct work_struct *work)
 			pr_err("hci_stp: WMT core never became ready, no Bluetooth\n");
 		return;
 	}
-	if (!bt->have_bdaddr && hci_stp_read_bdaddr(bt) && ++bt->nvram_tries < 30) {
+	if (!bt->have_nvram && hci_stp_read_nvram(bt) && ++bt->nvram_tries < 30) {
 		schedule_delayed_work(&bt->register_work, HZ);
 		return;
 	}
-	if (!bt->have_bdaddr)
-		pr_warn("hci_stp: no factory address in %s\n", HCI_STP_NVRAM_PATH);
+	if (!bt->have_nvram)
+		pr_warn("hci_stp: no factory record in %s\n", HCI_STP_NVRAM_PATH);
 
 	ret = hci_register_dev(bt->hdev);
 	if (ret < 0) {
@@ -405,7 +444,7 @@ static int __init hci_stp_init(void)
 	hdev->send = hci_stp_send;
 	hdev->setup = hci_stp_setup;
 	hdev->set_bdaddr = hci_stp_set_bdaddr;
-	/* the controller forgets the address when the function or the chip is reset */
+	/* the controller forgets these settings when the function or the chip is reset */
 	hci_set_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
 
 	hci_stp = bt;

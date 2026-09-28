@@ -38,6 +38,7 @@
 #include <linux/unaligned.h>
 #include <net/ieee80211_radiotap.h>
 #include "gl_os.h"
+#include "gl_wext_priv.h"
 #include <linux/sched/debug.h>
 #include "wlan_lib.h"
 #include "gl_wext.h"
@@ -2084,6 +2085,28 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 	}
 	prGlueInfo->prMonDevHandler = NULL;
 	cfg80211_unregister_netdevice(wdev->netdev);
+
+	return 0;
+}
+
+int wlanMonSpoofAisMac(P_GLUE_INFO_T prGlueInfo, PUINT_8 pucMac)
+{
+	P_ADAPTER_T prAdapter = prGlueInfo->prAdapter;
+	P_BSS_INFO_T prAis = prAdapter->prAisBssInfo;
+
+	if (!prGlueInfo->fgMonUsingAis)
+		return -EINVAL;
+
+	wlanMonAbortChannelPrivilege(prAdapter, prAis->ucBssIndex);
+	UNSET_NET_ACTIVE(prAdapter, prAis->ucBssIndex);
+	nicDeactivateNetwork(prAdapter, prAis->ucBssIndex);
+
+	COPY_MAC_ADDR(prAis->aucOwnMacAddr, pucMac);
+
+	nicActivateNetwork(prAdapter, prAis->ucBssIndex);
+	SET_NET_ACTIVE(prAdapter, prAis->ucBssIndex);
+	nicUpdateBss(prAdapter, prAis->ucBssIndex);
+	wlanMonRequestChannelPrivilege(prAdapter, prAis->ucBssIndex, &prGlueInfo->rMonChandef);
 
 	return 0;
 }

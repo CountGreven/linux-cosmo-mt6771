@@ -2259,6 +2259,7 @@ reqExtSetAcpiDevicePowerState(IN P_GLUE_INFO_T prGlueInfo,
 #define CMD_RFTEST_SET		"RFTEST_SET"
 #define CMD_RFTEST_QUERY	"RFTEST_QUERY"
 #define CMD_BSSDUMP		"BSSDUMP"
+#define CMD_MONSPOOF		"MONSPOOF"
 #define CMD_SETBUFMODE		"BUFFER_MODE"
 
 #if CFG_SUPPORT_QA_TOOL
@@ -3269,6 +3270,56 @@ int priv_driver_bss_dump(IN struct net_device *prNetDev, IN char *pcCommand, IN 
 }
 
 #if CFG_SUPPORT_SNIFFER
+static INT_32 kalHexDigit(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+/* MONSPOOF aa:bb:cc:dd:ee:ff: reconfigure the monitor's borrowed AIS BSS to answer to a different
+ * own address (see wlanMonSpoofAisMac, gl_init.c) -- a diagnostic to find out whether injection's
+ * source-address check is against the true hardware MAC or against whatever this BSS is currently
+ * configured to answer to.
+ */
+int priv_driver_mon_spoof(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
+{
+	P_GLUE_INFO_T prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	INT_32 i4Argc = 0;
+	PCHAR apcArgv[WLAN_CFG_ARGV_MAX];
+	UINT_8 aucMac[6];
+	PCHAR pcCur;
+	INT_32 i;
+	INT_32 iRet;
+
+	wlanCfgParseArgument(pcCommand, &i4Argc, apcArgv);
+	if (i4Argc < 2)
+		return snprintf(pcCommand, i4TotalLen, "usage: MONSPOOF aa:bb:cc:dd:ee:ff\n");
+
+	pcCur = apcArgv[1];
+	for (i = 0; i < 6; i++) {
+		INT_32 hi = kalHexDigit(pcCur[0]);
+		INT_32 lo = kalHexDigit(pcCur[1]);
+
+		if (hi < 0 || lo < 0)
+			return snprintf(pcCommand, i4TotalLen, "bad mac\n");
+		aucMac[i] = (UINT_8) ((hi << 4) | lo);
+		pcCur += 2;
+		if (i < 5) {
+			if (*pcCur != ':')
+				return snprintf(pcCommand, i4TotalLen, "bad mac\n");
+			pcCur++;
+		}
+	}
+
+	iRet = wlanMonSpoofAisMac(prGlueInfo, aucMac);
+	return snprintf(pcCommand, i4TotalLen, "spoof %s\n", iRet == 0 ? "ok" : "failed (monitor not borrowing AIS)");
+}
+
 int priv_driver_set_monitor(IN struct net_device *prNetDev, IN char *pcCommand, IN int i4TotalLen)
 {
 	P_GLUE_INFO_T prGlueInfo = NULL;
@@ -3510,6 +3561,11 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 		} else if (strncasecmp(pcCommand, CMD_BSSDUMP, strlen(CMD_BSSDUMP)) == 0) {
 			i4BytesWritten = priv_driver_bss_dump(prNetDev, pcCommand, i4TotalLen);
 		}
+#if CFG_SUPPORT_SNIFFER
+		else if (strncasecmp(pcCommand, CMD_MONSPOOF, strlen(CMD_MONSPOOF)) == 0) {
+			i4BytesWritten = priv_driver_mon_spoof(prNetDev, pcCommand, i4TotalLen);
+		}
+#endif
 		/* Mediatek private command */
 		else if (strncasecmp(pcCommand, CMD_SET_SW_CTRL, strlen(CMD_SET_SW_CTRL)) == 0) {
 			i4BytesWritten = priv_driver_set_sw_ctrl(prNetDev, pcCommand, i4TotalLen);

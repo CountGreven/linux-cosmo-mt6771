@@ -293,6 +293,17 @@ int
 priv_ate_set(IN struct net_device *prNetDev,
 	     IN struct iw_request_info *prIwReqInfo, IN union iwreq_data *prIwReqData, IN char *pcExtra);
 #endif
+
+#if CFG_SUPPORT_SNIFFER
+/* gl_init.c: reconfigure the monitor interface's borrowed AIS BSS to answer to a different own
+ * address, to test whether TX_SET_MMPDU's source-address check (see 17-consys-port.org, "continued
+ * session": any frame whose source isn't the BSS's own configured address is rejected with TXS
+ * BIP_ERROR) is against the true hardware MAC or against whatever this BSS is configured to answer
+ * to. Returns 0 on success, -EINVAL if the monitor isn't currently borrowing AIS.
+ */
+int wlanMonSpoofAisMac(P_GLUE_INFO_T prGlueInfo, PUINT_8 pucMac);
+#endif
+
 /*******************************************************************************
 *                              F U N C T I O N S
 ********************************************************************************

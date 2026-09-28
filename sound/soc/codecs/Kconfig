@@ -2855,6 +2855,19 @@ config SND_SOC_MT6359
 	  Enable support for the platform which uses MT6359 as
 	  external codec device.
 
+config SND_SOC_MT6358_ACCDET
+	tristate "MediaTek MT6358 ACCDET driver"
+	depends on MFD_MT6397 || COMPILE_TEST
+	depends on IIO
+	help
+	  Headset jack and button detection for the accessory detection
+	  (ACCDET) block of the MediaTek MT6358 PMIC.
+
+config SND_SOC_MT6358_ACCDET_KUNIT_TEST
+	tristate "KUnit tests for the MT6358 ACCDET driver" if !KUNIT_ALL_TESTS
+	depends on SND_SOC_MT6358_ACCDET && KUNIT
+	default KUNIT_ALL_TESTS
+
 config SND_SOC_MT6359_ACCDET
 	tristate "MediaTek MT6359 ACCDET driver"
 	depends on MTK_PMIC_WRAP

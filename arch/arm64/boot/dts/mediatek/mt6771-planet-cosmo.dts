@@ -901,6 +901,19 @@
 	mali-supply = <&mt6358_vgpu_reg>;
 };
 
+/* Vendor speed segment 4 (efuse speed bound 2 with turbo) runs the GPU up to 900 MHz */
+&gpu_opp_table {
+	opp-850000000 {
+		opp-hz = /bits/ 64 <850000000>;
+		opp-microvolt = <862500>;
+	};
+
+	opp-900000000 {
+		opp-hz = /bits/ 64 <900000000>;
+		opp-microvolt = <900000>;
+	};
+};
+
 /*
  * Rails the vendor keeps up that nothing in this tree consumes yet. Thirty seconds after boot the
  * regulator core switched them off (console log 2026-09-25: "vdram2: disabling" was the last line

@@ -631,6 +631,11 @@ INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 						return iret;
 					}
 					bgf_irq_registered = true;
+					/*
+					 * CONN2AP is an SPM wake source on the vendor build: CONNSYS
+					 * wakes the AP rather than waiting out a suspend unanswered.
+					 */
+					enable_irq_wake(bgf_irq_num);
 				}
 			} else {
 				struct device_node *node;

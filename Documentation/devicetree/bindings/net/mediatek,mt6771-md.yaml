@@ -69,6 +69,9 @@ properties:
       - description: CCIF1 MD side
       - description: CCIF2 AP side
       - description: CCIF2 MD side
+      - description:
+          DVFSRC bus clock. The modem posts its voltage and memory frequency
+          requests there once it runs.
 
   clock-names:
     items:
@@ -79,6 +82,7 @@ properties:
       - const: ccif1-md
       - const: ccif2-ap
       - const: ccif2-md
+      - const: dvfsrc
 
   resets:
     items:
@@ -164,9 +168,10 @@ examples:
                      <&infracfg CLK_INFRA_CCIF1_AP>,
                      <&infracfg CLK_INFRA_CCIF1_MD>,
                      <&infracfg CLK_INFRA_CCIF2_AP>,
-                     <&infracfg CLK_INFRA_CCIF2_MD>;
+                     <&infracfg CLK_INFRA_CCIF2_MD>,
+                     <&infracfg CLK_INFRA_DVFSRC>;
             clock-names = "cldma", "ccif-ap", "ccif-md", "ccif1-ap",
-                          "ccif1-md", "ccif2-ap", "ccif2-md";
+                          "ccif1-md", "ccif2-ap", "ccif2-md", "dvfsrc";
             resets = <&infracfg MT8183_INFRACFG_AO_CLDMA_AO_SW_RST>,
                      <&infracfg MT8183_INFRACFG_AO_CLDMA_SW_RST>,
                      <&infracfg MT8183_INFRACFG_AO_AP_MD_CCIF_SW_RST>;

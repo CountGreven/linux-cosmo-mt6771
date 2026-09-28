@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/iio/magnetometer/voltafield,af6133e.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Voltafield AF6133E magnetometer sensor
+
+maintainers:
+  - Fredrik Lindlöf <fredrik.lindlof@gmail.com>
+
+properties:
+  compatible:
+    const: voltafield,af6133e
+
+  reg:
+    maxItems: 1
+
+  vdd-supply:
+    description: Regulator for the sensor supply.
+
+  vddio-supply:
+    description: Regulator for the digital I/O supply.
+
+  mount-matrix:
+    description: An optional 3x3 mounting rotation matrix.
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        magnetometer@c {
+            compatible = "voltafield,af6133e";
+            reg = <0x0c>;
+        };
+    };

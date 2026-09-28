@@ -49,11 +49,8 @@
 #include <linux/delay.h>
 
 /* ALPS header files */
-#ifndef CONFIG_RTC_DRV_MT6397
+/* the vendor RTC 32 kHz export is a shim here, whatever mainline RTC is built */
 #include <mtk_plat_shim.h>
-#else
-#include <linux/mfd/mt6397/rtc_misc.h>
-#endif
 #ifdef CONFIG_MTK_MT6306_GPIO_SUPPORT
 #include <mtk_6306_gpio.h>
 #endif

@@ -37,6 +37,7 @@
 #include <linux/slab.h>
 #include <linux/sizes.h>
 #include <linux/skbuff.h>
+#include <linux/wwan.h>
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 #include <linux/unaligned.h>
@@ -98,6 +99,7 @@
  * carries whole CCCI messages, one per read or write, on the file channels of queue 4.
  */
 #define MTK_MD_FS_Q		4
+#define MTK_MD_AT_Q		5	/* ttyC0 in the vendor port table */
 #define MTK_MD_FS_MAX_LEN	4096	/* the modem sends at most 3456 bytes of data per message */
 /* md_cd_late_init(): 512 armed RX descriptors of NET_RX_BUF bytes on queue 0 */
 #define MTK_MD_CLDMA_RX_GPDS	512
@@ -203,6 +205,7 @@ struct mtk_md {
 	spinlock_t tx_lock;		/* the transmit side of the queues, and tx_seq */
 	u16 tx_seq[MTK_MD_TX_SEQ_CHANNELS];
 	bool ready;			/* HS2 seen */
+	struct wwan_port *at_port;
 	struct miscdevice fs_misc;
 	struct sk_buff_head fs_rx;
 	wait_queue_head_t fs_wq;
@@ -1325,6 +1328,80 @@ static int mtk_md_fs_register(struct mtk_md *md)
 	return devm_add_action_or_reset(md->dev, mtk_md_fs_unregister, md);
 }
 
+/* port_char_recv_skb() for ttyC0: the header goes, the rest is the AT stream */
+static void mtk_md_at_rx(struct mtk_md *md, const u8 *msg, u32 len)
+{
+	const u32 hdr = sizeof(struct mtk_md_ccci_hdr);
+	struct sk_buff *skb;
+
+	if (!md->at_port || len <= hdr)
+		return;
+	skb = alloc_skb(len - hdr, GFP_KERNEL);
+	if (!skb)
+		return;
+	skb_put_data(skb, msg + hdr, len - hdr);
+	wwan_port_rx(md->at_port, skb);
+}
+
+static int mtk_md_at_start(struct wwan_port *port)
+{
+	return 0;
+}
+
+static void mtk_md_at_stop(struct wwan_port *port)
+{
+}
+
+/* port_dev_write() for a port without a user header: data[1] is the whole length */
+static int mtk_md_at_tx(struct wwan_port *port, struct sk_buff *skb)
+{
+	struct mtk_md *md = wwan_port_get_drvdata(port);
+	struct mtk_md_ccci_hdr *h;
+	int ret;
+
+	/* the vendor refuses UART2 writes until the modem is ready */
+	if (!md->ready)
+		return -ENODEV;
+	h = skb_push(skb, sizeof(*h));
+	memset(h, 0, sizeof(*h));
+	h->data[1] = cpu_to_le32(skb->len);
+	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_UART2_TX));
+	ret = mtk_md_send(md, MTK_MD_AT_Q, skb->data, skb->len);
+	if (ret)
+		return ret;
+	consume_skb(skb);
+	return 0;
+}
+
+static const struct wwan_port_ops mtk_md_at_ops = {
+	.start = mtk_md_at_start,
+	.stop = mtk_md_at_stop,
+	.tx = mtk_md_at_tx,
+};
+
+static void mtk_md_at_remove(void *data)
+{
+	struct mtk_md *md = data;
+
+	wwan_remove_port(md->at_port);
+	md->at_port = NULL;
+}
+
+static int mtk_md_at_register(struct mtk_md *md)
+{
+	struct wwan_port_caps caps = {
+		.frag_len = MTK_MD_CCCI_MTU,
+		.headroom_len = sizeof(struct mtk_md_ccci_hdr),
+	};
+	struct wwan_port *port;
+
+	port = wwan_create_port(md->dev, WWAN_PORT_AT, &mtk_md_at_ops, &caps, md);
+	if (IS_ERR(port))
+		return PTR_ERR(port);
+	md->at_port = port;
+	return devm_add_action_or_reset(md->dev, mtk_md_at_remove, md);
+}
+
 static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 len)
 {
 	const struct mtk_md_ccci_hdr *h = (const void *)msg;
@@ -1333,6 +1410,11 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 
 	if (ch == MTK_MD_CH_FS_RX) {
 		mtk_md_fs_rx(md, msg, len);
+		return;
+	}
+
+	if (ch == MTK_MD_CH_UART2_RX) {
+		mtk_md_at_rx(md, msg, len);
 		return;
 	}
 
@@ -1906,6 +1988,10 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_fs_register(md);
 	if (ret)
 		return dev_err_probe(dev, ret, "file service device\n");
+
+	ret = mtk_md_at_register(md);
+	if (ret)
+		return dev_err_probe(dev, ret, "AT port\n");
 
 	ret = devm_add_action_or_reset(dev, mtk_md_teardown, md);
 	if (ret)

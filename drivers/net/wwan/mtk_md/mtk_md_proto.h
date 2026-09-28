@@ -270,6 +270,10 @@ int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len);
  * an operation id, a parameter count and that many {u32 length, data padded to 4 bytes}. The answer
  * goes back on the paired channel with the operation id's top half set.
  */
+/* ccci_config.h CCCI_MTU: payload bytes per message after the CCCI header */
+#define MTK_MD_CCCI_MTU			(3584 - 128)
+#define MTK_MD_CH_UART2_RX		10	/* AT responses and unsolicited results (ttyC0) */
+#define MTK_MD_CH_UART2_TX		12	/* AT commands */
 #define MTK_MD_CH_FS_RX			14	/* the modem's file requests */
 #define MTK_MD_CH_FS_TX			15
 #define MTK_MD_CH_RPC_RX		32

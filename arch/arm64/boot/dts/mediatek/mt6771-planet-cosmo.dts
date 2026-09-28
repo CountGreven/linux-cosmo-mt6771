@@ -1045,6 +1045,8 @@
 	 */
 	keyboard {
 		compatible = "gpio-matrix-keypad";
+		/* the Gemian keyboard driver rescans every 10 ms while a key is held (aw9523_key.c) */
+		rescan-while-pressed-ms = <10>;
 		row-gpios = <&aw9523 0 GPIO_ACTIVE_LOW>, <&aw9523 1 GPIO_ACTIVE_LOW>,
 			    <&aw9523 2 GPIO_ACTIVE_LOW>, <&aw9523 3 GPIO_ACTIVE_LOW>,
 			    <&aw9523 4 GPIO_ACTIVE_LOW>, <&aw9523 5 GPIO_ACTIVE_LOW>,

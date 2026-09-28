@@ -1216,13 +1216,19 @@
  * powers the phone off at 60 C (BATTERY_SHUTDOWN_TEMPERATURE).
  */
 / {
-	battery_ntc: thermistor {
-		compatible = "murata,ncp15xh103";
-		io-channels = <&pmic_adc MT6358_AUXADC_BAT_TEMP>;
-		pullup-uv = <2800000>;
-		pullup-ohm = <24000>;
-		pulldown-ohm = <0>;
+	/* BATON voltage in mV, from the NCP15XH103 curve: V = 2800 * R / (R + 24000) */
+	battery_ntc: battery-ntc {
+		compatible = "generic-adc-thermal";
 		#thermal-sensor-cells = <0>;
+		io-channels = <&pmic_adc MT6358_AUXADC_BAT_TEMP>;
+		io-channel-names = "sensor-channel";
+		temperature-lookup-table = <
+			(-20000) 2071  (-15000) 1935  (-10000) 1790  (-5000) 1639
+			0 1488  5000 1340  10000 1197  15000 1062
+			20000 938  25000 824  30000 720  35000 629
+			40000 548  45000 476  50000 414  55000 359
+			60000 312  65000 272  70000 238  75000 208
+			80000 182  85000 160  90000 141>;
 	};
 
 	thermal-zones {

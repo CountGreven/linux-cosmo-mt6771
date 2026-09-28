@@ -1806,9 +1806,17 @@ static WLAN_STATUS wlanMonBssSetChannel(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBs
  * Built exactly as cnmChMngrRequestPrivilege / cnmChMngrAbortPrivilege do (mgmt/cnm.c), called
  * directly rather than through the AIS FSM's internal message queue -- this monitor context has no
  * FSM of its own to route MID_MNY_CNM_CH_REQ through. The grant itself (EVENT_CH_STATUS_GRANT) is
- * asynchronous; sent immediately before use rather than waited on, since this is a bounded first
- * test of whether requesting it at all makes any difference.
+ * asynchronous; sent immediately before use rather than waited on.
+ *
+ * u4MaxInterval bounds how long the grant lasts (confirmed: real AIS join requests
+ * AIS_JOIN_CH_REQUEST_INTERVAL, 2000ms, and starts a timeout tied to that same value -- mgmt/ais_fsm.c).
+ * A burst of injected frames easily outlives 2000ms, so we ask for far longer up front
+ * (WLAN_MON_CH_PRIV_INTERVAL_MS) and renew it periodically from wlanMonChPrivRenewWork below for as
+ * long as the monitor interface is borrowing the AIS BSS, instead of requesting once at add_iface time.
  */
+#define WLAN_MON_CH_PRIV_INTERVAL_MS	10000
+#define WLAN_MON_CH_PRIV_RENEW_MS	6000
+
 static void wlanMonRequestChannelPrivilege(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex,
 					   struct cfg80211_chan_def *chandef)
 {
@@ -1828,7 +1836,7 @@ static void wlanMonRequestChannelPrivilege(P_ADAPTER_T prAdapter, UINT_8 ucBssIn
 	rCmdBody.ucRfBand = (UINT_8) eBand;
 	rCmdBody.ucRfChannelWidth = (UINT_8) chandef->width;
 	rCmdBody.ucReqType = CH_REQ_TYPE_JOIN;
-	rCmdBody.u4MaxInterval = AIS_JOIN_CH_REQUEST_INTERVAL;
+	rCmdBody.u4MaxInterval = WLAN_MON_CH_PRIV_INTERVAL_MS;
 
 	wlanSendSetQueryCmd(prAdapter, CMD_ID_CH_PRIVILEGE, TRUE, FALSE, FALSE, NULL, NULL,
 			   sizeof(rCmdBody), (PUINT_8) &rCmdBody, NULL, 0);
@@ -1845,6 +1853,26 @@ static void wlanMonAbortChannelPrivilege(P_ADAPTER_T prAdapter, UINT_8 ucBssInde
 
 	wlanSendSetQueryCmd(prAdapter, CMD_ID_CH_PRIVILEGE, TRUE, FALSE, FALSE, NULL, NULL,
 			   sizeof(rCmdBody), (PUINT_8) &rCmdBody, NULL, 0);
+}
+
+/*
+ * Re-requests channel privilege on the AIS BSS every WLAN_MON_CH_PRIV_RENEW_MS while injection is
+ * borrowing it, so a long-running injection session (minutes, e.g. an aireplay-ng attack) never
+ * outlives the grant partway through. Self-cancelling: stops re-arming once fgMonUsingAis or the
+ * monitor netdev itself goes away, so a teardown racing a pending renewal is a no-op rather than a
+ * use-after-free -- wlanMonDelIface still calls cancel_delayed_work_sync() to be certain.
+ */
+static void wlanMonChPrivRenewWork(struct work_struct *work)
+{
+	struct delayed_work *prDwork = to_delayed_work(work);
+	P_GLUE_INFO_T prGlueInfo = container_of(prDwork, GLUE_INFO_T, rMonChPrivRenewWork);
+
+	if (!prGlueInfo->fgMonUsingAis || !prGlueInfo->prMonDevHandler)
+		return;
+
+	wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex,
+				       &prGlueInfo->rMonChandef);
+	schedule_delayed_work(&prGlueInfo->rMonChPrivRenewWork, msecs_to_jiffies(WLAN_MON_CH_PRIV_RENEW_MS));
 }
 
 static P_BSS_INFO_T wlanMonBssAlloc(P_ADAPTER_T prAdapter, struct cfg80211_chan_def *chandef)
@@ -1994,8 +2022,12 @@ static struct wireless_dev *wlanMonAddIface(struct wiphy *wiphy, const char *nam
 		nicUpdateBss(prGlueInfo->prAdapter, prAis->ucBssIndex);
 		wlanMonRequestChannelPrivilege(prGlueInfo->prAdapter, prAis->ucBssIndex, &prGlueInfo->rMonChandef);
 		/* prMonBssInfo stays NULL: wlanoidMonInject's existing fallback already means "use AIS" */
+		prGlueInfo->fgMonUsingAis = TRUE;
+		INIT_DELAYED_WORK(&prGlueInfo->rMonChPrivRenewWork, wlanMonChPrivRenewWork);
+		schedule_delayed_work(&prGlueInfo->rMonChPrivRenewWork, msecs_to_jiffies(WLAN_MON_CH_PRIV_RENEW_MS));
 	} else {
 		/* AIS is genuinely connected, or borrowing it is disabled: never touch it, use our own. */
+		prGlueInfo->fgMonUsingAis = FALSE;
 		prGlueInfo->prMonBssInfo = wlanMonBssAlloc(prGlueInfo->prAdapter, &prGlueInfo->rMonChandef);
 		if (!prGlueInfo->prMonBssInfo) {
 			DBGLOG(INIT, ERROR, "monitor: no free BSS context, injection will not work\n");
@@ -2025,6 +2057,8 @@ static int wlanMonDelIface(struct wiphy *wiphy, struct wireless_dev *wdev)
 		return -EOPNOTSUPP;
 
 	prGlueInfo->fgIsEnableMon = FALSE;
+	prGlueInfo->fgMonUsingAis = FALSE;
+	cancel_delayed_work_sync(&prGlueInfo->rMonChPrivRenewWork);
 	cancel_work_sync(&prGlueInfo->rMonTxWork);
 	skb_queue_purge(&prGlueInfo->rMonTxQueue);
 	wlanMonSet(prGlueInfo, FALSE, &prGlueInfo->rMonChandef);

@@ -600,6 +600,8 @@ struct _GLUE_INFO_T {
 		UINT_8 aucAddr[6];
 		struct _STA_RECORD_T *prStaRec;
 	} arMonPeer[8];
+	BOOLEAN fgMonUsingAis;			/* TRUE while injection is borrowing the AIS BSS */
+	struct delayed_work rMonChPrivRenewWork;	/* keeps that borrow's channel-time grant alive */
 #endif
 
 	INT_32 i4RssiCache;

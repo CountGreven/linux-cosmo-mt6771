@@ -106,17 +106,18 @@ static const struct mtk_pmic_regs mt6357_regs = {
 	.rst_lprst_mask = MTK_PMIC_RST_DU_MASK,
 };
 
+/* MT6358 TOP_RST_MISC: HOMEKEY_RST_EN bit 8, PWRKEY_RST_EN bit 9, PWRKEY_RST_TD bits 13:12 */
 static const struct mtk_pmic_regs mt6358_regs = {
 	.keys_regs[MTK_PMIC_PWRKEY_INDEX] =
 		MTK_PMIC_KEYS_REGS(MT6358_TOPSTATUS,
 				   0x2, MT6358_PSC_TOP_INT_CON0, 0x5,
-				   MTK_PMIC_PWRKEY_RST),
+				   MTK_PMIC_MT6331_PWRKEY_RST),
 	.keys_regs[MTK_PMIC_HOMEKEY_INDEX] =
 		MTK_PMIC_KEYS_REGS(MT6358_TOPSTATUS,
 				   0x8, MT6358_PSC_TOP_INT_CON0, 0xa,
-				   MTK_PMIC_HOMEKEY_RST),
+				   MTK_PMIC_MT6331_HOMEKEY_RST),
 	.pmic_rst_reg = MT6358_TOP_RST_MISC,
-	.rst_lprst_mask = MTK_PMIC_RST_DU_MASK,
+	.rst_lprst_mask = MTK_PMIC_MT6331_RST_DU_MASK,
 	.key_release_irq = true,
 };
 

@@ -1146,3 +1146,60 @@
 		mediatek,source-pin = <1>;
 	};
 };
+
+/*
+ * Keys and lid (hw-spec/input-misc.org). The PMIC home key is volume up on this board (vendor
+ * hal_kpd.c); one-key 8 s power reset as the vendor programs it (TOP_RST_MISC 0x221).
+ */
+&mt6358keys {
+	mediatek,long-press-mode = <1>;
+	power-off-time-sec = <0>;
+
+	home {
+		linux,keycodes = <KEY_VOLUMEUP>;
+	};
+};
+
+/ {
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_keys_pins>;
+
+		/* hall sensor, low while the lid is closed (vendor hall-eint, debounce 64 ms) */
+		lid {
+			label = "Lid";
+			gpios = <&pio 8 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LID>;
+			debounce-interval = <64>;
+			wakeup-source;
+		};
+
+		volume-down {
+			label = "Volume Down";
+			gpios = <&pio 11 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			debounce-interval = <20>;
+		};
+	};
+
+	/* MT6358 VIBR LDO, fixed 2.8 V as the vendor drives it */
+	vibrator {
+		compatible = "regulator-haptic";
+		haptic-supply = <&mt6358_vibr_reg>;
+		min-microvolt = <2800000>;
+		max-microvolt = <2800000>;
+	};
+};
+
+&pio {
+	gpio_keys_pins: gpio-keys-pins {
+		pins-keys {
+			pinmux = <PINMUX_GPIO8__FUNC_GPIO8>,
+				 <PINMUX_GPIO11__FUNC_GPIO11>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+};

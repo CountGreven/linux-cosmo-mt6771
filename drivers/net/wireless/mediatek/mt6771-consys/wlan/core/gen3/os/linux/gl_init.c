@@ -1509,8 +1509,18 @@ static UINT_8 wlanMonResolvePeer(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PUINT
 	P_STA_RECORD_T prStaRec;
 	int i, iFree = -1;
 
+	/*
+	 * Broadcast/multicast destinations have no STA_RECORD_T -- there is no "station" to track --
+	 * but they are not unresolvable either: nicTxGetWlanIdx has a dedicated case for exactly this,
+	 * STA_REC_INDEX_BMCAST, which resolves to the BSS's own real ucBMCWlanIndex. Returning
+	 * STA_REC_INDEX_NOT_FOUND here (as before) instead sent every broadcast frame through
+	 * NIC_TX_DEFAULT_WLAN_INDEX (31), the same generic fallback that never got real completions
+	 * before per-destination station records were added -- confirmed live: TXS Status[0x4]
+	 * (TX_RESULT_AGING_TIMEOUT), 0/3, unrelated to and unfixed by the source-address work in
+	 * 17-consys-port.org "continued session".
+	 */
 	if (pucDstAddr[0] & BIT(0))
-		return STA_REC_INDEX_NOT_FOUND;
+		return STA_REC_INDEX_BMCAST;
 
 	for (i = 0; i < ARRAY_SIZE(prGlueInfo->arMonPeer); i++) {
 		if (prGlueInfo->arMonPeer[i].prStaRec && EQUAL_MAC_ADDR(prGlueInfo->arMonPeer[i].aucAddr, pucDstAddr))

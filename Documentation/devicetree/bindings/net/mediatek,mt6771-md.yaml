@@ -108,6 +108,12 @@ properties:
     $ref: /schemas/types.yaml#/definitions/phandle
     description: The filter of the 26 MHz reference the modem PLLs lock to.
 
+  mediatek,pmic:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      The MT6358 PMIC. Its RF supplies (VFE28, VRF18, VRF12) are handed to the
+      modem's clock request while the modem runs.
+
 required:
   - compatible
   - reg
@@ -120,6 +126,7 @@ required:
   - mediatek,infracfg
   - mediatek,topckgen
   - mediatek,apmixedsys
+  - mediatek,pmic
 
 additionalProperties: false
 
@@ -168,5 +175,6 @@ examples:
             mediatek,infracfg = <&infracfg>;
             mediatek,topckgen = <&topckgen>;
             mediatek,apmixedsys = <&apmixedsys>;
+            mediatek,pmic = <&pmic>;
         };
     };

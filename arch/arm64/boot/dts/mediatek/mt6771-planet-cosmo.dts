@@ -576,8 +576,8 @@
 
 /*
  * The rest of the MT6370, beyond what the panel needs. Written as references by path so this block and the
- * panel branch's node above stay byte-identical and merge cleanly; all of it lives under the disabled
- * charger, flashlight and indicator nodes, so none of it is live.
+ * panel branch's node above stay byte-identical and merge cleanly. The indicator and flash LEDs are
+ * described in the MT6370 node itself.
  *
  * live.dts:7171 mt6370_pmu_dts is the vendor node; the vendor's own driver is mt6370_pmu_*, which mainline
  * replaces with the mfd, charger, LED and regulator drivers.
@@ -596,73 +596,6 @@
 		/* The vendor's OTG limit: 500 mA at enable, 1.5 A once host mode is up (xhci-mtk-driver.c). */
 		regulator-min-microamp = <500000>;
 		regulator-max-microamp = <1500000>;
-	};
-};
-
-/*
- * The vendor's rgbled (live.dts:7239) names four sinks: "green", "blue", "mt6370_pmu_led3", "red". The
- * mainline indicator binding is an RGB multi-led plus the fourth sink; which colour the fourth is on this
- * board is not in the vendor tree. STAND-IN: white, and led-max-microamp on both, from Otto's tree.
- */
-&{/soc/i2c@11017000/pmic@34/indicator} {
-	multi-led@0 {
-		reg = <0>;
-		function = LED_FUNCTION_INDICATOR;
-		color = <LED_COLOR_ID_RGB>;
-		led-max-microamp = <24000>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		led@0 {
-			reg = <0>;
-			color = <LED_COLOR_ID_RED>;
-		};
-
-		led@1 {
-			reg = <1>;
-			color = <LED_COLOR_ID_GREEN>;
-		};
-
-		led@2 {
-			reg = <2>;
-			color = <LED_COLOR_ID_BLUE>;
-		};
-	};
-
-	led@3 {
-		reg = <3>;
-		function = LED_FUNCTION_INDICATOR;
-		color = <LED_COLOR_ID_WHITE>;
-		led-max-microamp = <6000>;
-	};
-};
-
-/*
- * live.dts:7208 mt6370_pmu_fled1 and :7217 fled2. The currents are the vendor's, converted: torch
- * 0x493e0 = 300000 uA and 0x30d40 = 200000 uA, strobe 0x124f80 = 1200000 uA and 0xf4240 = 1000000 uA,
- * timeout 0x960 = 2400 ms and 0x4b0 = 1200 ms. They agree with Otto's tree.
- */
-&{/soc/i2c@11017000/pmic@34/flashlight} {
-	led@0 {
-		reg = <0>;
-		led-sources = <0>;
-		function = LED_FUNCTION_FLASH;
-		color = <LED_COLOR_ID_WHITE>;
-		function-enumerator = <1>;
-		led-max-microamp = <300000>;
-		flash-max-microamp = <1200000>;
-		flash-max-timeout-us = <2400000>;
-	};
-
-	led@1 {
-		reg = <1>;
-		led-sources = <1>;
-		function = LED_FUNCTION_FLASH;
-		color = <LED_COLOR_ID_WHITE>;
-		function-enumerator = <2>;
-		led-max-microamp = <200000>;
-		flash-max-microamp = <1000000>;
-		flash-max-timeout-us = <1200000>;
 	};
 };
 

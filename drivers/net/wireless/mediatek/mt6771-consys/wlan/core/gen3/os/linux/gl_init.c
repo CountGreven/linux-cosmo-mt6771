@@ -1509,15 +1509,8 @@ static UINT_8 wlanMonResolvePeer(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PUINT
 	P_STA_RECORD_T prStaRec;
 	int i, iFree = -1;
 
-	/*
-	 * Broadcast/multicast destinations have no STA_RECORD_T -- there is no "station" to track --
-	 * but they are not unresolvable either: nicTxGetWlanIdx has a dedicated case for exactly this,
-	 * STA_REC_INDEX_BMCAST, which resolves to the BSS's own real ucBMCWlanIndex. Returning
-	 * STA_REC_INDEX_NOT_FOUND here (as before) instead sent every broadcast frame through
-	 * NIC_TX_DEFAULT_WLAN_INDEX (31), the same generic fallback that never got real completions
-	 * before per-destination station records were added -- confirmed live: TXS Status[0x4]
-	 * (TX_RESULT_AGING_TIMEOUT), 0/3, unrelated to and unfixed by the source-address work in
-	 * 17-consys-port.org "continued session".
+	/* nicTxGetWlanIdx resolves this to the BSS's real ucBMCWlanIndex; STA_REC_INDEX_NOT_FOUND
+	 * falls back to a generic index that never completes.
 	 */
 	if (pucDstAddr[0] & BIT(0))
 		return STA_REC_INDEX_BMCAST;
@@ -1536,14 +1529,15 @@ static UINT_8 wlanMonResolvePeer(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PUINT
 	if (!prStaRec)
 		return STA_REC_INDEX_NOT_FOUND;
 
-	/*
-	 * cnmStaRecAlloc's own update command runs before any state is attached to it. AIS sets this
-	 * explicitly right after allocating a peer's record, before authentication even starts
-	 * (mgmt/ais_fsm.c); the comment on cnmStaRecChangeState (mgmt/cnm_mem.c) says a 1->1
-	 * transition still syncs to firmware, it is not a no-op. STA_STATE_1 (accept Class 1 frames)
-	 * is what unassociated management frames -- probe requests, auth, deauth -- belong to.
+	/* STA_STATE_1 admits Class 1 frames (probe, auth, deauth); a 1->1 transition still syncs to
+	 * firmware, per cnmStaRecChangeState's own comment (mgmt/cnm_mem.c).
 	 */
 	cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
+
+	/* Data frames additionally need fgIsTxAllowed for qmDequeueTxPackets to service this STA's
+	 * queue at all; real association sets it the same way (mgmt/rlm.c).
+	 */
+	qmSetStaRecTxAllowed(prAdapter, prStaRec, TRUE);
 
 	COPY_MAC_ADDR(prGlueInfo->arMonPeer[iFree].aucAddr, pucDstAddr);
 	prGlueInfo->arMonPeer[iFree].prStaRec = prStaRec;
@@ -1564,19 +1558,84 @@ static void wlanMonFreePeers(P_ADAPTER_T prAdapter)
 	}
 }
 
-/* runs in the driver's main thread, through kalIoctl */
+/* Data frames need a real skb, not cnmMgtPktAlloc's embedded buffer: nicTxSetDataPacket's cleanup
+ * path assumes one. Allocation mirrors wlanEnqueueTxPacket (common/wlan_lib.c), the path every
+ * real OS packet uses; fgIs802_11Frame=TRUE marks the skb as already-framed, not Ethernet.
+ */
+static WLAN_STATUS wlanoidMonInjectData(P_ADAPTER_T prAdapter, struct wlan_mon_inject *prReq,
+					UINT_8 ucBssIndex, UINT_8 ucStaRecIndex)
+{
+	P_GLUE_INFO_T prGlueInfo = prAdapter->prGlueInfo;
+	P_MSDU_INFO_T prMsduInfo;
+	struct sk_buff *prSkb;
+	PUINT_8 pucData = NULL;
+
+	prMsduInfo = cnmPktAlloc(prAdapter, 0);
+	if (!prMsduInfo)
+		return WLAN_STATUS_RESOURCES;
+
+	prSkb = (struct sk_buff *) kalPacketAlloc(prGlueInfo, prReq->u2FrameLength, &pucData);
+	if (!prSkb) {
+		nicTxReturnMsduInfo(prAdapter, prMsduInfo);
+		return WLAN_STATUS_RESOURCES;
+	}
+	skb_put(prSkb, prReq->u2FrameLength);
+	kalMemCopy(pucData, prReq->aucFrame, prReq->u2FrameLength);
+	prSkb->dev = prGlueInfo->prMonDevHandler;
+	GLUE_SET_PKT_BSS_IDX(prSkb, ucBssIndex);
+
+	nicTxSetDataPacket(prAdapter, prMsduInfo, ucBssIndex, ucStaRecIndex, prReq->ucMacHeaderLength,
+			   prReq->u2FrameLength, wlanMonTxDone,
+			   prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO,
+			   TX_PACKET_OS, 0, TRUE, FALSE);
+	prMsduInfo->prPacket = (P_NATIVE_PACKET) prSkb;
+	prMsduInfo->fgIsTXDTemplateValid = FALSE;
+	/* qmDetermineStaRecIndex re-derives ucStaRecIndex from aucEthDestAddr and overwrites it;
+	 * left unset it always resolves to STA_REC_INDEX_NOT_FOUND. Match Address 1 so both
+	 * resolutions land on the same STA_REC.
+	 */
+	COPY_MAC_ADDR(prMsduInfo->aucEthDestAddr, &prReq->aucFrame[4]);
+
+	if (prReq->fgFixedRate)
+		nicTxSetPktFixedRateOption(prMsduInfo, prReq->u2RateCode, FIX_BW_20, FALSE, FALSE);
+	if (prReq->fgRetryLimit)
+		nicTxSetPktRetryLimit(prMsduInfo, prReq->ucRetryLimit);
+	nicTxConfigPktControlFlag(prMsduInfo, MSDU_CONTROL_FLAG_FORCE_TX, TRUE);
+
+	/* kalProcessTxReq only drains the queue when i4TxPendingFrameNum > 0; only kalHardStartXmit
+	 * increments it normally, which this synchronous path bypasses. Completion decrements it
+	 * back (kalSendCompleteAndAwakeQueue, gl_kal.c).
+	 */
+	GLUE_INC_REF_CNT(prGlueInfo->i4TxPendingFrameNum);
+	GLUE_INC_REF_CNT(prGlueInfo->ai4TxPendingFrameNumPerQueue[ucBssIndex][skb_get_queue_mapping(prSkb)]);
+
+	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
+	kalSetEvent(prGlueInfo);
+
+	return WLAN_STATUS_SUCCESS;
+}
+
 static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen,
 				    OUT PUINT_32 pu4SetInfoLen)
 {
 	struct wlan_mon_inject *prReq = pvSetBuffer;
 	P_MSDU_INFO_T prMsduInfo;
-	UINT_8 ucBssIndex, ucStaRecIndex;
+	UINT_8 ucBssIndex, ucStaRecIndex, ucFrameType;
 
 	*pu4SetInfoLen = u4SetBufferLen;
 	if (u4SetBufferLen < sizeof(*prReq) || u4SetBufferLen < sizeof(*prReq) + prReq->u2FrameLength)
 		return WLAN_STATUS_INVALID_LENGTH;
 	if (prReq->ucMacHeaderLength < 10)
 		return WLAN_STATUS_INVALID_LENGTH;
+
+	ucBssIndex = prAdapter->prGlueInfo->prMonBssInfo ?
+		     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex;
+	ucStaRecIndex = wlanMonResolvePeer(prAdapter, ucBssIndex, &prReq->aucFrame[4]);	/* Address 1 */
+
+	/* 802.11 Frame Control, bits 2-3: 00 Management, 01 Control, 10 Data */
+	ucFrameType = (prReq->aucFrame[0] >> 2) & 0x3;
+	if (ucFrameType == 0x2)
+		return wlanoidMonInjectData(prAdapter, prReq, ucBssIndex, ucStaRecIndex);
 
 	prMsduInfo = cnmMgtPktAlloc(prAdapter, (UINT_32) (prReq->u2FrameLength + MAC_TX_RESERVED_FIELD));
 	if (!prMsduInfo)
@@ -1585,18 +1644,6 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 	kalMemCopy((PUINT_8) ((ULONG) prMsduInfo->prPacket + MAC_TX_RESERVED_FIELD), prReq->aucFrame,
 		   prReq->u2FrameLength);
 
-	ucBssIndex = prAdapter->prGlueInfo->prMonBssInfo ?
-		     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex;
-	ucStaRecIndex = wlanMonResolvePeer(prAdapter, ucBssIndex, &prReq->aucFrame[4]);	/* Address 1 */
-
-	/*
-	 * Data-type frames need a real skb-backed native packet, not this cnmMgtPktAlloc buffer: an
-	 * attempt to route one through nicTxSetDataPacket crashed tx_thread outright (NULL deref in
-	 * kalSendCompleteAndAwakeQueue, called from nicTxFreeMsduInfoPacket's error-cleanup path,
-	 * which assumes a genuine skb). Confirmed on the phone, not reverted speculatively. Left as
-	 * the clearest lead for whoever gives this its own allocation path (cnmPktAlloc(prAdapter, 0)
-	 * plus a real sk_buff for prPacket, matching wlanProcessSecurityFrame, common/wlan_lib.c).
-	 */
 	TX_SET_MMPDU(prAdapter, prMsduInfo, ucBssIndex, ucStaRecIndex, prReq->ucMacHeaderLength,
 		     prReq->u2FrameLength, wlanMonTxDone,
 		     prReq->fgFixedRate ? MSDU_RATE_MODE_MANUAL_DESC : MSDU_RATE_MODE_AUTO);

@@ -716,6 +716,19 @@ config CHARGER_MT6360
 	  Average Input Current Regulation, Battery Temperature Sensing,
 	  Over-Temperature Protection, DPDM Detection for BC1.2.
 
+config BATTERY_MT6358
+	tristate "MediaTek MT6358 fuel gauge"
+	depends on MFD_MT6397 || COMPILE_TEST
+	depends on IIO
+	help
+	  Battery voltage, current, charge counter and an estimated capacity
+	  from the MT6358 PMIC coulomb counter.
+
+config BATTERY_MT6358_KUNIT_TEST
+	tristate "KUnit tests for the MT6358 fuel gauge" if !KUNIT_ALL_TESTS
+	depends on BATTERY_MT6358 && KUNIT
+	default KUNIT_ALL_TESTS
+
 config CHARGER_MT6370
 	tristate "MediaTek MT6370 Charger Driver"
 	depends on MFD_MT6370

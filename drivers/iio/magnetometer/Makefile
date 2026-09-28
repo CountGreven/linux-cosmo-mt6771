@@ -4,6 +4,8 @@
 #
 
 # When adding new entries keep the list in alphabetical order
+obj-$(CONFIG_AF6133E)	+= af6133e.o
+obj-$(CONFIG_AF6133E_KUNIT_TEST) += af6133e_test.o
 obj-$(CONFIG_AF8133J)	+= af8133j.o
 obj-$(CONFIG_AK8974)	+= ak8974.o
 obj-$(CONFIG_AK8975)	+= ak8975.o

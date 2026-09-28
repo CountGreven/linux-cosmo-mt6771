@@ -20,6 +20,24 @@ config AF8133J
 	  To compile this driver as a module, choose M here: the module
 	  will be called af8133j.
 
+config AF6133E
+	tristate "Voltafield AF6133E 3-Axis Magnetometer"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Say yes here to build support for the Voltafield AF6133E I2C
+	  3-axis magnetometer.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called af6133e.
+
+config AF6133E_KUNIT_TEST
+	tristate "KUnit tests for the AF6133E driver" if !KUNIT_ALL_TESTS
+	depends on AF6133E && KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Unit tests for the AF6133E self-test calibration arithmetic.
+
 config AK8974
 	tristate "Asahi Kasei AK8974 3-Axis Magnetometer"
 	depends on I2C

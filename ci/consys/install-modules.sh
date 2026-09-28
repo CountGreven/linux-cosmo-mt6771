@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the consys wifi and bluetooth modules of the current image build on the phone, in
 # /lib/modules/<release>, so udev loads the stack from the device tree ("mediatek,wifi" ->
-# wlan_drv_gen3 and its dependencies). hci_stp has no device to match: load it by name.
+# wlan_drv_gen3 and its dependencies). hci_stp has no device to match: modules-load.d names it.
 # Only these: the rest of the module tree stays off the phone until it is wanted.
 # The release string follows the git commit, so run this for every image that is flashed.
 set -eu
@@ -25,4 +25,5 @@ done
 for f in modules.order modules.builtin modules.builtin.modinfo; do [ -e "$T/$f" ] && cp "$T/$f" "$S/$R/"; done
 echo "installing the wifi and bluetooth modules for $R"
 tar -C "$S" -cf - "$R" | ssh -o BatchMode=yes "$H" "sudo -n tar -C /lib/modules -xf - --no-same-owner 2>/dev/null
+    echo hci_stp | sudo -n tee /etc/modules-load.d/cosmo-bluetooth.conf >/dev/null
     sudo -n depmod -a $R && grep -c mediatek,wifi /lib/modules/$R/modules.alias && ls /lib/modules"

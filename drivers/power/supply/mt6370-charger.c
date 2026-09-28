@@ -542,6 +542,7 @@ static int mt6370_chg_get_property(struct power_supply *psy,
 				   union power_supply_propval *val)
 {
 	struct mt6370_priv *priv = power_supply_get_drvdata(psy);
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -571,6 +572,11 @@ static int mt6370_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_USB_TYPE:
 		val->intval = priv->psy_usb_type;
 		return 0;
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		ret = mt6370_chg_field_get(priv, F_CHG_EN, &val->intval);
+		val->intval = val->intval ? POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
+					    POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+		return ret;
 	default:
 		return -EINVAL;
 	}
@@ -599,6 +605,12 @@ static int mt6370_chg_set_property(struct power_supply *psy,
 		return mt6370_chg_field_set(priv, F_IPREC, val->intval);
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 		return mt6370_chg_field_set(priv, F_IEOC, val->intval);
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO)
+			return mt6370_chg_field_set(priv, F_CHG_EN, 1);
+		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE)
+			return mt6370_chg_field_set(priv, F_CHG_EN, 0);
+		return -EINVAL;
 	default:
 		return -EINVAL;
 	}
@@ -615,6 +627,7 @@ static int mt6370_chg_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
 	case POWER_SUPPLY_PROP_PRECHARGE_CURRENT:
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
 		return 1;
 	default:
 		return 0;
@@ -634,6 +647,7 @@ static enum power_supply_property mt6370_chg_properties[] = {
 	POWER_SUPPLY_PROP_PRECHARGE_CURRENT,
 	POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT,
 	POWER_SUPPLY_PROP_USB_TYPE,
+	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
 };
 
 static const struct power_supply_desc mt6370_chg_psy_desc = {
@@ -644,6 +658,8 @@ static const struct power_supply_desc mt6370_chg_psy_desc = {
 	.get_property = mt6370_chg_get_property,
 	.set_property = mt6370_chg_set_property,
 	.property_is_writeable = mt6370_chg_property_is_writeable,
+	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
+			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |

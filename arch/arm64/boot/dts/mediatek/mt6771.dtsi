@@ -27,68 +27,40 @@
 };
 
 /*
- * cpuidle and cpufreq do not work here. Otto's tree carries the same deletions with the note "firmware
- * issue or misconfiguration?", so this is a known landmine rather than something we discovered: the OPP
- * tables and idle states mt8183.dtsi provides describe firmware behaviour this SoC's firmware does not
- * implement the same way. Left as deletions, not corrections, because we have not established what the
- * right values are.
+ * cpuidle stays off: the vendor enters idle through MCDI in the SSPM, and whether this firmware
+ * honours the plain PSCI states mt8183.dtsi describes is not established. The mt8183 OPP tables
+ * stay: they equal the vendor's V5_4 speed bin and are at or above the V5_T bin at every point.
  */
 &cpu0 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu1 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu2 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu3 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu4 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu5 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu6 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
 };
 
 &cpu7 {
 	/delete-property/ cpu-idle-states;
-	/delete-property/ operating-points-v2;
-	/delete-property/ mediatek,cci;
-};
-
-/*
- * CCI frequency scaling goes with cpufreq. Its binding requires a proc-supply from the board's PMIC, and
- * the Cosmo's MT6358 is not wired up yet, so dtbs_check rejects the node as it stands. Rather than invent
- * a regulator we have not verified, drop the node: it scales the cache interconnect alongside the CPU
- * frequencies that do not work here anyway. It comes back with the PMIC, together with cpufreq.
- */
-/ {
-	/delete-node/ cci;
 };
 
 /*

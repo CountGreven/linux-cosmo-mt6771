@@ -33,6 +33,7 @@
 #define MT6370_REG_CHG_CTRL8		0x118
 #define MT6370_REG_CHG_CTRL9		0x119
 #define MT6370_REG_CHG_CTRL10		0x11A
+#define MT6370_REG_CHG_CTRL12		0x11C
 #define MT6370_REG_DEVICE_TYPE		0x122
 #define MT6370_REG_USB_STATUS1		0x127
 #define MT6370_REG_CHG_STAT		0x14A
@@ -51,6 +52,7 @@
 
 enum mt6370_chg_reg_field {
 	/* MT6370_REG_CHG_CTRL2 */
+	F_TE_EN,
 	F_IINLMTSEL, F_CFO_EN, F_CHG_EN,
 	/* MT6370_REG_CHG_CTRL3 */
 	F_IAICR, F_AICR_EN, F_ILIM_EN,
@@ -64,6 +66,8 @@ enum mt6370_chg_reg_field {
 	F_IPREC,
 	/* MT6370_REG_CHG_CTRL9 */
 	F_IEOC,
+	/* MT6370_REG_CHG_CTRL12 */
+	F_WT_FC, F_TMR_EN,
 	/* MT6370_REG_DEVICE_TYPE */
 	F_USBCHGEN,
 	/* MT6370_REG_USB_STATUS1 */
@@ -155,6 +159,7 @@ static const struct linear_range mt6370_chg_ranges[MT6370_RANGE_F_MAX] = {
 }
 
 static const struct mt6370_chg_field mt6370_chg_fields[F_MAX] = {
+	MT6370_CHG_FIELD(F_TE_EN, MT6370_REG_CHG_CTRL2, 4, 4),
 	MT6370_CHG_FIELD(F_IINLMTSEL, MT6370_REG_CHG_CTRL2, 2, 3),
 	MT6370_CHG_FIELD(F_CFO_EN, MT6370_REG_CHG_CTRL2, 1, 1),
 	MT6370_CHG_FIELD(F_CHG_EN, MT6370_REG_CHG_CTRL2, 0, 0),
@@ -166,6 +171,8 @@ static const struct mt6370_chg_field mt6370_chg_fields[F_MAX] = {
 	MT6370_CHG_FIELD_RANGE(F_ICHG, MT6370_REG_CHG_CTRL7, 2, 7),
 	MT6370_CHG_FIELD_RANGE(F_IPREC, MT6370_REG_CHG_CTRL8, 0, 3),
 	MT6370_CHG_FIELD_RANGE(F_IEOC, MT6370_REG_CHG_CTRL9, 4, 7),
+	MT6370_CHG_FIELD(F_WT_FC, MT6370_REG_CHG_CTRL12, 5, 7),
+	MT6370_CHG_FIELD(F_TMR_EN, MT6370_REG_CHG_CTRL12, 1, 1),
 	MT6370_CHG_FIELD(F_USBCHGEN, MT6370_REG_DEVICE_TYPE, 7, 7),
 	MT6370_CHG_FIELD(F_USB_STAT, MT6370_REG_USB_STATUS1, 4, 6),
 	MT6370_CHG_FIELD(F_CHGDET, MT6370_REG_USB_STATUS1, 3, 3),
@@ -785,6 +792,24 @@ static int mt6370_chg_init_setting(struct mt6370_priv *priv)
 	ret = mt6370_chg_field_set(priv, F_ICHG, 900000);
 	if (ret) {
 		dev_err(priv->dev, "Failed to set ICHG to 900mA");
+		return ret;
+	}
+
+	/*
+	 * End the charge at IEOC and bound the fast-charge phase with the chip's own timer, 12 h
+	 * (4 h + 2 h * 4), as the vendor driver does; the power-on default may be neither.
+	 */
+	ret = mt6370_chg_field_set(priv, F_TE_EN, 1);
+	if (ret) {
+		dev_err(priv->dev, "Failed to enable charge termination\n");
+		return ret;
+	}
+
+	ret = mt6370_chg_field_set(priv, F_WT_FC, 4);
+	if (!ret)
+		ret = mt6370_chg_field_set(priv, F_TMR_EN, 1);
+	if (ret) {
+		dev_err(priv->dev, "Failed to set the safety timer\n");
 		return ret;
 	}
 

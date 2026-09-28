@@ -1782,6 +1782,7 @@ static const struct net_device_ops wlan_mon_netdev_ops = {
 	.ndo_open = wlanMonOpen,
 	.ndo_stop = wlanMonStop,
 	.ndo_start_xmit = wlanMonXmit,
+	.ndo_set_mac_address = eth_mac_addr,
 };
 
 void wlanMonWorkHandler(struct work_struct *work)

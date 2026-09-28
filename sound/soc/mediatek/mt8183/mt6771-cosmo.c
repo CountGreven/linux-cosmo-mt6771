@@ -25,8 +25,12 @@ static const struct snd_soc_dapm_route cosmo_routes[] = {
 	{ "Headphone", NULL, "Headphone L" },
 	{ "Headphone", NULL, "Headphone R" },
 
-	{ "Amp1 IN", NULL, "Headphone L Ext Spk Amp" },
-	{ "Amp2 IN", NULL, "Headphone R Ext Spk Amp" },
+	/*
+	 * The amps sit on the stereo headphone buffer (vendor int_hp_buf); the codec's
+	 * "Ext Spk Amp" mode powers only the left DAC and does not fit this board.
+	 */
+	{ "Amp1 IN", NULL, "Headphone L" },
+	{ "Amp2 IN", NULL, "Headphone R" },
 	{ "Speaker", NULL, "Amp1 OUT" },
 	{ "Speaker", NULL, "Amp2 OUT" },
 

@@ -41,6 +41,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
+#include <linux/power_supply.h>
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 #include <linux/unaligned.h>
@@ -1519,6 +1520,66 @@ static void mtk_md_fs_rx(struct mtk_md *md, const u8 *msg, u32 len)
 	wake_up_interruptible(&md->fs_wq);
 }
 
+/* proxy_send_msg_to_md(): a header-only message */
+static int mtk_md_send_msg(struct mtk_md *md, u32 ch, u32 id, u32 value)
+{
+	struct mtk_md_ccci_hdr h = {
+		.data[0] = cpu_to_le32(0xffffffff),
+		.data[1] = cpu_to_le32(id),
+		.status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, ch)),
+		.reserved = cpu_to_le32(value),
+	};
+
+	return mtk_md_send(md, 0, &h, sizeof(h));
+}
+
+/* battery_get_bat_voltage() in mV, from whichever battery supply the board has */
+static int mtk_md_battery_mv(void)
+{
+	union power_supply_propval val;
+	struct power_supply *psy;
+	int ret;
+
+	psy = power_supply_get_by_name("battery");
+	if (!psy)
+		return -ENODEV;
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_NOW, &val);
+	power_supply_put(psy);
+	return ret ? ret : val.intval / 1000;
+}
+
+/* sys_msg_handler(): the messages that want an answer from the AP */
+static void mtk_md_sys_rx(struct mtk_md *md, const struct mtk_md_ccci_hdr *h)
+{
+	u32 id = le32_to_cpu(h->data[1]);
+	u32 value = le32_to_cpu(h->reserved);
+	int mv;
+
+	switch (id) {
+	case MTK_MD_SYS_TEST_MD2AP:
+	case MTK_MD_SYS_TEST_L1CORE:
+		mtk_md_send_msg(md, MTK_MD_CH_SYSTEM_TX, id + 1, value);
+		break;
+	case MTK_MD_SYS_BATTERY_INFO:
+		mv = mtk_md_battery_mv();
+		if (mv < 0)
+			dev_warn_ratelimited(md->dev, "sys: battery voltage asked, none known\n");
+		else
+			mtk_md_send_msg(md, MTK_MD_CH_SYSTEM_TX, id, mv);
+		break;
+	case MTK_MD_SYS_SWTP_REQ:
+		/* swtp_md_tx_power_req_hdlr(): no SAR sensor on this board, mode 0 */
+		mtk_md_send_msg(md, MTK_MD_CH_SYSTEM_TX, MTK_MD_SYS_TX_POWER_SWTP, 0);
+		break;
+	case MTK_MD_SYS_SIM_TYPE:
+		dev_info(md->dev, "sys: SIM type %#x\n", value);
+		break;
+	default:
+		dev_dbg(md->dev, "sys: message %#x value %#x\n", id, value);
+		break;
+	}
+}
+
 /* port_char_recv_skb() and port_recv_skb() for the vendor char ports */
 static bool mtk_md_cport_rx(struct mtk_md *md, u32 ch, const u8 *msg, u32 len)
 {
@@ -1895,6 +1956,11 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 
 	if (ch == MTK_MD_CH_UART2_RX) {
 		mtk_md_at_rx(md, msg, len);
+		return;
+	}
+
+	if (ch == MTK_MD_CH_SYSTEM_RX) {
+		mtk_md_sys_rx(md, h);
 		return;
 	}
 

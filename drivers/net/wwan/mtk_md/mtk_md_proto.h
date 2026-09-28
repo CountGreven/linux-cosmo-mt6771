@@ -89,6 +89,15 @@ struct mtk_md_ccci_hdr {
 
 #define MTK_MD_CH_CONTROL_RX		0
 #define MTK_MD_CH_CONTROL_TX		1
+#define MTK_MD_CH_SYSTEM_RX		2	/* port_sysmsg.c: ids in data[1], value in reserved */
+#define MTK_MD_CH_SYSTEM_TX		3
+
+#define MTK_MD_SYS_TX_POWER_SWTP	0x10e	/* AP: SAR mode, 0 without a swtp node */
+#define MTK_MD_SYS_BATTERY_INFO		0x105	/* both ways: battery voltage in mV */
+#define MTK_MD_SYS_SIM_TYPE		0x107
+#define MTK_MD_SYS_SWTP_REQ		0x110
+#define MTK_MD_SYS_TEST_MD2AP		0x114	/* echoed as 0x115 */
+#define MTK_MD_SYS_TEST_L1CORE		0x116	/* echoed as 0x117 */
 
 #define MTK_MD_CTRL_BOOT		0x0		/* data[1] of both handshakes */
 #define MTK_MD_CTRL_EX			0x4

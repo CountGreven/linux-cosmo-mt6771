@@ -38,6 +38,7 @@
 
 	aliases {
 		serial0 = &uart0;
+		serial1 = &uart1;
 		/* The SD card probes first and took mmcblk0; root= names the eMMC as mmcblk0p43. */
 		mmc0 = &mmc0;
 		mmc1 = &mmc1;
@@ -257,6 +258,13 @@
 		};
 	};
 
+};
+
+/* Cover display: the STM32 speaks the CoDi protocol at 115200 baud (codi-app SerialPortManager.py) */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_pins>;
+	status = "okay";
 };
 
 &uart0 {
@@ -1454,6 +1462,20 @@
  * five 20 % steps, and GPIO178 high whenever the light is on. GPIO178 is shared with the HDMI hot-plug
  * path in the vendor code; what it switches on the board is not in the source, so it is held high.
  */
+&pio {
+	uart1_pins: uart1-pins {
+		pins-rx {
+			pinmux = <PINMUX_GPIO110__FUNC_URXD1>;
+			input-enable;
+			bias-pull-up;
+		};
+
+		pins-tx {
+			pinmux = <PINMUX_GPIO112__FUNC_UTXD1>;
+		};
+	};
+};
+
 &pio {
 	kbd_backlight_pins: kbd-backlight-pins {
 		pins-pwm {

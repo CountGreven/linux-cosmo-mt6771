@@ -98,6 +98,9 @@
  */
 #define MTK_MD_FS_Q		4
 #define MTK_MD_FS_MAX_LEN	4096	/* the modem sends at most 3456 bytes of data per message */
+/* md_cd_late_init(): 512 armed RX descriptors of NET_RX_BUF bytes on queue 0 */
+#define MTK_MD_CLDMA_RX_GPDS	512
+#define MTK_MD_CLDMA_RX_BUF	0xe00
 #define MTK_MD_FS_RX_BACKLOG	32
 
 #define MTK_MD_POLL_US		1000
@@ -181,9 +184,14 @@ struct mtk_md {
 	u32 ps1_rat;
 	u32 ring_total;			/* bytes of normal CCIF queues */
 
-	/* One idle descriptor per CLDMA queue: four TX, then one RX. */
+	/* One idle descriptor per CLDMA TX queue, then the RX queue 0 ring. */
 	void *gpd;
 	dma_addr_t gpd_dma;
+	void *rx_buf[MTK_MD_CLDMA_RX_GPDS];
+	dma_addr_t rx_buf_dma[MTK_MD_CLDMA_RX_GPDS];
+	unsigned int rx_next;		/* the next RX descriptor the hardware completes */
+	unsigned long rx_packets;
+	struct work_struct cldma_rx_work;
 
 	void *smem_va;			/* the AP/MD1 share memory, mapped for the driver's life */
 	struct mtk_md_ring *ring[MTK_MD_RING_QUEUES];
@@ -413,27 +421,6 @@ static irqreturn_t mtk_md_wdt_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-/* No queues are in use yet, so this only acknowledges whatever the engine reports. */
-static irqreturn_t mtk_md_cldma_irq(int irq, void *data)
-{
-	struct mtk_md *md = data;
-	u32 tx = readl(md->cldma_pd + CLDMA_PD_L2TISAR0);
-	u32 rx = readl(md->cldma_pd + CLDMA_PD_L2RISAR0);
-
-	writel(tx, md->cldma_pd + CLDMA_PD_L2TISAR0);
-	writel(rx, md->cldma_pd + CLDMA_PD_L2RISAR0);
-	mtk_md_trace(md, "cldma irq tx %#x rx %#x\n", tx, rx);
-	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CLDMA, irq))
-		dev_err(md->dev, "cldma: L2 tx %#x rx %#x, L3 tx %#x %#x rx %#x %#x\n", tx, rx,
-			readl(md->cldma_pd + CLDMA_PD_L3TISAR0),
-			readl(md->cldma_pd + CLDMA_PD_L3TISAR1),
-			readl(md->cldma_pd + CLDMA_PD_L3RISAR0),
-			readl(md->cldma_pd + CLDMA_PD_L3RISAR1));
-	dev_info_ratelimited(md->dev, "cldma: tx %#x rx %#x, queues not implemented\n", tx, rx);
-
-	return IRQ_HANDLED;
-}
-
 /*
  * cldma_write32_ao_misc(): on 6293 the always-on mask set/clear registers are read-write rather
  * than write-one, so clear the same bits in the opposite register before writing this one.
@@ -446,27 +433,111 @@ static void mtk_md_cldma_ao_mask(struct mtk_md *md, unsigned int reg, u32 val)
 	writel(val, md->cldma_ao + reg);
 }
 
+/* RX queue 0 completions go to mtk_md_cldma_rx_work(); TX is unused until sends exist. */
+static irqreturn_t mtk_md_cldma_irq(int irq, void *data)
+{
+	struct mtk_md *md = data;
+	u32 tx = readl(md->cldma_pd + CLDMA_PD_L2TISAR0);
+	u32 rx = readl(md->cldma_pd + CLDMA_PD_L2RISAR0);
+
+	writel(tx, md->cldma_pd + CLDMA_PD_L2TISAR0);
+	writel(rx, md->cldma_pd + CLDMA_PD_L2RISAR0);
+	mtk_md_trace(md, "cldma irq tx %#x rx %#x\n", tx, rx);
+	/* cldma_irq_work_cb(): in the RX status, bit 0 is done and bit 8 queue-empty */
+	if (rx & (BIT(0) | BIT(8))) {
+		writel(readl(md->cldma_pd + CLDMA_PD_IP_BUSY), md->cldma_pd + CLDMA_PD_IP_BUSY);
+		mtk_md_cldma_ao_mask(md, CLDMA_AO_L2RIMSR0,
+				     CLDMA_RX_INT_DONE | CLDMA_RX_INT_QUEUE_EMPTY);
+		schedule_work(&md->cldma_rx_work);
+	}
+	if (mtk_md_irq_storm(md, MTK_MD_IRQ_CLDMA, irq))
+		dev_err(md->dev, "cldma: L2 tx %#x rx %#x, L3 tx %#x %#x rx %#x %#x\n", tx, rx,
+			readl(md->cldma_pd + CLDMA_PD_L3TISAR0),
+			readl(md->cldma_pd + CLDMA_PD_L3TISAR1),
+			readl(md->cldma_pd + CLDMA_PD_L3RISAR0),
+			readl(md->cldma_pd + CLDMA_PD_L3RISAR1));
+	if (tx)
+		dev_info_ratelimited(md->dev, "cldma: tx status %#x, no transmit queues yet\n", tx);
+
+	return IRQ_HANDLED;
+}
+
+static struct cldma_rgpd *mtk_md_rgpd(struct mtk_md *md, unsigned int i)
+{
+	return md->gpd + CLDMA_TXQ_NUM * sizeof(struct cldma_tgpd) + i * sizeof(struct cldma_rgpd);
+}
+
+static dma_addr_t mtk_md_rgpd_dma(struct mtk_md *md, unsigned int i)
+{
+	return md->gpd_dma + CLDMA_TXQ_NUM * sizeof(struct cldma_tgpd) +
+	       i * sizeof(struct cldma_rgpd);
+}
+
+/* cldma_rx_ring_init() and the refill in cldma_gpd_rx_collect(): hand one buffer to the hardware */
+static void mtk_md_rgpd_arm(struct mtk_md *md, unsigned int i)
+{
+	struct cldma_rgpd *rgpd = mtk_md_rgpd(md, i);
+	dma_addr_t next = mtk_md_rgpd_dma(md, (i + 1) % MTK_MD_CLDMA_RX_GPDS);
+	dma_addr_t buf = md->rx_buf_dma[i];
+
+	rgpd->data_buff_bd_ptr = cpu_to_le32(lower_32_bits(buf));
+	rgpd->next_gpd_ptr = cpu_to_le32(lower_32_bits(next));
+	rgpd->msb = FIELD_PREP(CLDMA_GPD_MSB_DATA, upper_32_bits(buf) & 0xf) |
+		    FIELD_PREP(CLDMA_GPD_MSB_NEXT, upper_32_bits(next) & 0xf);
+	rgpd->data_allow_len = cpu_to_le16(MTK_MD_CLDMA_RX_BUF);
+	rgpd->data_buff_len = 0;
+	dma_wmb();	/* the descriptor before the ownership flag */
+	rgpd->gpd_flags = CLDMA_GPD_FLAG_IOC | CLDMA_GPD_FLAG_HWO;
+}
+
+/* md_cd_clear_all_queue() then cldma_start(): every RX descriptor armed, TX descriptors idle */
 static void mtk_md_gpd_init(struct mtk_md *md)
 {
 	struct cldma_tgpd *tgpd = md->gpd;
-	struct cldma_rgpd *rgpd = md->gpd + CLDMA_TXQ_NUM * sizeof(*tgpd);
-	dma_addr_t rx = md->gpd_dma + CLDMA_TXQ_NUM * sizeof(*tgpd);
+	unsigned int i;
 	int q;
 
-	/*
-	 * STAND-IN: each queue points at one descriptor that links to itself and is not owned by
-	 * the hardware (HWO clear), so a started engine finds nothing to do. Real rings replace
-	 * this with the data path.
-	 */
+	/* TX: one self-linked descriptor per queue, not owned by the hardware, until sends exist */
 	for (q = 0; q < CLDMA_TXQ_NUM; q++) {
 		dma_addr_t self = md->gpd_dma + q * sizeof(*tgpd);
 
+		memset(&tgpd[q], 0, sizeof(tgpd[q]));
 		tgpd[q].non_used = 1;
 		tgpd[q].next_gpd_ptr = cpu_to_le32(lower_32_bits(self));
 		tgpd[q].msb = FIELD_PREP(CLDMA_GPD_MSB_NEXT, upper_32_bits(self) & 0xf);
 	}
-	rgpd->next_gpd_ptr = cpu_to_le32(lower_32_bits(rx));
-	rgpd->msb = FIELD_PREP(CLDMA_GPD_MSB_NEXT, upper_32_bits(rx) & 0xf);
+	for (i = 0; i < MTK_MD_CLDMA_RX_GPDS; i++)
+		mtk_md_rgpd_arm(md, i);
+	md->rx_next = 0;
+}
+
+/* cldma_gpd_rx_collect(): take each completed descriptor, give it back, resume a stopped queue */
+static void mtk_md_cldma_rx_work(struct work_struct *work)
+{
+	struct mtk_md *md = container_of(work, struct mtk_md, cldma_rx_work);
+	unsigned int budget = MTK_MD_CLDMA_RX_GPDS;
+
+	while (budget--) {
+		struct cldma_rgpd *rgpd = mtk_md_rgpd(md, md->rx_next);
+		u16 len;
+
+		if (READ_ONCE(rgpd->gpd_flags) & CLDMA_GPD_FLAG_HWO)
+			break;
+		dma_rmb();
+		len = le16_to_cpu(rgpd->data_buff_len);
+		/* no net ports yet; 6293 packets start with a 4-byte lhif header */
+		if (md->rx_packets++ < MTK_MD_RX_LOG_LIMIT)
+			dev_info(md->dev, "cldma rx %u: %u bytes, lhif %*ph\n", md->rx_next, len,
+				 (int)min_t(u16, len, 16), md->rx_buf[md->rx_next]);
+		mtk_md_rgpd_arm(md, md->rx_next);
+		md->rx_next = (md->rx_next + 1) % MTK_MD_CLDMA_RX_GPDS;
+	}
+
+	if (!(readl(md->cldma_ao + CLDMA_AO_SO_STATUS) & BIT(0))) {
+		writel(BIT(0), md->cldma_pd + CLDMA_PD_SO_RESUME_CMD);
+		readl(md->cldma_pd + CLDMA_PD_SO_RESUME_CMD);
+	}
+	mtk_md_cldma_ao_mask(md, CLDMA_AO_L2RIMCR0, CLDMA_RX_INT_DONE | CLDMA_RX_INT_QUEUE_EMPTY);
 }
 
 /* cldma_reset(), 6293 branch */
@@ -1574,8 +1645,9 @@ static void mtk_md_start(struct work_struct *work)
 	dev_info(md->dev, "step 2: CCIF reset, SRAM cleared\n");
 	mtk_md_ccif_reset(md);
 
-	dev_info(md->dev, "step 3: CLDMA reset\n");
+	dev_info(md->dev, "step 3: CLDMA reset, RX ring armed\n");
 	mtk_md_cldma_hw_reset(md);
+	mtk_md_gpd_init(md);
 
 	ret = mtk_md_power_on(md);
 	if (ret)
@@ -1597,10 +1669,11 @@ static void mtk_md_start(struct work_struct *work)
 	if (no_cldma) {
 		mtk_md_trace(md, "cldma left stopped\n");
 	} else {
+		dma_addr_t rx = mtk_md_rgpd_dma(md, 0);
+
 		dev_info(md->dev, "step 6: cldma_reset (MTU %#x, SO_CFG enable)\n", CLDMA_MTU_SIZE);
 		mtk_md_cldma_reset(md);
-
-		dev_info(md->dev, "step 7: cldma_start (idle descriptors at %pad)\n", &md->gpd_dma);
+		dev_info(md->dev, "step 7: cldma_start (RX ring at %pad)\n", &rx);
 		mtk_md_cldma_start(md);
 	}
 
@@ -1622,6 +1695,7 @@ static void mtk_md_teardown(void *data)
 	disable_irq(md->irq_ccif1);
 	disable_irq(md->irq_wdt);
 	cancel_work_sync(&md->rx_work);
+	cancel_work_sync(&md->cldma_rx_work);
 	mtk_md_power_off(md);
 	if (md->clks_on)
 		clk_bulk_disable_unprepare(ARRAY_SIZE(md->clks), md->clks);
@@ -1659,6 +1733,7 @@ static int mtk_md_probe(struct platform_device *pdev)
 	init_completion(&md->hs1_done);
 	INIT_WORK(&md->start_work, mtk_md_start);
 	INIT_WORK(&md->rx_work, mtk_md_rx_work);
+	INIT_WORK(&md->cldma_rx_work, mtk_md_cldma_rx_work);
 	spin_lock_init(&md->tx_lock);
 
 	md->cldma_ao = devm_platform_ioremap_resource_byname(pdev, "cldma-ao");
@@ -1730,10 +1805,16 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(36));
 	if (ret)
 		return dev_err_probe(dev, ret, "dma mask\n");
-	md->gpd = dmam_alloc_coherent(dev, (CLDMA_TXQ_NUM + CLDMA_RXQ_NUM) * 16, &md->gpd_dma,
-				      GFP_KERNEL);
+	md->gpd = dmam_alloc_coherent(dev, CLDMA_TXQ_NUM * sizeof(struct cldma_tgpd) +
+				      MTK_MD_CLDMA_RX_GPDS * sizeof(struct cldma_rgpd),
+				      &md->gpd_dma, GFP_KERNEL);
 	if (!md->gpd)
 		return -ENOMEM;
+	for (i = 0; i < MTK_MD_CLDMA_RX_GPDS; i++) {
+		md->rx_buf[i] = dmam_alloc_coherent(dev, PAGE_SIZE, &md->rx_buf_dma[i], GFP_KERNEL);
+		if (!md->rx_buf[i])
+			return -ENOMEM;
+	}
 	mtk_md_gpd_init(md);
 
 	ret = mtk_md_read_lk(md);

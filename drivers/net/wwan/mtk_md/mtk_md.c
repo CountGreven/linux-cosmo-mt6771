@@ -38,6 +38,9 @@
 #include <linux/sizes.h>
 #include <linux/skbuff.h>
 #include <linux/wwan.h>
+#include <linux/netdevice.h>
+#include <linux/if_arp.h>
+#include <linux/rtnetlink.h>
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 #include <linux/unaligned.h>
@@ -104,6 +107,21 @@
 /* md_cd_late_init(): 512 armed RX descriptors of NET_RX_BUF bytes on queue 0 */
 #define MTK_MD_CLDMA_RX_GPDS	512
 #define MTK_MD_CLDMA_RX_BUF	0xe00
+/* ccmni: link ids 0..21 (21 is ccmni-lan), 8 unused; ccmni0/1/7/lan send on queue 0, the rest 2 */
+#define MTK_MD_NET_LINKS	22
+#define MTK_MD_CLDMA_TX_GPDS	64
+#define MTK_MD_CLDMA_TXQS	2	/* hardware queues 0 and 2 */
+/* lhif_header: u16 pdcp count, u8 flow, u8 netif:5 + network type:3 */
+#define MTK_MD_LHIF_LEN		4
+#define MTK_MD_LHIF_NETIF	GENMASK(4, 0)
+
+struct mtk_md;
+
+struct mtk_md_net {
+	struct mtk_md *md;
+	u32 link;
+};
+
 #define MTK_MD_FS_RX_BACKLOG	32
 
 #define MTK_MD_POLL_US		1000
@@ -195,6 +213,17 @@ struct mtk_md {
 	unsigned int rx_next;		/* the next RX descriptor the hardware completes */
 	unsigned long rx_packets;
 	struct work_struct cldma_rx_work;
+	struct mtk_md_txq {
+		struct cldma_tgpd *gpd;
+		dma_addr_t dma;
+		struct sk_buff *skb[MTK_MD_CLDMA_TX_GPDS];
+		dma_addr_t map[MTK_MD_CLDMA_TX_GPDS];
+		unsigned int head, tail;
+	} txq[MTK_MD_CLDMA_TXQS];
+	spinlock_t cldma_tx_lock;	/* TX rings and the UL start state */
+	bool ul_started;
+	struct work_struct cldma_tx_work;
+	struct net_device __rcu *net[MTK_MD_NET_LINKS];
 
 	void __iomem *dvfsrc;
 	void *smem_va;			/* the AP/MD1 share memory, mapped for the driver's life */
@@ -461,10 +490,243 @@ static irqreturn_t mtk_md_cldma_irq(int irq, void *data)
 			readl(md->cldma_pd + CLDMA_PD_L3TISAR1),
 			readl(md->cldma_pd + CLDMA_PD_L3RISAR0),
 			readl(md->cldma_pd + CLDMA_PD_L3RISAR1));
-	if (tx)
-		dev_info_ratelimited(md->dev, "cldma: tx status %#x, no transmit queues yet\n", tx);
+	if (tx & (CLDMA_TX_INT_DONE | CLDMA_TX_INT_QUEUE_EMPTY))
+		schedule_work(&md->cldma_tx_work);
+	if (tx & CLDMA_TX_INT_ERROR)
+		dev_err_ratelimited(md->dev, "cldma: tx error %#x\n", tx);
 
 	return IRQ_HANDLED;
+}
+
+static unsigned int mtk_md_link_hwq(u32 link)
+{
+	return link == 0 || link == 1 || link == 7 || link == 21 ? 0 : 2;
+}
+
+static struct mtk_md_txq *mtk_md_hwq_txq(struct mtk_md *md, unsigned int hwq)
+{
+	return &md->txq[hwq == 0 ? 0 : 1];
+}
+
+/* cldma_tx_ring_init(), RING_GPD: a circle of IOC descriptors the hardware does not own yet */
+static void mtk_md_txq_init(struct mtk_md *md, struct mtk_md_txq *tq)
+{
+	unsigned int i;
+
+	for (i = 0; i < MTK_MD_CLDMA_TX_GPDS; i++) {
+		dma_addr_t next = tq->dma + ((i + 1) % MTK_MD_CLDMA_TX_GPDS) * sizeof(*tq->gpd);
+
+		if (tq->skb[i]) {
+			dma_unmap_single(md->dev, tq->map[i], tq->skb[i]->len, DMA_TO_DEVICE);
+			dev_kfree_skb_any(tq->skb[i]);
+			tq->skb[i] = NULL;
+		}
+		memset(&tq->gpd[i], 0, sizeof(tq->gpd[i]));
+		tq->gpd[i].gpd_flags = CLDMA_GPD_FLAG_IOC;
+		tq->gpd[i].next_gpd_ptr = cpu_to_le32(lower_32_bits(next));
+		tq->gpd[i].msb = FIELD_PREP(CLDMA_GPD_MSB_NEXT, upper_32_bits(next) & 0xf);
+	}
+	tq->head = 0;
+	tq->tail = 0;
+}
+
+/* cldma_gpd_handle_tx_request() and the kick in md_cd_send_skb() */
+static netdev_tx_t mtk_md_net_xmit(struct sk_buff *skb, struct net_device *ndev)
+{
+	struct mtk_md_net *priv = netdev_priv(ndev);
+	struct mtk_md *md = priv->md;
+	unsigned int hwq = mtk_md_link_hwq(priv->link);
+	struct mtk_md_txq *tq = mtk_md_hwq_txq(md, hwq);
+	struct cldma_tgpd *gpd;
+	unsigned long flags;
+	dma_addr_t map;
+
+	/* port_net_send_skb_to_md(): only a ready modem takes data */
+	if (!md->ready || skb->len > MTK_MD_CCMNI_MTU + ETH_HLEN) {
+		ndev->stats.tx_dropped++;
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+
+	spin_lock_irqsave(&md->cldma_tx_lock, flags);
+	if (tq->skb[tq->head]) {
+		netif_stop_queue(ndev);
+		spin_unlock_irqrestore(&md->cldma_tx_lock, flags);
+		return NETDEV_TX_BUSY;
+	}
+	map = dma_map_single(md->dev, skb->data, skb->len, DMA_TO_DEVICE);
+	if (dma_mapping_error(md->dev, map)) {
+		spin_unlock_irqrestore(&md->cldma_tx_lock, flags);
+		ndev->stats.tx_dropped++;
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
+	gpd = &tq->gpd[tq->head];
+	gpd->data_buff_bd_ptr = cpu_to_le32(lower_32_bits(map));
+	gpd->msb = (gpd->msb & CLDMA_GPD_MSB_NEXT) |
+		   FIELD_PREP(CLDMA_GPD_MSB_DATA, upper_32_bits(map) & 0xf);
+	gpd->data_buff_len = cpu_to_le16(skb->len);
+	gpd->psn = 0;
+	gpd->netif = priv->link;
+	gpd->non_used = 1;
+	tq->skb[tq->head] = skb;
+	tq->map[tq->head] = map;
+	dma_wmb();	/* the descriptor before ownership */
+	gpd->gpd_flags = CLDMA_GPD_FLAG_IOC | CLDMA_GPD_FLAG_HWO;
+	tq->head = (tq->head + 1) % MTK_MD_CLDMA_TX_GPDS;
+
+	/* the first send starts every UL queue; later ones resume a queue that went idle */
+	if (!md->ul_started) {
+		writel(CLDMA_ALL_QUEUES, md->cldma_pd + CLDMA_PD_UL_START_CMD);
+		readl(md->cldma_pd + CLDMA_PD_UL_START_CMD);
+		md->ul_started = true;
+	} else if (!(readl(md->cldma_pd + CLDMA_PD_UL_STATUS) & BIT(hwq))) {
+		writel(BIT(hwq), md->cldma_pd + CLDMA_PD_UL_RESUME_CMD);
+		readl(md->cldma_pd + CLDMA_PD_UL_RESUME_CMD);
+	}
+	spin_unlock_irqrestore(&md->cldma_tx_lock, flags);
+
+	ndev->stats.tx_packets++;
+	ndev->stats.tx_bytes += skb->len;
+	return NETDEV_TX_OK;
+}
+
+/* cldma_gpd_tx_collect(): give back what the hardware has sent */
+static void mtk_md_cldma_tx_work(struct work_struct *work)
+{
+	struct mtk_md *md = container_of(work, struct mtk_md, cldma_tx_work);
+	unsigned long flags;
+	int i;
+
+	spin_lock_irqsave(&md->cldma_tx_lock, flags);
+	for (i = 0; i < MTK_MD_CLDMA_TXQS; i++) {
+		struct mtk_md_txq *tq = &md->txq[i];
+
+		while (tq->skb[tq->tail] &&
+		       !(READ_ONCE(tq->gpd[tq->tail].gpd_flags) & CLDMA_GPD_FLAG_HWO)) {
+			dma_unmap_single(md->dev, tq->map[tq->tail], tq->skb[tq->tail]->len,
+					 DMA_TO_DEVICE);
+			dev_consume_skb_any(tq->skb[tq->tail]);
+			tq->skb[tq->tail] = NULL;
+			tq->tail = (tq->tail + 1) % MTK_MD_CLDMA_TX_GPDS;
+		}
+	}
+	spin_unlock_irqrestore(&md->cldma_tx_lock, flags);
+
+	rcu_read_lock();
+	for (i = 0; i < MTK_MD_NET_LINKS; i++) {
+		struct net_device *ndev = rcu_dereference(md->net[i]);
+
+		if (ndev && netif_queue_stopped(ndev))
+			netif_wake_queue(ndev);
+	}
+	rcu_read_unlock();
+}
+
+/* ccmni_rx_callback(): strip the lhif header, the interface is its netif field */
+static void mtk_md_net_rx(struct mtk_md *md, const u8 *buf, u16 len)
+{
+	struct net_device *ndev;
+	struct sk_buff *skb;
+	u32 link;
+
+	if (len <= MTK_MD_LHIF_LEN)
+		return;
+	link = buf[3] & MTK_MD_LHIF_NETIF;
+	rcu_read_lock();
+	ndev = link < MTK_MD_NET_LINKS ? rcu_dereference(md->net[link]) : NULL;
+	if (!ndev) {
+		rcu_read_unlock();
+		return;
+	}
+	skb = netdev_alloc_skb(ndev, len - MTK_MD_LHIF_LEN);
+	if (!skb) {
+		ndev->stats.rx_dropped++;
+		rcu_read_unlock();
+		return;
+	}
+	skb_put_data(skb, buf + MTK_MD_LHIF_LEN, len - MTK_MD_LHIF_LEN);
+	skb->protocol = (skb->data[0] >> 4) == 6 ? htons(ETH_P_IPV6) : htons(ETH_P_IP);
+	skb_reset_network_header(skb);
+	ndev->stats.rx_packets++;
+	ndev->stats.rx_bytes += skb->len;
+	netif_rx(skb);
+	rcu_read_unlock();
+}
+
+static int mtk_md_net_open(struct net_device *ndev)
+{
+	netif_start_queue(ndev);
+	return 0;
+}
+
+static int mtk_md_net_stop(struct net_device *ndev)
+{
+	netif_stop_queue(ndev);
+	return 0;
+}
+
+static const struct net_device_ops mtk_md_net_ops = {
+	.ndo_open = mtk_md_net_open,
+	.ndo_stop = mtk_md_net_stop,
+	.ndo_start_xmit = mtk_md_net_xmit,
+};
+
+/* ccmni_dev_init(): a raw IP point-to-point interface */
+static void mtk_md_net_setup(struct net_device *ndev)
+{
+	ndev->netdev_ops = &mtk_md_net_ops;
+	ndev->type = ARPHRD_NONE;
+	ndev->flags = IFF_POINTOPOINT | IFF_NOARP;
+	ndev->mtu = MTK_MD_CCMNI_MTU;
+	ndev->min_mtu = ETH_MIN_MTU;
+	ndev->max_mtu = MTK_MD_CCMNI_MTU;
+	ndev->hard_header_len = 0;
+	ndev->addr_len = 0;
+	ndev->tx_queue_len = 1000;
+	ndev->needs_free_netdev = true;
+}
+
+static int mtk_md_net_newlink(void *ctxt, struct net_device *ndev, u32 link,
+			      struct netlink_ext_ack *extack)
+{
+	struct mtk_md_net *priv = netdev_priv(ndev);
+	struct mtk_md *md = ctxt;
+	int ret;
+
+	if (link >= MTK_MD_NET_LINKS || link == 8)
+		return -EINVAL;
+	if (rtnl_dereference(md->net[link]))
+		return -EBUSY;
+	priv->md = md;
+	priv->link = link;
+	ret = register_netdevice(ndev);
+	if (!ret)
+		rcu_assign_pointer(md->net[link], ndev);
+	return ret;
+}
+
+static void mtk_md_net_dellink(void *ctxt, struct net_device *ndev, struct list_head *head)
+{
+	struct mtk_md_net *priv = netdev_priv(ndev);
+	struct mtk_md *md = ctxt;
+
+	RCU_INIT_POINTER(md->net[priv->link], NULL);
+	unregister_netdevice_queue(ndev, head);
+}
+
+static const struct wwan_ops mtk_md_wwan_ops = {
+	.priv_size = sizeof(struct mtk_md_net),
+	.setup = mtk_md_net_setup,
+	.newlink = mtk_md_net_newlink,
+	.dellink = mtk_md_net_dellink,
+};
+
+static void mtk_md_net_unregister(void *data)
+{
+	struct mtk_md *md = data;
+
+	wwan_unregister_ops(md->dev);
 }
 
 static struct cldma_rgpd *mtk_md_rgpd(struct mtk_md *md, unsigned int i)
@@ -502,7 +764,7 @@ static void mtk_md_gpd_init(struct mtk_md *md)
 	unsigned int i;
 	int q;
 
-	/* TX: one self-linked descriptor per queue, not owned by the hardware, until sends exist */
+	/* TX queues 1 and 3 carry nothing on 6293: one idle self-linked descriptor each */
 	for (q = 0; q < CLDMA_TXQ_NUM; q++) {
 		dma_addr_t self = md->gpd_dma + q * sizeof(*tgpd);
 
@@ -514,6 +776,9 @@ static void mtk_md_gpd_init(struct mtk_md *md)
 	for (i = 0; i < MTK_MD_CLDMA_RX_GPDS; i++)
 		mtk_md_rgpd_arm(md, i);
 	md->rx_next = 0;
+	for (q = 0; q < MTK_MD_CLDMA_TXQS; q++)
+		mtk_md_txq_init(md, &md->txq[q]);
+	md->ul_started = false;
 }
 
 /* cldma_gpd_rx_collect(): take each completed descriptor, give it back, resume a stopped queue */
@@ -530,10 +795,10 @@ static void mtk_md_cldma_rx_work(struct work_struct *work)
 			break;
 		dma_rmb();
 		len = le16_to_cpu(rgpd->data_buff_len);
-		/* no net ports yet; 6293 packets start with a 4-byte lhif header */
 		if (md->rx_packets++ < MTK_MD_RX_LOG_LIMIT)
-			dev_info(md->dev, "cldma rx %u: %u bytes, lhif %*ph\n", md->rx_next, len,
-				 (int)min_t(u16, len, 16), md->rx_buf[md->rx_next]);
+			dev_dbg(md->dev, "cldma rx %u: %u bytes, lhif %*ph\n", md->rx_next, len,
+				(int)min_t(u16, len, 16), md->rx_buf[md->rx_next]);
+		mtk_md_net_rx(md, md->rx_buf[md->rx_next], len);
 		mtk_md_rgpd_arm(md, md->rx_next);
 		md->rx_next = (md->rx_next + 1) % MTK_MD_CLDMA_RX_GPDS;
 	}
@@ -561,7 +826,8 @@ static void mtk_md_cldma_start(struct mtk_md *md)
 	int q;
 
 	for (q = 0; q < CLDMA_TXQ_NUM; q++) {
-		dma_addr_t tx = md->gpd_dma + q * sizeof(struct cldma_tgpd);
+		dma_addr_t tx = q == 0 || q == 2 ? mtk_md_hwq_txq(md, q)->dma :
+			md->gpd_dma + q * sizeof(struct cldma_tgpd);
 
 		writel(lower_32_bits(tx), md->cldma_pd + CLDMA_PD_UL_START_ADDR(q));
 		writel(lower_32_bits(tx), md->cldma_ao + CLDMA_AO_UL_START_ADDR_BK(q));
@@ -1851,6 +2117,7 @@ static void mtk_md_teardown(void *data)
 	disable_irq(md->irq_wdt);
 	cancel_work_sync(&md->rx_work);
 	cancel_work_sync(&md->cldma_rx_work);
+	cancel_work_sync(&md->cldma_tx_work);
 	mtk_md_power_off(md);
 	if (md->clks_on)
 		clk_bulk_disable_unprepare(ARRAY_SIZE(md->clks), md->clks);
@@ -1889,6 +2156,8 @@ static int mtk_md_probe(struct platform_device *pdev)
 	INIT_WORK(&md->start_work, mtk_md_start);
 	INIT_WORK(&md->rx_work, mtk_md_rx_work);
 	INIT_WORK(&md->cldma_rx_work, mtk_md_cldma_rx_work);
+	INIT_WORK(&md->cldma_tx_work, mtk_md_cldma_tx_work);
+	spin_lock_init(&md->cldma_tx_lock);
 	spin_lock_init(&md->tx_lock);
 
 	md->cldma_ao = devm_platform_ioremap_resource_byname(pdev, "cldma-ao");
@@ -1973,6 +2242,13 @@ static int mtk_md_probe(struct platform_device *pdev)
 		if (!md->rx_buf[i])
 			return -ENOMEM;
 	}
+	for (i = 0; i < MTK_MD_CLDMA_TXQS; i++) {
+		md->txq[i].gpd = dmam_alloc_coherent(dev, MTK_MD_CLDMA_TX_GPDS *
+						     sizeof(struct cldma_tgpd),
+						     &md->txq[i].dma, GFP_KERNEL);
+		if (!md->txq[i].gpd)
+			return -ENOMEM;
+	}
 	mtk_md_gpd_init(md);
 
 	ret = mtk_md_read_lk(md);
@@ -1992,6 +2268,13 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_at_register(md);
 	if (ret)
 		return dev_err_probe(dev, ret, "AT port\n");
+
+	ret = wwan_register_ops(dev, &mtk_md_wwan_ops, md, WWAN_NO_DEFAULT_LINK);
+	if (ret)
+		return dev_err_probe(dev, ret, "network links\n");
+	ret = devm_add_action_or_reset(dev, mtk_md_net_unregister, md);
+	if (ret)
+		return ret;
 
 	ret = devm_add_action_or_reset(dev, mtk_md_teardown, md);
 	if (ret)

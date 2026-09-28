@@ -1632,9 +1632,18 @@ static WLAN_STATUS wlanoidMonInject(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuff
 		     prAdapter->prGlueInfo->prMonBssInfo->ucBssIndex : prAdapter->prAisBssInfo->ucBssIndex;
 	ucStaRecIndex = wlanMonResolvePeer(prAdapter, ucBssIndex, &prReq->aucFrame[4]);	/* Address 1 */
 
+	/* CCK does not exist on 5GHz; real aireplay-ng defaults to 1Mbps CCK regardless of band
+	 * (confirmed live: TxRate 0, RETRY 0, an immediate firmware reject, not a real TX attempt).
+	 * Substitute a valid OFDM rate rather than passing an impossible one through.
+	 */
+	if (prReq->fgFixedRate && (prReq->u2RateCode & (TX_MODE_HT_GF | TX_MODE_VHT)) == TX_MODE_CCK &&
+	    prAdapter->prGlueInfo->rMonChandef.chan &&
+	    prAdapter->prGlueInfo->rMonChandef.chan->band == NL80211_BAND_5GHZ)
+		prReq->u2RateCode = RATE_OFDM_6M;
+
 	/* Broadcast/multicast has no per-station rate history to auto-rate from; real 802.11 always
 	 * sends it at a fixed basic rate. Without this, a caller that omits a radiotap rate field
-	 * (real aireplay-ng deauth frames do) gets TxRate 0 and a timeout.
+	 * gets TxRate 0 and a timeout.
 	 */
 	if (ucStaRecIndex == STA_REC_INDEX_BMCAST && !prReq->fgFixedRate) {
 		prReq->fgFixedRate = TRUE;

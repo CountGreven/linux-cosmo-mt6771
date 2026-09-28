@@ -821,7 +821,11 @@ def main():
                 out, line = [p_i32(FS_PARAM_ERROR)], '%s: bad arguments (%s)' % (OPS.get(op, hex(op)), e)
         log(line)
         for m in svc.build(hdr, op, out):
-            os.write(fd, m)
+            try:
+                os.write(fd, m)
+            except OSError as e:
+                log('reply to %s lost: %s' % (OPS.get(op, hex(op)), e))
+                break
 
 
 if __name__ == '__main__':

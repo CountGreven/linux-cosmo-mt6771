@@ -112,6 +112,10 @@ struct mt6370_priv {
 	int ichg_max;
 	int voreg_max;
 	bool pwr_rdy;
+	struct fwnode_handle *tcpc_fwnode;
+	struct notifier_block psy_nb;
+	struct work_struct limits_work;
+	int src_current_ua;
 };
 
 enum mt6370_usb_status {
@@ -268,12 +272,11 @@ static int mt6370_chg_otg_of_parse_cb(struct device_node *of,
 
 /*
  * Input and charge current from the source: the BC1.2 type (SDP 500 mA, CDP 1.5 A, DCP 3.2 A, as
- * the vendor charger manager uses) raised to what a Type-C or PD source advertises through the
- * supplying power supply; full charge current once the input allows 1.5 A.
+ * the vendor charger manager uses) raised to what the Type-C or PD source on the sibling TCPC
+ * advertises; full charge current once the input allows 1.5 A.
  */
 static void mt6370_chg_update_limits(struct mt6370_priv *priv)
 {
-	union power_supply_propval val;
 	int aicr;
 
 	switch (priv->psy_usb_type) {
@@ -288,22 +291,51 @@ static void mt6370_chg_update_limits(struct mt6370_priv *priv)
 		break;
 	}
 
-	if (!power_supply_get_property_from_supplier(priv->psy, POWER_SUPPLY_PROP_CURRENT_MAX,
-						     &val) && val.intval > aicr)
-		aicr = min(val.intval, MT6370_AICR_DCP_UA);
+	if (READ_ONCE(priv->src_current_ua) > aicr)
+		aicr = min(READ_ONCE(priv->src_current_ua), MT6370_AICR_DCP_UA);
 
 	mt6370_chg_field_set(priv, F_IAICR, aicr);
 	mt6370_chg_field_set(priv, F_ICHG, aicr >= MT6370_AICR_CDP_UA ? priv->ichg_max :
 				       MT6370_ICHG_MIN_UA);
 }
 
-static void mt6370_chg_external_power_changed(struct power_supply *psy)
+static void mt6370_chg_limits_work_func(struct work_struct *work)
 {
-	struct mt6370_priv *priv = power_supply_get_drvdata(psy);
+	struct mt6370_priv *priv = container_of(work, struct mt6370_priv, limits_work);
 
 	mutex_lock(&priv->attach_lock);
 	mt6370_chg_update_limits(priv);
 	mutex_unlock(&priv->attach_lock);
+}
+
+/* The TCPM power supply of the sibling TCPC node reports the source current */
+static int mt6370_chg_psy_notifier(struct notifier_block *nb, unsigned long event, void *data)
+{
+	struct mt6370_priv *priv = container_of(nb, struct mt6370_priv, psy_nb);
+	struct power_supply *psy = data;
+	union power_supply_propval online, cur;
+
+	if (event != PSY_EVENT_PROP_CHANGED || !priv->tcpc_fwnode ||
+	    dev_fwnode(&psy->dev) != priv->tcpc_fwnode)
+		return NOTIFY_DONE;
+
+	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &online) ||
+	    power_supply_get_property(psy, POWER_SUPPLY_PROP_CURRENT_MAX, &cur))
+		return NOTIFY_DONE;
+
+	WRITE_ONCE(priv->src_current_ua, online.intval ? cur.intval : 0);
+	queue_work(priv->wq, &priv->limits_work);
+
+	return NOTIFY_OK;
+}
+
+static void mt6370_chg_psy_notifier_unregister(void *data)
+{
+	struct mt6370_priv *priv = data;
+
+	power_supply_unreg_notifier(&priv->psy_nb);
+	cancel_work_sync(&priv->limits_work);
+	fwnode_handle_put(priv->tcpc_fwnode);
 }
 
 static void mt6370_chg_bc12_work_func(struct work_struct *work)
@@ -705,7 +737,6 @@ static const struct power_supply_desc mt6370_chg_psy_desc = {
 	.get_property = mt6370_chg_get_property,
 	.set_property = mt6370_chg_set_property,
 	.property_is_writeable = mt6370_chg_property_is_writeable,
-	.external_power_changed = mt6370_chg_external_power_changed,
 	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
 			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
@@ -1101,6 +1132,18 @@ static int mt6370_chg_probe(struct platform_device *pdev)
 				     "Failed to init mt6370 charger setting\n");
 
 	ret = mt6370_chg_init_irq(priv);
+	if (ret)
+		return ret;
+
+	INIT_WORK(&priv->limits_work, mt6370_chg_limits_work_func);
+	priv->tcpc_fwnode = device_get_named_child_node(dev->parent, "tcpc");
+	priv->psy_nb.notifier_call = mt6370_chg_psy_notifier;
+	ret = power_supply_reg_notifier(&priv->psy_nb);
+	if (ret) {
+		fwnode_handle_put(priv->tcpc_fwnode);
+		return dev_err_probe(dev, ret, "Failed to register the psy notifier\n");
+	}
+	ret = devm_add_action_or_reset(dev, mt6370_chg_psy_notifier_unregister, priv);
 	if (ret)
 		return ret;
 

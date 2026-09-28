@@ -931,7 +931,9 @@ static int mtk_md_send(struct mtk_md *md, unsigned int q, void *msg, u32 len)
 	ret = mtk_md_ring_tx_write(md->ring[q], msg, len);
 	if (!ret) {
 		md->tx_seq[ch]++;
-		ret = mtk_md_ccif_send(md, q);
+		/* a pending doorbell makes the modem drain this queue too (vendor md_ccif_send) */
+		if (mtk_md_ccif_send(md, q))
+			mtk_md_trace(md, "queue %u doorbell already pending\n", q);
 	}
 	spin_unlock_irqrestore(&md->tx_lock, flags);
 	return ret;

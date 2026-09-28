@@ -1151,6 +1151,11 @@
  * Keys and lid (hw-spec/input-misc.org). The PMIC home key is volume up on this board (vendor
  * hal_kpd.c); one-key 8 s power reset as the vendor programs it (TOP_RST_MISC 0x221).
  */
+/* LK and the vendor OS store the RTC year from 1968 (vendor mtk_rtc_common.c RTC_MIN_YEAR) */
+&mt6358rtc {
+	mediatek,year-base = <1968>;
+};
+
 &mt6358keys {
 	mediatek,long-press-mode = <1>;
 	power-off-time-sec = <0>;

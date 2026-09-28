@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PAGE = 2048
@@ -99,9 +102,58 @@ def pad(data: bytes, page: int = PAGE) -> bytes:
     return data + (b"\0" * (page - remainder) if remainder else b"")
 
 
+# LK applies the vendor dtbo to our tree and cannot be told not to. Where that overlay targets a
+# controller we drive ourselves, it adds vendor-named children that squat on the addresses our nodes
+# need (i2c1 sensors, i2c3 NFC/HDMI/USB, spi1 IMU). Point those labels at disabled stubs instead:
+# our nodes reach the real controllers through phandles resolved at build time, and the overlay's
+# fragments land on the stubs. The stubs are in the board dts under lk-dtbo-stubs.
+SYMBOL_REDIRECTS = {
+    "i2c1": "/lk-dtbo-stubs/i2c1-stub",
+    "i2c3": "/lk-dtbo-stubs/i2c3-stub",
+    "spi1": "/lk-dtbo-stubs/spi1-stub",
+}
+
+
+def redirect_symbols(dtb: Path) -> bytes:
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "board.dtb"
+        shutil.copyfile(dtb, out)
+        for label, path in SYMBOL_REDIRECTS.items():
+            subprocess.run(["fdtget", str(out), path, "status"], check=True, capture_output=True)
+            subprocess.run(["fdtput", "-t", "s", str(out), "/__symbols__", label, path], check=True)
+        return out.read_bytes()
+
+
+DTBO = Path("/storage/kernel/cosmo-backups/dtbo.img")
+
+
+def check_overlay(dtb: bytes) -> None:
+    """Apply the device's own dtbo as LK will (libfdt overlay, as LK's ufdt): an image that LK cannot
+    overlay does not boot at all, so refuse to build it. A symbol that resolves to a node without a
+    phandle is enough to fail."""
+    if not DTBO.exists():
+        print(f"warning: {DTBO} missing, overlay not checked", file=sys.stderr)
+        return
+    blob = DTBO.read_bytes()
+    _, _, _, esz, cnt, off = struct.unpack_from(">IIIIII", blob, 0)
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp) / "board.dtb"
+        base.write_bytes(dtb)
+        for i in range(cnt):
+            size, start = struct.unpack_from(">II", blob, off + i * esz)
+            ovl = Path(tmp) / f"dtbo{i}.dtbo"
+            ovl.write_bytes(blob[start:start + size])
+            res = subprocess.run(["fdtoverlay", "-i", str(base), "-o", str(Path(tmp) / "out.dtb"),
+                                  str(ovl)], capture_output=True, text=True)
+            if res.returncode:
+                sys.exit(f"LK would fail to apply dtbo entry {i}: {res.stderr.strip()}")
+
+
 def build(image: Path, dtb: Path, ramdisk: Path | None, cmdline: str) -> bytes:
     # gzip the Image, then append the dtb: this is what the vendor image contains.
-    kernel = gzip.compress(image.read_bytes(), 6) + dtb.read_bytes()
+    board = redirect_symbols(dtb)
+    check_overlay(board)
+    kernel = gzip.compress(image.read_bytes(), 6) + board
     rd = ramdisk.read_bytes() if ramdisk else b""
 
     header = struct.pack(

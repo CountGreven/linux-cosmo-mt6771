@@ -106,6 +106,15 @@
 	lk-dtbo-stubs {
 		status = "disabled";
 
+		/*
+		 * Targets for the overlay's i2c1, i2c3 and spi1 fragments: ci/mkbootimg-cosmo.py points
+		 * those symbols here, so the vendor's placeholder clients stay off our buses. Each carries
+		 * a status so the packer can check the node exists.
+		 */
+		i2c1_lkstub: i2c1-stub { status = "disabled"; #address-cells = <1>; #size-cells = <0>; };
+		i2c3_lkstub: i2c3-stub { status = "disabled"; #address-cells = <1>; #size-cells = <0>; };
+		spi1_lkstub: spi1-stub { status = "disabled"; #address-cells = <1>; #size-cells = <0>; };
+
 		accdet: accdet-stub { };
 		als: als-stub { };
 		apuart0: apuart0-stub { };

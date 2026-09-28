@@ -8,6 +8,7 @@
 int mt6358_bat_current_ua(u16 raw);
 s64 mt6358_bat_car_uah(u16 car_lo, u16 car_hi);
 int mt6358_bat_soc_permille(int soc0_permille, s64 car0_uah, s64 car_uah, int full_uah);
+bool mt6358_bat_temp_inhibit(bool inhibited, int deci_c);
 #endif
 
 #endif

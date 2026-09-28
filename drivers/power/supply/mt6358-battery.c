@@ -107,6 +107,12 @@ VISIBLE_IF_KUNIT int mt6358_bat_soc_permille(int soc0_permille, s64 car0_uah, s6
 }
 EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_soc_permille);
 
+VISIBLE_IF_KUNIT bool mt6358_bat_temp_inhibit(bool inhibited, int deci_c)
+{
+	return inhibited;
+}
+EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_temp_inhibit);
+
 /* Vendor latch handshake: request, wait for LATCHDATA_ST, read, clear, wait, restore */
 static int mt6358_bat_latch(struct mt6358_battery *bat, unsigned int mask, unsigned int reg0,
 			    unsigned int *val0, unsigned int reg1, unsigned int *val1)

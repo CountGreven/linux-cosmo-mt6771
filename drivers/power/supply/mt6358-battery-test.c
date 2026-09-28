@@ -30,7 +30,21 @@ static void mt6358_bat_test_soc(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mt6358_bat_soc_permille(10, 0, -427590, 4275900), 0);
 }
 
+/* vendor charger manager: stop at >= 55 C or < -10 C, resume below 50 C and at >= 0 C */
+static void mt6358_bat_test_temp(struct kunit *test)
+{
+	KUNIT_EXPECT_FALSE(test, mt6358_bat_temp_inhibit(false, 549));
+	KUNIT_EXPECT_TRUE(test, mt6358_bat_temp_inhibit(false, 550));
+	KUNIT_EXPECT_TRUE(test, mt6358_bat_temp_inhibit(true, 500));
+	KUNIT_EXPECT_FALSE(test, mt6358_bat_temp_inhibit(true, 499));
+	KUNIT_EXPECT_FALSE(test, mt6358_bat_temp_inhibit(false, -100));
+	KUNIT_EXPECT_TRUE(test, mt6358_bat_temp_inhibit(false, -101));
+	KUNIT_EXPECT_TRUE(test, mt6358_bat_temp_inhibit(true, -1));
+	KUNIT_EXPECT_FALSE(test, mt6358_bat_temp_inhibit(true, 0));
+}
+
 static struct kunit_case mt6358_bat_test_cases[] = {
+	KUNIT_CASE(mt6358_bat_test_temp),
 	KUNIT_CASE(mt6358_bat_test_current),
 	KUNIT_CASE(mt6358_bat_test_car),
 	KUNIT_CASE(mt6358_bat_test_soc),

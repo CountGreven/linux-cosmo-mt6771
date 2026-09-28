@@ -678,7 +678,7 @@ static void mtk_md_net_setup(struct net_device *ndev)
 	ndev->netdev_ops = &mtk_md_net_ops;
 	ndev->type = ARPHRD_NONE;
 	ndev->flags = IFF_POINTOPOINT | IFF_NOARP;
-	ndev->mtu = MTK_MD_CCMNI_MTU;
+	ndev->mtu = ETH_DATA_LEN;	/* ccmni.c CCMNI_MTU; the modem may send up to the max */
 	ndev->min_mtu = ETH_MIN_MTU;
 	ndev->max_mtu = MTK_MD_CCMNI_MTU;
 	ndev->hard_header_len = 0;

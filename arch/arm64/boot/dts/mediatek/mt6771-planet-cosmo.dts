@@ -1131,3 +1131,7 @@
 &auxadc {
 	status = "okay";
 };
+
+&modem {
+	status = "okay";
+};

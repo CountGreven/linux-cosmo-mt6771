@@ -1449,6 +1449,19 @@
 	Avdd-supply = <&mt6358_vaud28_reg>;
 };
 
+/* Jack detection, vendor accdet node values (hw-spec/audio.org 2.4) */
+&pmic {
+	mt6358_accdet: accdet {
+		compatible = "mediatek,mt6358-accdet";
+		io-channels = <&pmic_adc MT6358_AUXADC_ACCDET>;
+		io-channel-names = "accdet";
+		mediatek,mic-vol = <6>;
+		mediatek,eint-level-pol = <IRQ_TYPE_LEVEL_LOW>;
+		mediatek,pwm-deb-setting = <0x500 0x500 1 0x1f0 0x800 0x800 0x20 0x44>;
+		mediatek,three-key-thr = <0 80 220 400>;
+	};
+};
+
 &pio {
 	aud_pins: audio-pins {
 		pins-mtkaif {
@@ -1488,6 +1501,7 @@
 	sound {
 		compatible = "planet,cosmo-sound";
 		mediatek,platform = <&afe>;
+		mediatek,accdet = <&mt6358_accdet>;
 		aux-devs = <&speaker_amp1>, <&speaker_amp2>, <&earpiece_switch>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&aud_pins>;

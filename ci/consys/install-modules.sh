@@ -20,7 +20,7 @@ for k in connadp.ko btif/btif_drv.ko common/wmt_drv.ko wlan/adaptor/wmt_chrdev_w
 done
 for k in net/bluetooth/bluetooth.ko net/bluetooth/rfcomm/rfcomm.ko net/bluetooth/bnep/bnep.ko \
          net/bluetooth/hidp/hidp.ko drivers/hid/uhid.ko crypto/ecdh_generic.ko crypto/kpp.ko crypto/ecc.ko \
-         drivers/input/keyboard/mtk-pmic-keys.ko drivers/input/misc/regulator-haptic.ko \
+         drivers/input/keyboard/mtk-pmic-keys.ko drivers/input/ff-memless.ko drivers/input/misc/regulator-haptic.ko \
          drivers/gnss/gnss.ko drivers/net/wwan/wwan.ko drivers/net/wwan/mtk_md/mtk_md_proto.ko \
          drivers/net/wwan/mtk_md/mtk_md.ko; do
     install -D -m 644 "$T/$k" "$S/$R/kernel/$k"

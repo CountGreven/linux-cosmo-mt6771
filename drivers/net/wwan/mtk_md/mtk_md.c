@@ -24,7 +24,9 @@
 #include <linux/iopoll.h>
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
+#include <linux/miscdevice.h>
 #include <linux/module.h>
+#include <linux/poll.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -33,6 +35,7 @@
 #include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/sizes.h>
+#include <linux/skbuff.h>
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 #include <linux/unaligned.h>
@@ -88,6 +91,14 @@
 #define MTK_MD_SIM_MAX			4
 #define MTK_MD_SIM_ATTRS		7	/* sim_hot_plug_eint_queryType */
 #define MTK_MD_DTSI_OUT_LEN		68	/* u32 value, char string[64] */
+
+/*
+ * The modem's file service runs in user space, as the vendor's ccci_fsd does: /dev/mtk_md_fs
+ * carries whole CCCI messages, one per read or write, on the file channels of queue 4.
+ */
+#define MTK_MD_FS_Q		4
+#define MTK_MD_FS_MAX_LEN	4096	/* the modem sends at most 3456 bytes of data per message */
+#define MTK_MD_FS_RX_BACKLOG	32
 
 #define MTK_MD_POLL_US		1000
 #define MTK_MD_POLL_TIMEOUT_US	1000000
@@ -182,6 +193,10 @@ struct mtk_md {
 	spinlock_t tx_lock;		/* the transmit side of the queues, and tx_seq */
 	u16 tx_seq[MTK_MD_TX_SEQ_CHANNELS];
 	bool ready;			/* HS2 seen */
+	struct miscdevice fs_misc;
+	struct sk_buff_head fs_rx;
+	wait_queue_head_t fs_wq;
+	atomic_t fs_open;
 	s32 sim[MTK_MD_SIM_MAX][MTK_MD_SIM_ATTRS];
 	bool sim_present[MTK_MD_SIM_MAX];
 	unsigned int rx_logged;
@@ -910,7 +925,7 @@ static int mtk_md_send(struct mtk_md *md, unsigned int q, void *msg, u32 len)
 	status &= MTK_MD_CCCI_CHANNEL;
 	status |= FIELD_PREP(MTK_MD_CCCI_SEQ, md->tx_seq[ch]);
 	/* the file and RPC services may be preempted on the modem once it is ready */
-	if (!(md->ready && ch == MTK_MD_CH_RPC_TX))
+	if (!(md->ready && (ch == MTK_MD_CH_RPC_TX || ch == MTK_MD_CH_FS_TX)))
 		status |= MTK_MD_CCCI_ASSERT;
 	h->status = cpu_to_le32(status);
 	ret = mtk_md_ring_tx_write(md->ring[q], msg, len);
@@ -1024,11 +1039,152 @@ static void mtk_md_rpc(struct mtk_md *md, const u8 *msg, u32 len)
 	kfree(out);
 }
 
+static void mtk_md_fs_rx(struct mtk_md *md, const u8 *msg, u32 len)
+{
+	struct sk_buff *skb;
+
+	if (!atomic_read(&md->fs_open)) {
+		dev_warn_ratelimited(md->dev, "fs: request with no file service running\n");
+		return;
+	}
+	if (skb_queue_len(&md->fs_rx) >= MTK_MD_FS_RX_BACKLOG) {
+		dev_err_ratelimited(md->dev, "fs: file service not keeping up, request dropped\n");
+		return;
+	}
+	skb = alloc_skb(len, GFP_KERNEL);
+	if (!skb)
+		return;
+	skb_put_data(skb, msg, len);
+	skb_queue_tail(&md->fs_rx, skb);
+	wake_up_interruptible(&md->fs_wq);
+}
+
+static struct mtk_md *mtk_md_fs_md(struct file *file)
+{
+	return container_of(file->private_data, struct mtk_md, fs_misc);
+}
+
+static int mtk_md_fs_open(struct inode *inode, struct file *file)
+{
+	struct mtk_md *md = mtk_md_fs_md(file);
+
+	/* one file service: the modem's requests have no reader address */
+	if (atomic_cmpxchg(&md->fs_open, 0, 1))
+		return -EBUSY;
+	skb_queue_purge(&md->fs_rx);
+	return 0;
+}
+
+static int mtk_md_fs_release(struct inode *inode, struct file *file)
+{
+	struct mtk_md *md = mtk_md_fs_md(file);
+
+	atomic_set(&md->fs_open, 0);
+	skb_queue_purge(&md->fs_rx);
+	return 0;
+}
+
+static ssize_t mtk_md_fs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+	struct mtk_md *md = mtk_md_fs_md(file);
+	struct sk_buff *skb;
+	ssize_t ret;
+
+	for (;;) {
+		skb = skb_dequeue(&md->fs_rx);
+		if (skb)
+			break;
+		if (file->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		ret = wait_event_interruptible(md->fs_wq, !skb_queue_empty(&md->fs_rx));
+		if (ret)
+			return ret;
+	}
+
+	if (count < skb->len) {
+		skb_queue_head(&md->fs_rx, skb);
+		return -EMSGSIZE;
+	}
+	ret = copy_to_user(buf, skb->data, skb->len) ? -EFAULT : skb->len;
+	kfree_skb(skb);
+	return ret;
+}
+
+static ssize_t mtk_md_fs_write(struct file *file, const char __user *buf, size_t count,
+			       loff_t *ppos)
+{
+	struct mtk_md *md = mtk_md_fs_md(file);
+	struct mtk_md_ccci_hdr *h;
+	void *msg;
+	int ret;
+
+	if (count < sizeof(*h) + 4 || count > MTK_MD_FS_MAX_LEN)
+		return -EINVAL;
+	msg = memdup_user(buf, count);
+	if (IS_ERR(msg))
+		return PTR_ERR(msg);
+
+	/* user space answers on the file channel only; length and channel are ours to set */
+	h = msg;
+	h->data[1] = cpu_to_le32(count);
+	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_FS_TX));
+	ret = mtk_md_send(md, MTK_MD_FS_Q, msg, count);
+	kfree(msg);
+	return ret ? ret : count;
+}
+
+static __poll_t mtk_md_fs_poll(struct file *file, poll_table *wait)
+{
+	struct mtk_md *md = mtk_md_fs_md(file);
+
+	poll_wait(file, &md->fs_wq, wait);
+	return (skb_queue_empty(&md->fs_rx) ? 0 : EPOLLIN | EPOLLRDNORM) | EPOLLOUT | EPOLLWRNORM;
+}
+
+static const struct file_operations mtk_md_fs_fops = {
+	.owner = THIS_MODULE,
+	.open = mtk_md_fs_open,
+	.release = mtk_md_fs_release,
+	.read = mtk_md_fs_read,
+	.write = mtk_md_fs_write,
+	.poll = mtk_md_fs_poll,
+	.llseek = noop_llseek,
+};
+
+static void mtk_md_fs_unregister(void *data)
+{
+	struct mtk_md *md = data;
+
+	misc_deregister(&md->fs_misc);
+	skb_queue_purge(&md->fs_rx);
+}
+
+static int mtk_md_fs_register(struct mtk_md *md)
+{
+	int ret;
+
+	skb_queue_head_init(&md->fs_rx);
+	init_waitqueue_head(&md->fs_wq);
+	md->fs_misc.minor = MISC_DYNAMIC_MINOR;
+	md->fs_misc.name = "mtk_md_fs";
+	md->fs_misc.fops = &mtk_md_fs_fops;
+	md->fs_misc.parent = md->dev;
+	ret = misc_register(&md->fs_misc);
+	if (ret)
+		return ret;
+	return devm_add_action_or_reset(md->dev, mtk_md_fs_unregister, md);
+}
+
 static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 len)
 {
 	const struct mtk_md_ccci_hdr *h = (const void *)msg;
 	u32 status = le32_to_cpu(h->status);
 	u32 ch = FIELD_GET(MTK_MD_CCCI_CHANNEL, status);
+
+	if (ch == MTK_MD_CH_FS_RX) {
+		mtk_md_fs_rx(md, msg, len);
+		return;
+	}
 
 	if (ch == MTK_MD_CH_RPC_RX) {
 		mtk_md_trace(md, "rx q%u rpc len %u\n", q, len);
@@ -1183,7 +1339,8 @@ static int mtk_md_rt_one(struct mtk_md *md, u8 *buf, size_t size, size_t *pos, u
 		if (id == MTK_MD_RT_MISC_INFO_RANDOM_SEED_NUM) {
 			w[0] = cpu_to_le32(get_random_u32());
 		} else if (id == MTK_MD_RT_MISC_INFO_CCCI) {
-			w[0] = cpu_to_le32(BIT(0) | BIT(1));	/* sequence check, MD status polling */
+			/* sequence check, modem status polling */
+			w[0] = cpu_to_le32(BIT(0) | BIT(1));
 		} else if (id == MTK_MD_RT_MISC_INFO_CLIB_TIME) {
 			ktime_get_real_ts64(&now);
 			w[0] = cpu_to_le32(lower_32_bits(now.tv_sec));
@@ -1568,6 +1725,10 @@ static int mtk_md_probe(struct platform_device *pdev)
 	md->smem_va = devm_memremap(dev, md->smem_nc, md->smem_nc_size, MEMREMAP_WC);
 	if (IS_ERR(md->smem_va))
 		return dev_err_probe(dev, PTR_ERR(md->smem_va), "share memory\n");
+
+	ret = mtk_md_fs_register(md);
+	if (ret)
+		return dev_err_probe(dev, ret, "file service device\n");
 
 	ret = devm_add_action_or_reset(dev, mtk_md_teardown, md);
 	if (ret)

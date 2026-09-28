@@ -260,6 +260,8 @@ int mtk_md_ring_tx_write(struct mtk_md_ring *ring, const void *data, u32 len);
  * an operation id, a parameter count and that many {u32 length, data padded to 4 bytes}. The answer
  * goes back on the paired channel with the operation id's top half set.
  */
+#define MTK_MD_CH_FS_RX			14	/* the modem's file requests */
+#define MTK_MD_CH_FS_TX			15
 #define MTK_MD_CH_RPC_RX		32
 #define MTK_MD_CH_RPC_TX		33
 #define MTK_MD_RPC_RESP			0xffff0000

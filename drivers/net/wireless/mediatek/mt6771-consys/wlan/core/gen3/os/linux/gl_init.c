@@ -2158,6 +2158,9 @@ int wlanMonSpoofAisMac(P_GLUE_INFO_T prGlueInfo, PUINT_8 pucMac)
 	UNSET_NET_ACTIVE(prAdapter, prAis->ucBssIndex);
 	nicDeactivateNetwork(prAdapter, prAis->ucBssIndex);
 
+	/* cached peer STA_RECs (wlanMonResolvePeer) go stale across a reactivation */
+	wlanMonFreePeers(prAdapter);
+
 	COPY_MAC_ADDR(prAis->aucOwnMacAddr, pucMac);
 
 	nicActivateNetwork(prAdapter, prAis->ucBssIndex);

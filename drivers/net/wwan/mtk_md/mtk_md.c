@@ -863,9 +863,17 @@ static int mtk_md_let_go(struct mtk_md *md)
 }
 
 /* ccci_md_clear_smem(): the modem expects its share memory zeroed on the first start */
-static void mtk_md_clear_smem(struct mtk_md *md)
+static int mtk_md_clear_smem(struct mtk_md *md)
 {
 	__le32 *stash = md->smem_va + MTK_MD_LK_STASH_OFFSET;
+	void *ccb;
+
+	/* the modem's CCB buffer manager trusts what it finds here: DRAM left as is fails it */
+	ccb = memremap(md->ccb_base, md->ccb_size, MEMREMAP_WC);
+	if (!ccb)
+		return -ENOMEM;
+	memset(ccb, 0, md->ccb_size);
+	memunmap(ccb);
 
 	memset(md->smem_va, 0, md->smem_nc_size);
 	if (md->smem_nc == md->lk.base && md->smem_nc_size >= SZ_1M &&
@@ -874,6 +882,7 @@ static void mtk_md_clear_smem(struct mtk_md *md)
 		stash[1] = cpu_to_le32(md->lk.size);
 		memcpy(&stash[2], md->lk_tags, md->lk.size);
 	}
+	return 0;
 }
 
 /* md_ccif_ring_buf_init() and md_ccif_exp_ring_buf_init() */
@@ -1546,7 +1555,11 @@ static void mtk_md_start(struct work_struct *work)
 	}
 	md->clks_on = true;
 
-	mtk_md_clear_smem(md);
+	ret = mtk_md_clear_smem(md);
+	if (ret) {
+		dev_err(md->dev, "cacheable share memory: %d\n", ret);
+		return;
+	}
 	ret = mtk_md_rings_init(md);
 	if (ret) {
 		dev_err(md->dev, "ring queues do not fit the share memory\n");

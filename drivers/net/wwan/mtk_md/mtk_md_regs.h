@@ -205,6 +205,9 @@ struct cldma_rgpd {
 #define MT6358_LDO_VRF18_OP_CFG		0x1c24
 #define MT6358_LDO_VRF12_OP_EN		0x1c32
 #define MT6358_LDO_VRF12_OP_CFG		0x1c38
+/* clk_buf_ctrl_bblpm_hw(): the baseband 26 MHz buffer's low-power mode, off while the modem runs */
+#define MT6358_DCXO_CW23		0x07be
+#define MT6358_XO_BB_LPM_CEL		BIT(0)
 #define MT6358_LDO_OP_SW		BIT(0)
 #define MT6358_LDO_OP_HW1		BIT(2)	/* SRCLKEN1 */
 

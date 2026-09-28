@@ -917,6 +917,7 @@ static void mtk_md_power_off(struct mtk_md *md)
 		return;
 	mtk_md_mtcmos_off(md);
 	mtk_md_rf_supplies(md, false);
+	regmap_set_bits(md->pmic, MT6358_DCXO_CW23, MT6358_XO_BB_LPM_CEL);
 	regmap_clear_bits(md->infracfg, INFRA_MD_SRCCLKENA, INFRA_MD_SRCCLKENA_MASK);
 	regmap_set_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
 	mtk_md_vcore_hold(md, false);
@@ -934,6 +935,8 @@ static int mtk_md_power_on(struct mtk_md *md)
 	int ret;
 
 	regmap_clear_bits(md->topckgen, TOPCKGEN_CLK_MODE, TOPCKGEN_MD_CLK_GATES);
+	/* clk_buf_set_by_flightmode(false) */
+	regmap_clear_bits(md->pmic, MT6358_DCXO_CW23, MT6358_XO_BB_LPM_CEL);
 	mtk_md_rf_supplies(md, true);
 
 	ret = mtk_md_mtcmos_on(md);

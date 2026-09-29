@@ -24,5 +24,6 @@ obj-$(CONFIG_MT6771_CONSYS) += connadp.o
 obj-$(CONFIG_MT6771_CONSYS) += btif/
 obj-$(CONFIG_MT6771_CONSYS) += common/
 obj-$(CONFIG_MT6771_CONSYS) += bt/
+obj-$(CONFIG_MT6771_CONSYS) += gps/
 obj-$(CONFIG_MT6771_CONSYS) += wlan/adaptor/
 obj-$(CONFIG_MT6771_CONSYS) += wlan/core/gen3/

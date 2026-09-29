@@ -32,6 +32,14 @@ config MT6771_CONSYS_BT
 	  Bluetooth function of the CONSYS combo radio as a kernel HCI
 	  device, on the STP transport of the wifi stack.
 
+config MT6771_CONSYS_GPS
+	tristate "MediaTek MT6771 CONSYS GPS"
+	depends on MT6771_CONSYS
+	help
+	  GPS function of the CONSYS combo radio: the vendor /dev/stpgps
+	  and /dev/gps_emi character devices, unchanged in interface, for
+	  the vendor mnld daemon.
+
 # The vendor Makefiles and sources test these by their vendor names. They
 # are fixed for the one chip this directory supports and are not meant to
 # be set by hand.
@@ -53,6 +61,16 @@ config MTK_COMBO
 config MTK_COMBO_WIFI
 	bool
 	depends on MT6771_CONSYS
+	default y
+
+config MTK_COMBO_GPS
+	bool
+	depends on MT6771_CONSYS_GPS
+	default y
+
+config MTK_GPS_EMI
+	bool
+	depends on MT6771_CONSYS_GPS
 	default y
 
 config MACH_MT6771

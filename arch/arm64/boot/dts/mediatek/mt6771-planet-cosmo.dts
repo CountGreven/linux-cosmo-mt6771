@@ -1012,12 +1012,16 @@
 	dynamic-power-coefficient = <1763>;
 };
 
-/* The vendor thermal policy budgets CPU and GPU power together; add the GPU to the SoC zone */
+/*
+ * The vendor thermal policy budgets CPU and GPU power together; add the GPU to the SoC zone. The
+ * vendor keeps at least 250 mW for the GPU (thermal.conf clatm min GPU): state 15 is 340 MHz, about
+ * 243 mW with the power model above, so throttling stops there.
+ */
 &cpu_thermal {
 	cooling-maps {
 		map2 {
 			trip = <&target>;
-			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT 15>;
 			contribution = <1024>;
 		};
 	};

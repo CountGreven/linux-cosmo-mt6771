@@ -377,8 +377,13 @@ static void sii902x_bridge_mode_set(struct drm_bridge *bridge,
 	buf[5] = adj->hdisplay >> 8;
 	buf[6] = adj->vdisplay;
 	buf[7] = adj->vdisplay >> 8;
-	buf[8] = SII902X_TPI_CLK_RATIO_1X | SII902X_TPI_AVI_PIXEL_REP_NONE |
-		 SII902X_TPI_AVI_PIXEL_REP_BUS_24BIT;
+	/* A 12-bit bus carries each pixel on both clock edges, latched from the rising one */
+	if (sii902x->bus_width == 12)
+		buf[8] = SII902X_TPI_CLK_RATIO_1X | SII902X_TPI_AVI_PIXEL_REP_NONE |
+			 SII902X_TPI_AVI_PIXEL_REP_RISING_EDGE;
+	else
+		buf[8] = SII902X_TPI_CLK_RATIO_1X | SII902X_TPI_AVI_PIXEL_REP_NONE |
+			 SII902X_TPI_AVI_PIXEL_REP_BUS_24BIT;
 	buf[9] = SII902X_TPI_AVI_INPUT_RANGE_AUTO |
 		 SII902X_TPI_AVI_INPUT_COLORSPACE_RGB;
 
@@ -487,6 +492,9 @@ static u32 *sii902x_bridge_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 		return NULL;
 
 	switch (sii902x->bus_width) {
+	case 12:
+		input_fmts[0] = MEDIA_BUS_FMT_RGB888_2X12_LE;
+		break;
 	case 16:
 		input_fmts[0] = MEDIA_BUS_FMT_RGB565_1X16;
 		break;

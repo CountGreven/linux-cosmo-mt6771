@@ -8,6 +8,7 @@ keyboard backlight, and the power_supply battery for the charge level.
 import fcntl
 import os
 import struct
+import sys
 
 GPIO_CHIP = "/dev/gpiochip0"
 GPIO_STM32_RESET = 77
@@ -75,6 +76,9 @@ class _Compat:
         text = text.strip()
         if self.path == "/proc/AEON_RESET_STM32":
             set_gpio(GPIO_STM32_RESET, text == "1")
+            usb = sys.modules.get("cosmo_usb")
+            if text == "0" and usb is not None:
+                usb.after_stm32_reset()
         elif self.path == "/proc/AEON_STM32_DL_FW":
             set_gpio(GPIO_STM32_DL_FW, text == "1")
         elif self.path == "/proc/aw9524_led_proc":

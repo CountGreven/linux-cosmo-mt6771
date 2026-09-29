@@ -158,6 +158,40 @@ class Protocol(unittest.TestCase):
         self.r.poll()
         self.assertEqual(self.values(), [(144, 2), (144, 1), (144, 3), (144, 0)])
 
+    def test_present_at_start_is_sent(self):
+        self.fs.port(1, True, "source")
+        self.r.poll()
+        self.assertEqual(self.values(), [(144, 2), (144, 1)])
+
+    def test_resend_after_stm32_reset(self):
+        self.fs.port(1, True, "source")
+        self.r.poll()
+        self.sent.clear()
+        self.r.after_stm32_reset()
+        self.assertEqual(self.values(), [(144, 2), (144, 1)])
+        self.assertEqual(ImmediateTimer.calls, [cu.STM32_BOOT_S])
+        self.r.poll()
+        self.assertEqual(len(self.sent), 2)
+
+    def test_no_resend_when_detached(self):
+        self.fs.port(1, False, "sink")
+        self.r.after_stm32_reset()
+        self.assertEqual(self.sent, [])
+
+    def test_reset_release_through_cosmo_hw(self):
+        import cosmo_hw
+        with mock.patch.object(cosmo_hw, "set_gpio") as gpio, \
+                mock.patch.object(cu, "_right") as right, \
+                mock.patch.object(cosmo_hw.os.path, "exists", return_value=False):
+            with cosmo_hw.proc_open("/proc/AEON_RESET_STM32", "w") as f:
+                f.write("1")
+            right.after_stm32_reset.assert_not_called()
+            with cosmo_hw.proc_open("/proc/AEON_RESET_STM32", "w") as f:
+                f.write("0")
+            right.after_stm32_reset.assert_called_once_with()
+            self.assertEqual([c[0] for c in gpio.call_args_list],
+                             [(cosmo_hw.GPIO_STM32_RESET, True), (cosmo_hw.GPIO_STM32_RESET, False)])
+
     def test_142_ask_answers_status_after_1s(self):
         self.status = "right_otg_only"
         self.r.on_usb_status(b"\x00\x00")

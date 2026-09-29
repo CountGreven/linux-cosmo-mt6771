@@ -18,6 +18,8 @@ CMD_SYNC_USB_STATUS = 142
 CMD_SYNC_RIGHT_USB_OTG_STATUS = 144
 # msg_common.msg_ctr starts at 1234 and is never advanced
 ANDROID_SEQUENCE = 1234
+# codiReset.py waits this long after releasing reset before talking to the STM32
+STM32_BOOT_S = 4.0
 
 VENDOR_CHARGE_STATUS = "/proc/AEON_CHARGE_STATUS"
 VENDOR_USB_CONTROL = "/proc/AEON_USB_CONTROL"
@@ -142,14 +144,29 @@ class RightUsb:
         t.daemon = True
         t.start()
 
+    def _send_144(self, attached):
+        for v in (2, 1) if attached else (3, 0):
+            log.info("cosmo_usb: -> CMD 144 %d", v)
+            self.send(frame(CMD_SYNC_RIGHT_USB_OTG_STATUS, v))
+
     def poll(self):
+        # starts False, so a partner present at codiServer start is sent too
         now = self.sysfs.right_sink_attached()
         if now == self.attached:
             return
         self.attached = now
-        for v in (2, 1) if now else (3, 0):
-            log.info("cosmo_usb: -> CMD 144 %d", v)
-            self.send(frame(CMD_SYNC_RIGHT_USB_OTG_STATUS, v))
+        self._send_144(now)
+
+    def after_stm32_reset(self):
+        # a reset STM32 forgets the right port; detached is its reset state
+        t = self.timer(STM32_BOOT_S, self._resend, ())
+        t.daemon = True
+        t.start()
+
+    def _resend(self):
+        self.attached = self.sysfs.right_sink_attached()
+        if self.attached:
+            self._send_144(True)
 
     def on_usb_status(self, payload):
         re_status = struct.unpack(">H", payload[:2])[0]
@@ -195,3 +212,8 @@ def start():
 def on_usb_status(payload):
     if _right is not None:
         _right.on_usb_status(payload)
+
+
+def after_stm32_reset():
+    if _right is not None:
+        _right.after_stm32_reset()

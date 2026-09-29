@@ -1149,6 +1149,31 @@
 
 
 &pio {
+	consys_default_pins: consys-default-pins {
+	};
+
+	gps_lna_init_pins: gps-lna-init-pins {
+		pins-cmd-dat {
+			pinmux = <PINMUX_GPIO155__FUNC_GPIO155>;
+			bias-disable;
+			output-low;
+		};
+	};
+
+	gps_lna_oh_pins: gps-lna-oh-pins {
+		pins-cmd-dat {
+			pinmux = <PINMUX_GPIO155__FUNC_GPIO155>;
+			output-high;
+		};
+	};
+
+	gps_lna_ol_pins: gps-lna-ol-pins {
+		pins-cmd-dat {
+			pinmux = <PINMUX_GPIO155__FUNC_GPIO155>;
+			output-low;
+		};
+	};
+
 	/*
 	 * live.dts:7464 aeon_usb_lr_sw_low/high (pin 79): the vendor switches the USB data lines between the
 	 * two USB ports with this pin. Low is the left port in Otto's tree. WAITING: which level the
@@ -1232,6 +1257,13 @@
 		vcn28-supply = <&mt6358_vcn28_reg>;
 		vcn33_bt-supply = <&mt6358_vcn33_reg>;
 		vcn33_wifi-supply = <&mt6358_vcn33_reg>;
+		/* GPS LNA enable (GPIO155), driven by WMT when GPS turns on (live.dts:3435-3466). The
+		 * driver reads the pin number from pinctrl-1's pins-cmd-dat for mnld. */
+		pinctrl-names = "default", "gps_lna_state_init", "gps_lna_state_oh", "gps_lna_state_ol";
+		pinctrl-0 = <&consys_default_pins>;
+		pinctrl-1 = <&gps_lna_init_pins>;
+		pinctrl-2 = <&gps_lna_oh_pins>;
+		pinctrl-3 = <&gps_lna_ol_pins>;
 		status = "okay";
 	};
 

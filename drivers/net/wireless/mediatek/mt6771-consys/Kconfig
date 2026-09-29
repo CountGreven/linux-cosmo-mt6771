@@ -40,6 +40,14 @@ config MT6771_CONSYS_GPS
 	  and /dev/gps_emi character devices, unchanged in interface, for
 	  the vendor mnld daemon.
 
+config MT6771_CONSYS_FM
+	tristate "MediaTek MT6771 CONSYS FM radio"
+	depends on MT6771_CONSYS
+	help
+	  FM receiver function of the CONSYS combo radio (an MT6631 FM
+	  core): the vendor /dev/fm character device, unchanged in
+	  interface, for the vendor FM HAL.
+
 # The vendor Makefiles and sources test these by their vendor names. They
 # are fixed for the one chip this directory supports and are not meant to
 # be set by hand.
@@ -71,6 +79,11 @@ config MTK_COMBO_GPS
 config MTK_GPS_EMI
 	bool
 	depends on MT6771_CONSYS_GPS
+	default y
+
+config MTK_FMRADIO
+	bool
+	depends on MT6771_CONSYS_FM
 	default y
 
 config MACH_MT6771

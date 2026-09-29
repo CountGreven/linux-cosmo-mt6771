@@ -626,6 +626,113 @@ static void rpc_build(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mtk_md_rpc_build(buf, 40, req, 0x4005, 3, arg, len), -ENOSPC);
 }
 
+/*
+ * EL1 -> WMT LTE_DEFAULT_PARAM_IND as port_ipc_kernel_thread() takes it apart: the destination is
+ * the header's reserved word, not the ILM's own dest field.
+ */
+static const u8 ipc_el1_to_wmt[48] = {
+	0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00,	/* data[0], data[1] = 48 */
+	0x22, 0x00, 0x07, 0x00,				/* ch 34, seq 7 */
+	0x03, 0x00, 0x00, 0x80,				/* AP_MOD_WMT */
+	0x05, 0x00, 0x00, 0x00,				/* src MD_MOD_EL1 */
+	0x03, 0x00, 0x00, 0x00,				/* ILM dest, ignored */
+	0x00, 0x00, 0x00, 0x00,				/* sap */
+	0x46, 0x00, 0x00, 0x80,				/* msg id */
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	/* local_para_ptr, peer_buff_ptr */
+	0x00, 0x00, 0x08, 0x00,				/* ref_count, _stub, msg_len 8 */
+	0x11, 0x22, 0x33, 0x44,
+};
+
+static void ipc_parse(struct kunit *test)
+{
+	struct mtk_md_ipc_msg ipc;
+	u8 bad[52];
+
+	KUNIT_ASSERT_EQ(test, mtk_md_ipc_parse(ipc_el1_to_wmt, sizeof(ipc_el1_to_wmt), &ipc), 0);
+	KUNIT_EXPECT_EQ(test, ipc.src, 5U);
+	KUNIT_EXPECT_EQ(test, ipc.dest, 0x80000003U);
+	KUNIT_EXPECT_EQ(test, ipc.sap, 0U);
+	KUNIT_EXPECT_EQ(test, ipc.msg_id, 0x80000046U);
+	KUNIT_EXPECT_PTR_EQ(test, ipc.para, &ipc_el1_to_wmt[40]);
+	KUNIT_EXPECT_EQ(test, ipc.para_len, 8);
+
+	/* bytes behind the block are allowed */
+	memcpy(bad, ipc_el1_to_wmt, sizeof(ipc_el1_to_wmt));
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_parse(bad, sizeof(bad), &ipc), 0);
+	KUNIT_EXPECT_EQ(test, ipc.para_len, 8);
+
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_parse(bad, 43, &ipc), -EINVAL);
+	bad[42] = 9;		/* one more than the message holds */
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_parse(bad, 48, &ipc), -EINVAL);
+	bad[42] = 3;		/* shorter than its own header */
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_parse(bad, 48, &ipc), -EINVAL);
+}
+
+/* port_ipc_kernel_write(): WMT -> EL1 WIFIBT_OPER_DEFAULT_PARAM_IND */
+static void ipc_build(struct kunit *test)
+{
+	static const u8 para[6] = { 0x00, 0x00, 0x06, 0x00, 0xaa, 0xbb };
+	struct mtk_md_ipc_msg ipc = {
+		.src = 0x80000003, .dest = 5, .sap = 0, .msg_id = 0x80000042,
+		.para = para, .para_len = sizeof(para),
+	}, back;
+	u8 buf[64];
+	int n;
+
+	memset(buf, 0xa5, sizeof(buf));
+	n = mtk_md_ipc_build(buf, sizeof(buf), &ipc);
+	KUNIT_ASSERT_EQ(test, n, 16 + 24 + 6);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf), 0U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 4), (u32)n);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 8), 36U);		/* IPC_TX, seq 0 */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 12), 5U);		/* unify id */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 16), 0x80000003U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 20), 5U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 24), 0U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 28), 0x80000042U);
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 32), 1U);		/* "not NULL" */
+	KUNIT_EXPECT_EQ(test, get_unaligned_le32(buf + 36), 0U);
+	KUNIT_EXPECT_MEMEQ(test, buf + 40, para, sizeof(para));
+
+	KUNIT_ASSERT_EQ(test, mtk_md_ipc_parse(buf, n, &back), 0);
+	KUNIT_EXPECT_EQ(test, back.src, ipc.src);
+	KUNIT_EXPECT_EQ(test, back.dest, ipc.dest);
+	KUNIT_EXPECT_EQ(test, back.msg_id, ipc.msg_id);
+	KUNIT_EXPECT_EQ(test, back.para_len, ipc.para_len);
+
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, 45, &ipc), -ENOSPC);
+}
+
+static void ipc_build_rejects(struct kunit *test)
+{
+	static u8 para[MTK_MD_CCCI_MTU];
+	struct mtk_md_ipc_msg ipc = {
+		.src = 0x80000003, .dest = 5, .msg_id = 0x80000042, .para = para, .para_len = 4,
+	};
+	u8 buf[64];
+
+	/* the destination must be a modem module of ccci_ipc_task_ID.h */
+	ipc.dest = 11;		/* MD_MOD_USBCLASS is not in the table */
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EINVAL);
+	ipc.dest = 0x80000003;
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EINVAL);
+	ipc.dest = 12;		/* MD_MOD_WAAL */
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), 44);
+
+	/* the source must be an AP task that has a port */
+	ipc.src = 3;
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EINVAL);
+	ipc.src = 0x8000000a;
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EINVAL);
+	ipc.src = 0x80000003;
+
+	ipc.para_len = 3;
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EINVAL);
+	/* ILM and block within CCCI_MTU */
+	ipc.para_len = MTK_MD_CCCI_MTU - 24 + 1;
+	KUNIT_EXPECT_EQ(test, mtk_md_ipc_build(buf, sizeof(buf), &ipc), -EMSGSIZE);
+}
+
 /* md_cd_smem_sub_region_init() and pbm_v3 init_md1_section_level() for mt6771, by hand */
 static void dbm_fill(struct kunit *test)
 {
@@ -693,6 +800,9 @@ static void ccb_ctrl_fill(struct kunit *test)
 static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rpc_parse),
 	KUNIT_CASE(rpc_build),
+	KUNIT_CASE(ipc_parse),
+	KUNIT_CASE(ipc_build),
+	KUNIT_CASE(ipc_build_rejects),
 	KUNIT_CASE(ring_layout),
 	KUNIT_CASE(ring_framing),
 	KUNIT_CASE(ring_roundtrip_wraps),

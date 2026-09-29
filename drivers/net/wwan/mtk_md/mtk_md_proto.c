@@ -670,5 +670,88 @@ int mtk_md_rpc_build(void *buf, size_t size, const struct mtk_md_ccci_hdr *req_h
 }
 EXPORT_SYMBOL_GPL(mtk_md_rpc_build);
 
+/**
+ * mtk_md_ipc_parse() - take an IPC message from the modem apart
+ * @msg: the whole message, CCCI header first
+ *
+ * The destination is the header's reserved word, as port_ipc_kernel_thread() takes it. The
+ * local_para block points into @msg and its msg_len is checked against @len, which the vendor
+ * does not do.
+ */
+int mtk_md_ipc_parse(const void *msg, size_t len, struct mtk_md_ipc_msg *ipc)
+{
+	const size_t off = sizeof(struct mtk_md_ccci_hdr) + MTK_MD_IPC_ILM_LEN;
+	const struct mtk_md_ccci_hdr *h = msg;
+	const u8 *p = msg;
+	u16 para_len;
+
+	if (len < off + MTK_MD_IPC_PARA_HDR)
+		return -EINVAL;
+	para_len = get_unaligned_le16(p + off + 2);
+	if (para_len < MTK_MD_IPC_PARA_HDR || para_len > len - off)
+		return -EINVAL;
+
+	p += sizeof(*h);
+	ipc->src = get_unaligned_le32(p);
+	ipc->dest = le32_to_cpu(h->reserved);
+	ipc->sap = get_unaligned_le32(p + 8);
+	ipc->msg_id = get_unaligned_le32(p + 12);
+	ipc->para = p + MTK_MD_IPC_ILM_LEN;
+	ipc->para_len = para_len;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtk_md_ipc_parse);
+
+/* ccci_ipc_task_ID.h: the modem modules of the id table (MD_MOD_USBCLASS 11 is not in it) */
+static bool mtk_md_ipc_md_module(u32 id)
+{
+	return id <= 12 && id != 11;
+}
+
+/* the AP tasks that have an IPC port (AP_IPC_AGPS 0 .. AP_IPC_LWAPROXY 9) */
+static bool mtk_md_ipc_ap_task(u32 id)
+{
+	return (id & MTK_MD_IPC_AP) && (id & ~MTK_MD_IPC_AP) <= 9;
+}
+
+/**
+ * mtk_md_ipc_build() - an IPC message for the modem, as port_ipc_kernel_write() makes it
+ *
+ * The sequence number is left to the sender.
+ *
+ * Return: the length of the message in @buf, -EINVAL for ids the vendor refuses or a local_para
+ * shorter than its header, -EMSGSIZE beyond CCCI_MTU, or -ENOSPC.
+ */
+int mtk_md_ipc_build(void *buf, size_t size, const struct mtk_md_ipc_msg *ipc)
+{
+	struct mtk_md_ccci_hdr *h = buf;
+	size_t len = sizeof(*h) + MTK_MD_IPC_ILM_LEN + ipc->para_len;
+	u8 *p = buf;
+
+	if (!mtk_md_ipc_ap_task(ipc->src) || !mtk_md_ipc_md_module(ipc->dest) ||
+	    ipc->para_len < MTK_MD_IPC_PARA_HDR)
+		return -EINVAL;
+	if (MTK_MD_IPC_ILM_LEN + ipc->para_len > MTK_MD_CCCI_MTU)
+		return -EMSGSIZE;
+	if (size < len)
+		return -ENOSPC;
+
+	h->data[0] = 0;
+	h->data[1] = cpu_to_le32(len);
+	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, MTK_MD_CH_IPC_TX));
+	h->reserved = cpu_to_le32(ipc->dest);
+	p += sizeof(*h);
+	put_unaligned_le32(ipc->src, p);
+	put_unaligned_le32(ipc->dest, p + 4);
+	put_unaligned_le32(ipc->sap, p + 8);
+	put_unaligned_le32(ipc->msg_id, p + 12);
+	/* local_para_ptr: anything but NULL for the modem */
+	put_unaligned_le32(1, p + 16);
+	put_unaligned_le32(0, p + 20);
+	memcpy(p + MTK_MD_IPC_ILM_LEN, ipc->para, ipc->para_len);
+	return len;
+}
+EXPORT_SYMBOL_GPL(mtk_md_ipc_build);
+
 MODULE_DESCRIPTION("MediaTek MT6771 modem protocol helpers");
 MODULE_LICENSE("GPL");

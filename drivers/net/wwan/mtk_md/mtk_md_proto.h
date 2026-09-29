@@ -302,4 +302,29 @@ int mtk_md_rpc_parse(const void *msg, size_t len, struct mtk_md_rpc_req *req);
 int mtk_md_rpc_build(void *buf, size_t size, const struct mtk_md_ccci_hdr *req_hdr, u32 op,
 		     u32 argc, const void *const *arg, const u32 *arg_len);
 
+/*
+ * IPC (eccci/port/port_ipc.c): an ILM between modem modules and AP tasks. The CCCI header's
+ * reserved word names the destination: an AP task with bit 31 set towards the AP, a modem
+ * module towards the modem. The 24-byte ILM follows, then the local_para block, whose u16
+ * msg_len at offset 2 counts its own 4-byte header.
+ */
+#define MTK_MD_CH_IPC_RX		34
+#define MTK_MD_CH_IPC_TX		36
+#define MTK_MD_IPC_Q			1
+#define MTK_MD_IPC_AP			BIT(31)
+#define MTK_MD_IPC_ILM_LEN		24
+#define MTK_MD_IPC_PARA_HDR		4
+
+struct mtk_md_ipc_msg {
+	u32 src;
+	u32 dest;
+	u32 sap;
+	u32 msg_id;
+	const u8 *para;		/* the local_para block, header first */
+	u16 para_len;		/* its msg_len */
+};
+
+int mtk_md_ipc_parse(const void *msg, size_t len, struct mtk_md_ipc_msg *ipc);
+int mtk_md_ipc_build(void *buf, size_t size, const struct mtk_md_ipc_msg *ipc);
+
 #endif /* __MTK_MD_PROTO_H__ */

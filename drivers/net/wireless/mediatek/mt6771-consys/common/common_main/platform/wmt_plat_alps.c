@@ -586,6 +586,11 @@ INT32 wmt_plat_ps_ctrl(ENUM_FUNC_STATE state)
 	return -1;
 }
 
+/* Debug: serve CONN2AP through the noirq phase; applies at the next CONNSYS power on */
+static bool bgf_irq_no_suspend;
+module_param(bgf_irq_no_suspend, bool, 0644);
+MODULE_PARM_DESC(bgf_irq_no_suspend, "debug: request the BGF interrupt with IRQF_NO_SUSPEND");
+
 INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 {
 	INT32 iret;
@@ -623,7 +628,9 @@ INT32 wmt_plat_eirq_ctrl(ENUM_PIN_ID id, ENUM_PIN_STATE state)
 					WMT_PLAT_PR_INFO("BGF irq %d already requested; keeping it\n", bgf_irq_num);
 					disable_irq_nosync(bgf_irq_num);
 				} else {
-					iret = request_irq(bgf_irq_num, wmt_plat_bgf_irq_isr, bgf_irq_flag,
+					iret = request_irq(bgf_irq_num, wmt_plat_bgf_irq_isr,
+							   bgf_irq_flag |
+							   (bgf_irq_no_suspend ? IRQF_NO_SUSPEND : 0),
 							   "BTIF_WAKEUP_IRQ", NULL);
 					if (iret) {
 						WMT_PLAT_PR_ERR("request_irq fail,irq_no(%d),iret(%d)\n",

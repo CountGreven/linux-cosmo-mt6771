@@ -41,6 +41,11 @@
 #include "sdio.h"
 #include "gl_rst.h"
 
+/* Debug: serve the HIF interrupt through the noirq phase; applies at the next Wi-Fi power on */
+static bool hif_irq_no_suspend;
+module_param(hif_irq_no_suspend, bool, 0644);
+MODULE_PARM_DESC(hif_irq_no_suspend, "debug: request the Wi-Fi HIF interrupt with IRQF_NO_SUSPEND");
+
 /*******************************************************************************
 *                              C O N S T A N T S
 ********************************************************************************
@@ -464,6 +469,9 @@ INT_32 glBusSetIrq(PVOID pvData, PVOID pfnIsr, PVOID pvCookie)
 #endif
 
 	/* Register HIF IRQ */
+	if (hif_irq_no_suspend)
+		irq_flags |= IRQF_NO_SUSPEND;
+
 	if (request_irq(irq_id, HifAhbISR, irq_flags, HIF_MOD_NAME, prNetDevice)) {
 		DBGLOG(INIT, ERROR, "Failed to request irq %d!\n", irq_id);
 		return -1;

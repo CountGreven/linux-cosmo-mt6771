@@ -308,10 +308,18 @@ int _btif_suspend(p_mtk_btif p_btif)
 }
 
 
+/* Debug: leave BTIF untouched across system suspend */
+static bool skip_suspend;
+module_param(skip_suspend, bool, 0644);
+MODULE_PARM_DESC(skip_suspend, "debug: skip the BTIF teardown at suspend");
+
 static int mtk_btif_drv_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	pm_message_t state = PMSG_SUSPEND;
+
+	if (skip_suspend)
+		return 0;
 
 	return mtk_btif_suspend(pdev, state);
 }

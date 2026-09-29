@@ -256,6 +256,7 @@ extern struct CONSYS_BASE_ADDRESS conn_reg;
 extern UINT32 gCoClockFlag;
 extern EMI_CTRL_STATE_OFFSET mtk_wcn_emi_state_off;
 extern CONSYS_EMI_ADDR_INFO mtk_wcn_emi_addr_info;
+VOID mtk_wcn_consys_suspend_dump(const char *tag);
 
 extern UINT64 gConEmiSize;
 extern phys_addr_t gConEmiPhyBase;

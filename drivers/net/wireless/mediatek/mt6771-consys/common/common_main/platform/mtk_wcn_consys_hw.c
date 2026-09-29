@@ -263,6 +263,10 @@ static void mtk_wmt_remove(struct platform_device *pdev)
 		g_pdev = NULL;
 }
 
+static bool suspend_dump;
+module_param(suspend_dump, bool, 0644);
+MODULE_PARM_DESC(suspend_dump, "debug: log infracfg/SPM/DCXO state at suspend and resume");
+
 static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	WMT_STEP_DO_ACTIONS_FUNC(STEP_TRIGGER_POINT_WHEN_AP_SUSPEND);
@@ -270,12 +274,18 @@ static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state)
 	/* CONNSYS runs on across AP suspend (vendor SPM keeps it powered): keep the CONN domain on */
 	device_set_awake_path(&pdev->dev);
 
+	if (suspend_dump)
+		mtk_wcn_consys_suspend_dump("suspend");
+
 	return 0;
 }
 
 static INT32 mtk_wmt_resume(struct platform_device *pdev)
 {
 	WMT_STEP_DO_ACTIONS_FUNC(STEP_TRIGGER_POINT_WHEN_AP_RESUME);
+
+	if (suspend_dump)
+		mtk_wcn_consys_suspend_dump("resume");
 
 	if (wmt_consys_ic_ops->consys_ic_resume_dump_info)
 		wmt_consys_ic_ops->consys_ic_resume_dump_info();

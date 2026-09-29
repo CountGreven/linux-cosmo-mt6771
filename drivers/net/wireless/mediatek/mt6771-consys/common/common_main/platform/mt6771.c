@@ -456,6 +456,27 @@ static INT32 consys_clock_buffer_ctrl(MTK_WCN_BOOL enable)
 	return ret;
 }
 
+/* Debug: AP-side state that CONNSYS depends on, read around system suspend */
+VOID mtk_wcn_consys_suspend_dump(const char *tag)
+{
+	static const UINT16 infra_offs[] = { 0x220, 0x228, 0x250, 0x258, 0x2d0, 0x2ec, 0x380, 0xf00 };
+	static const UINT16 spm_offs[] = { 0x0b8, 0x134, 0x17c, 0x180, 0x184, 0x32c };
+	struct regmap *map = consys_pmic_regmap();
+	UINT32 cw00 = 0;
+	INT32 i;
+
+	if (!conn_reg.topckgen_base || !conn_reg.spm_base)
+		return;
+	for (i = 0; i < ARRAY_SIZE(infra_offs); i++)
+		pr_info("consys %s: infracfg+%#05x = %#010x\n", tag, infra_offs[i],
+			CONSYS_REG_READ(conn_reg.topckgen_base + infra_offs[i]));
+	for (i = 0; i < ARRAY_SIZE(spm_offs); i++)
+		pr_info("consys %s: spm+%#05x = %#010x\n", tag, spm_offs[i],
+			CONSYS_REG_READ(conn_reg.spm_base + spm_offs[i]));
+	if (map && !regmap_read(map, MT6358_DCXO_CW00, &cw00))
+		pr_info("consys %s: DCXO_CW00 = %#06x\n", tag, cw00);
+}
+
 static VOID consys_set_if_pinmux(MTK_WCN_BOOL enable)
 {
 	UINT8 *consys_if_pinmux_reg_base = NULL;

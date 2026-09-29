@@ -5,6 +5,8 @@ ConditionKernelVersion=!4.*
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/codi-reset
+# A reset forgets the right-port OTG status (CMD 144): resend it once the MCU is up again
+ExecStartPost=/bin/sh -c 'sleep 2; [ -e /sys/class/typec/port1-partner ] && /bin/systemctl --no-block restart cosmo-right-usb@attach.service || true'
 
 [Install]
 WantedBy=multi-user.target

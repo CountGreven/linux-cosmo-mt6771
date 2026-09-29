@@ -1,6 +1,7 @@
 [Unit]
 Description=Tell the cover MCU about the right USB-C port (%i)
 ConditionKernelVersion=!4.*
+After=cosmo-codi-reset.service
 
 [Service]
 Type=oneshot

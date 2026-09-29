@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Install the consys wifi and bluetooth modules of the current image build on the phone, in
+# Install the consys wifi, bluetooth and GPS modules of the current image build on the phone, in
 # /lib/modules/<release>, so udev loads the stack from the device tree ("mediatek,wifi" ->
-# wlan_drv_gen3 and its dependencies). hci_stp has no device to match: modules-load.d names it.
+# wlan_drv_gen3 and its dependencies). hci_stp and gps_drv have no device to match: modules-load.d
+# names them.
 # Only these: the rest of the module tree stays off the phone until it is wanted.
 # The release string follows the git commit, so run this for every image that is flashed.
 set -eu
@@ -13,7 +14,7 @@ R=$(strings "$T/arch/arm64/boot/Image" | grep -m1 -oE "^Linux version [^ ]+" | c
 S=$(mktemp -d /storage/kernel/build/claude-tmp/consys-mods.XXXXXX)
 trap 'rm -rf "${S:?}"' EXIT
 for k in connadp.ko btif/btif_drv.ko common/wmt_drv.ko wlan/adaptor/wmt_chrdev_wifi.ko wlan/core/gen3/wlan_drv_gen3.ko \
-         bt/hci_stp.ko; do
+         bt/hci_stp.ko gps/gps_drv.ko; do
     [ "$(modinfo -F vermagic "$B/$k" | cut -d' ' -f1)" = "$R" ] || { echo "$k is not built for $R"; exit 1; }
     install -D -m 644 "$B/$k" "$S/$R/$D/$k"
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/$D/$k"
@@ -33,6 +34,7 @@ for f in modules.order modules.builtin modules.builtin.modinfo; do [ -e "$T/$f" 
 echo "installing the wifi and bluetooth modules for $R"
 tar -C "$S" -cf - "$R" | ssh -o BatchMode=yes "$H" "sudo -n tar -C /lib/modules -xf - --no-same-owner 2>/dev/null
     echo hci_stp | sudo -n tee /etc/modules-load.d/cosmo-bluetooth.conf >/dev/null
+    echo gps_drv | sudo -n tee /etc/modules-load.d/cosmo-gps.conf >/dev/null
     # the modem is started by hand during bring-up: keep udev from loading its driver
     echo "blacklist mtk_md" | sudo -n tee /etc/modprobe.d/cosmo-modem.conf >/dev/null
     sudo -n depmod -a $R && grep -c mediatek,wifi /lib/modules/$R/modules.alias && ls /lib/modules"

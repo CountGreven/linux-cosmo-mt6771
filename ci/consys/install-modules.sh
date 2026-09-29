@@ -26,7 +26,7 @@ for k in net/bluetooth/bluetooth.ko net/bluetooth/rfcomm/rfcomm.ko net/bluetooth
          drivers/iio/imu/bmi160/bmi160_spi.ko net/nfc/nfc.ko net/nfc/nci/nci.ko \
          drivers/nfc/nxp-nci/nxp-nci.ko drivers/nfc/nxp-nci/nxp-nci_i2c.ko drivers/input/ff-memless.ko drivers/input/misc/regulator-haptic.ko \
          drivers/gnss/gnss.ko drivers/net/wwan/wwan.ko drivers/net/wwan/mtk_md/mtk_md_proto.ko \
-         drivers/net/wwan/mtk_md/mtk_md.ko drivers/net/wwan/mtk_md/mtk_conn_md.ko drivers/usb/typec/fusb301.ko drivers/usb/roles/gpio-role-mux.ko; do
+         drivers/net/wwan/mtk_md/mtk_md.ko drivers/net/wwan/mtk_md/mtk_conn_md.ko drivers/usb/typec/fusb301.ko drivers/usb/roles/gpio-role-mux.ko drivers/soc/mediatek/mtk-mt6771-sleep.ko; do
     install -D -m 644 "$T/$k" "$S/$R/kernel/$k"
     "${CROSS_COMPILE:-aarch64-linux-gnu-}strip" --strip-debug "$S/$R/kernel/$k"
 done

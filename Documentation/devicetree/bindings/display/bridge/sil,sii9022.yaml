@@ -93,8 +93,9 @@ properties:
             properties:
               bus-width:
                 description:
-                  Endpoint bus width.
-                enum: [ 16, 18, 24 ]
+                  Endpoint bus width. 12 is RGB888 over 12 data lines, half a pixel on
+                  each clock edge.
+                enum: [ 12, 16, 18, 24 ]
                 default: 24
 
       port@1:

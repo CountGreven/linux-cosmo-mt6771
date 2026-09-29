@@ -27,6 +27,7 @@
  *   3 = plus cluster-off states (kept disabled by the driver).
  * COSMO_VCODEC: 1 = SCP runs mediatek/mt8183/scp.img instead of the LK-loaded sensor hub, with VDEC/VENC.
  * COSMO_RIGHT_USB: 1 = right USB-C port dual role, host for a sink, D+/D- shared through the GPIO79 mux.
+ * COSMO_DEEP_SLEEP: 1 = SPM deep sleep node for mtk-mt6771-sleep (still gated by its deep_enable).
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
@@ -34,6 +35,7 @@
 #define COSMO_CPUIDLE		2
 #define COSMO_VCODEC		0
 #define COSMO_RIGHT_USB		1
+#define COSMO_DEEP_SLEEP	0
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
@@ -2159,6 +2161,21 @@
 			compatible = "mediatek,mt6771-mcdi";
 			reg = <0 0x10480000 0 0x100>, <0 0x0011b000 0 0x800>;
 			reg-names = "mbox", "sysram";
+		};
+	};
+};
+#endif
+
+/* hw-spec/power.org, System suspend (vendor deep sleep), route C */
+#if COSMO_DEEP_SLEEP
+/ {
+	soc {
+		sleep@10460000 {
+			compatible = "mediatek,mt6771-sleep";
+			reg = <0 0x10460000 0 0x100>, <0 0x10461000 0 0x8>;
+			reg-names = "mbox", "mbox-ctrl";
+			mediatek,spm = <&scpsys>;
+			mediatek,pmic = <&pmic>;
 		};
 	};
 };

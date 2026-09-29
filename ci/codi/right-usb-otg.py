@@ -5,6 +5,7 @@ Frame (AmoledisonThread.processMessage case 144, msg_common, MyByteBuffer; all b
   "X!X!" | u32 length (18) | u32 cmd (144) | u32 sequence (1234) | u16 status
 No checksum, no terminator, no wake pulse: Android only takes a PowerManager wakelock.
 Android sends 2 then 1 on a right attach, 3 then 0 on a detach.
+Exits 0 without sending while codiServer holds the tty: its cosmo_usb module sends 144 then.
 """
 import argparse
 import errno
@@ -75,6 +76,10 @@ def main():
     args = ap.parse_args()
 
     busy = holders(args.dev)
+    if any("codiServer" in b for b in busy):
+        # codiServer sends 144 itself (cosmo_usb.py)
+        print("%s held by codiServer, left to it" % args.dev)
+        return 0
     if busy:
         print("%s is busy (stop codiServer first):" % args.dev, file=sys.stderr)
         for b in busy:

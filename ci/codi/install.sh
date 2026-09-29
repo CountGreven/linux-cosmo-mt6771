@@ -18,6 +18,13 @@ PY
 	sudo install -m "$(stat -c %a "$L/$f.orig")" /tmp/codi-$f "$L/$f"
 	rm -f /tmp/codi-$f
 done
+sudo install -m 0644 "$here/cosmo_usb.py" "$L/cosmo_usb.py"
+for f in codiServer.py codi_st32_generated_functions.py; do
+	[ -f "$L/$f.orig" ] || sudo cp -p "$L/$f" "$L/$f.orig"
+	python3 "$here/codi_patch.py" "$f" "$L/$f.orig" /tmp/codi-$f
+	sudo install -m "$(stat -c %a "$L/$f.orig")" /tmp/codi-$f "$L/$f"
+	rm -f /tmp/codi-$f
+done
 sudo install -m 0644 "$here/cosmo-codi-reset.service" /etc/systemd/system/cosmo-codi-reset.service
 sudo systemctl daemon-reload
 sudo systemctl enable cosmo-codi-reset.service

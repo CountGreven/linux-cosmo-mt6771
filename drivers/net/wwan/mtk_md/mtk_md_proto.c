@@ -195,6 +195,30 @@ enum mtk_md_ctrl mtk_md_ctrl_classify(const struct mtk_md_ccci_hdr *hdr)
 EXPORT_SYMBOL_GPL(mtk_md_ctrl_classify);
 
 /*
+ * port_dev_write() for PORT_F_USER_HEADER ports (eccci/port/port_proxy.c:245-256): a bare
+ * header is a mailbox and gets the magic in data[0], anything longer gets its length in data[1].
+ * reserved stays the user's.
+ */
+void mtk_md_user_hdr_tx(struct mtk_md_ccci_hdr *hdr, u32 len, u32 ch)
+{
+	if (len == sizeof(*hdr))
+		hdr->data[0] = cpu_to_le32(MTK_MD_CCCI_MAGIC);
+	else
+		hdr->data[1] = cpu_to_le32(len);
+	hdr->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, ch));
+}
+EXPORT_SYMBOL_GPL(mtk_md_user_hdr_tx);
+
+/* port_adjust_skb() (port_proxy.c:495-509): a mailbox is delivered as its header only */
+u32 mtk_md_user_hdr_rx_len(const struct mtk_md_ccci_hdr *hdr, u32 len)
+{
+	if (len > sizeof(*hdr) && le32_to_cpu(hdr->data[0]) == MTK_MD_CCCI_MAGIC)
+		return sizeof(*hdr);
+	return len;
+}
+EXPORT_SYMBOL_GPL(mtk_md_user_hdr_rx_len);
+
+/*
  * HS1 on generation 6293 is 240 bytes: the CCCI header, then the modem's feature query. A 16-byte
  * HS1 is the older handshake with no query, which this driver does not speak.
  */

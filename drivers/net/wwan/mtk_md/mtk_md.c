@@ -1700,8 +1700,10 @@ static bool mtk_md_cport_rx(struct mtk_md *md, u32 ch, const u8 *msg, u32 len)
 		return true;
 	}
 	skip = cp->desc->user_header ? 0 : hdr;
-	if (len < skip)
+	if (len < hdr)
 		return true;
+	if (cp->desc->user_header)
+		len = mtk_md_user_hdr_rx_len((const void *)msg, len);
 	skb = alloc_skb(len - skip, GFP_KERNEL);
 	if (!skb)
 		return true;
@@ -1787,9 +1789,12 @@ static ssize_t mtk_md_cport_write(struct file *file, const char __user *buf, siz
 		return -EFAULT;
 	}
 	h = (struct mtk_md_ccci_hdr *)msg;
-	if (!cp->desc->user_header)
+	if (cp->desc->user_header) {
+		mtk_md_user_hdr_tx(h, len, cp->desc->tx);
+	} else {
 		h->data[1] = cpu_to_le32(len);
-	h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, cp->desc->tx));
+		h->status = cpu_to_le32(FIELD_PREP(MTK_MD_CCCI_CHANNEL, cp->desc->tx));
+	}
 	ret = mtk_md_send(md, cp->desc->q, msg, len);
 	kfree(msg);
 	return ret ? ret : count;

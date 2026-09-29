@@ -292,6 +292,38 @@ static void ctrl_classify(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mtk_md_ctrl_classify(&h), MTK_MD_CTRL_UNKNOWN);
 }
 
+static void user_hdr(struct kunit *test)
+{
+	struct mtk_md_ccci_hdr h;
+
+	/* speech mailbox 0x2F21 as the HAL writes it (SPH_OFF), then an SPH_ON payload */
+	h.data[0] = cpu_to_le32(0xffffffff);
+	h.data[1] = cpu_to_le32(0x2f210000);
+	h.status = cpu_to_le32(0x5);
+	h.reserved = cpu_to_le32(0x1234);
+	mtk_md_user_hdr_tx(&h, 16, 5);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.data[0]), 0xffffffff);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.data[1]), 0x2f210000);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.status), 5);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.reserved), 0x1234);
+
+	h.data[0] = 0;
+	h.data[1] = cpu_to_le32(128 + 6);
+	h.status = cpu_to_le32(0xabcd0005);
+	h.reserved = cpu_to_le32(0x2f200086);
+	mtk_md_user_hdr_tx(&h, 128 + 22, 5);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.data[0]), 0);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.data[1]), 150);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.status), 5);
+	KUNIT_EXPECT_EQ(test, le32_to_cpu(h.reserved), 0x2f200086);
+
+	h.data[0] = cpu_to_le32(0xffffffff);
+	KUNIT_EXPECT_EQ(test, mtk_md_user_hdr_rx_len(&h, 16), 16);
+	KUNIT_EXPECT_EQ(test, mtk_md_user_hdr_rx_len(&h, 64), 16);
+	h.data[0] = 0;
+	KUNIT_EXPECT_EQ(test, mtk_md_user_hdr_rx_len(&h, 64), 64);
+}
+
 static void hs1_check(struct kunit *test)
 {
 	const struct mtk_md_md_query *q;
@@ -816,6 +848,7 @@ static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(lk_tags_v1),
 	KUNIT_CASE(lk_tags_malformed),
 	KUNIT_CASE(ctrl_classify),
+	KUNIT_CASE(user_hdr),
 	KUNIT_CASE(hs1_check),
 	KUNIT_CASE(rt_negotiate),
 	KUNIT_CASE(rt_ap_features_6293),

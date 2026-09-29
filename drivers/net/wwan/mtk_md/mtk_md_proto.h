@@ -113,6 +113,11 @@ enum mtk_md_ctrl {
 
 enum mtk_md_ctrl mtk_md_ctrl_classify(const struct mtk_md_ccci_hdr *hdr);
 
+#define MTK_MD_CCCI_MAGIC		0xffffffff	/* data[0] of a header-only mailbox */
+
+void mtk_md_user_hdr_tx(struct mtk_md_ccci_hdr *hdr, u32 len, u32 ch);
+u32 mtk_md_user_hdr_rx_len(const struct mtk_md_ccci_hdr *hdr, u32 len);
+
 /*
  * Runtime features. Each side states, per feature id, a support level in bits 3:0 and a version
  * in bits 7:4 of one byte. The MD sends its 64 in HS1; the AP answers with a negotiated level per

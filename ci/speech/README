@@ -1,0 +1,75 @@
+cosmo-speechd: voice call audio on the Cosmo under the mainline kernel
+=====================================================================
+
+The modem only routes call audio after the AP tells it to, with the Gen93 speech
+messages on /dev/ccci_aud (protocol: /storage/notes/projects/cosmo/hw-spec/speech-gen93.org).
+The samples run over the AFE PCM2 interface, which the card keeps up while its hostless
+Voice_MD1 PCM (device 3) is open in both directions.
+
+  start [RATE]  open Voice_MD1 capture then playback at RATE (32000 default, 16000, 8000),
+                SPH_ON (sph_info with the parameter blob marked invalid), wait for its ack,
+                UL unmute
+  stop          UL mute, close the PCMs, SPH_OFF, wait for its ack
+  mute on|off   UL mute (only while speech is on, as the vendor HAL)
+  status, mailbox ID [P16 [P32]] (debugging: any mailbox, hex)
+
+The daemon answers MD_ALIVE, EPOF and network codec notifications whenever they come
+and logs every frame in hex. Commands go over /run/cosmo-speechd.sock; the same script
+is the client.
+
+The PCMs are opened with raw ALSA ioctls (hw_params, sw_params, prepare, start) and then
+left alone. aplay/arecord would work only until their I/O timeout: a hostless PCM's
+pointer never moves, so they would see a stalled stream after 10 s, and they need a data
+pipe for no reason. The sw_params mark the playback buffer as endless silence so START
+does not fail for lack of data.
+
+Not done (see the spec's UNKNOWN list): the parameter blob, the raw audio share memory
+(ccci_raw_audio, not exposed by mtk_md), gains (2F00/2F01), device change (2F2B), BT.
+
+Install
+-------
+
+  cp cosmo-speechd.py /usr/local/bin/cosmo-speechd
+  cp cosmo-speechd.service /etc/systemd/system/
+  systemctl daemon-reload
+
+Phone test plan (one step at a time, check each result)
+-------------------------------------------------------
+
+1. Kernel with the Voice_MD1 link: aplay -l lists card cosmo device 3 "Voice_MD1".
+   amixer -c cosmo cget name='PCM_2_PB_CH1 ADDA_UL_CH1' (and PCM_2_PB_CH2 ADDA_UL_CH2,
+   ADDA_DL_CH1 PCM_2_CAP_CH1, ADDA_DL_CH2 PCM_2_CAP_CH1) all read on.
+   ls -l /dev/ccci_aud.
+
+2. Daemon in the foreground, modem up: cosmo-speechd daemon. Look for rx frames from the
+   modem (MD_ALIVE 0xAFA0 is expected after a modem boot; it is queued even if nobody had
+   the node open) and the tx MD_ALIVE_ACK.
+
+3. Output and mic routes, as UCM's Earpiece and Mic devices:
+     amixer -c cosmo cset name='RCV Mux' 'Voice Playback'
+     amixer -c cosmo cset name='Earpiece Switch' on
+     amixer -c cosmo cset name='PGA L Mux' AIN0
+     amixer -c cosmo cset name='PGA R Mux' AIN2
+     amixer -c cosmo cset name='Main Mic Switch' on
+     amixer -c cosmo cset name='Second Mic Switch' on
+   (Speaker Switch or Headphone Switch instead of the earpiece for a louder first test.)
+
+4. Dry run without a call: cosmo-speechd start. Expect "ok speech on at 32000 Hz", and
+   in the daemon log SPH_ON_ACK (0xAF20) and MUTE_UL_ACK (0xAF02). PCM2_INTF_CON (AFE
+   0x53c, /sys/kernel/debug/regmap/*afe*/registers) should read 0x57 at 32 kHz (0x4F at
+   16 kHz, 0x47 at 8 kHz). cosmo-speechd stop; expect SPH_OFF_ACK (0xAF21).
+
+5. Outgoing call. Without ModemManager, on the AT port:
+     python3 ci/modem/atcmd.py 'ATD<number>;'
+   With ModemManager: mmcli -m any --voice-create-call number=<number>, then
+   mmcli -m any -o <call> --start.
+   Right after dialling run cosmo-speechd start (the vendor starts speech when the call
+   is dialled, so the ringback tone comes through). Talk both ways. Hang up
+   (atcmd.py AT+CHUP, or mmcli -o <call> --hangup), then cosmo-speechd stop.
+
+6. Incoming call: on RING, ATA (or mmcli --accept), then cosmo-speechd start; stop after
+   the hang-up.
+
+7. If one direction is silent: repeat at 16000 and 8000; try cosmo-speechd mailbox 2F03 0
+   (DL unmute) and mailbox 2F00 0 (DL gain); note whether any ack is missing. Record the
+   daemon log, dmesg and the PCM2/CONN register values for each attempt.

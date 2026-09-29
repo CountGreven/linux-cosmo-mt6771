@@ -1,0 +1,12 @@
+[Unit]
+Description=Voice call control for the MT6771 modem (Gen93 speech messages on /dev/ccci_aud)
+ConditionKernelVersion=!4.*
+After=sound.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/cosmo-speechd daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

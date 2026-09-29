@@ -10,6 +10,7 @@
 #include <linux/iopoll.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
+#include <linux/moduleparam.h>
 #include <linux/of_clk.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
@@ -841,6 +842,74 @@ static int scpsys_power_off(struct generic_pm_domain *genpd)
 	return scpsys_power_off_internal(pd);
 }
 
+/*
+ * Debug knobs for bisecting system suspend: domains listed in keep_on_suspend
+ * (genpd names, comma separated, or "all") are not powered off in the noirq
+ * phase; trace logs every power transition and its result.
+ */
+static char scpsys_keep_on_suspend[128];
+module_param_string(keep_on_suspend, scpsys_keep_on_suspend,
+		    sizeof(scpsys_keep_on_suspend), 0644);
+MODULE_PARM_DESC(keep_on_suspend, "debug: domains kept on across system suspend");
+
+static bool scpsys_trace;
+module_param_named(trace, scpsys_trace, bool, 0644);
+MODULE_PARM_DESC(trace, "debug: log power domain transitions");
+
+static bool scpsys_listed(const char *list, const char *name)
+{
+	size_t len = strlen(name);
+
+	while (*list) {
+		size_t n = strcspn(list, ",\n");
+
+		if ((n == len && !strncmp(list, name, n)) ||
+		    (n == 3 && !strncmp(list, "all", 3)))
+			return true;
+		list += n;
+		list += strspn(list, ",\n");
+	}
+
+	return false;
+}
+
+static bool scpsys_system_power_down_ok(struct dev_pm_domain *domain)
+{
+	struct generic_pm_domain *genpd = pd_to_genpd(domain);
+
+	if (scpsys_listed(scpsys_keep_on_suspend, genpd->name)) {
+		pr_info("%s: kept on across system suspend\n", genpd->name);
+		return false;
+	}
+
+	genpd->state_idx = genpd->state_count - 1;
+	return true;
+}
+
+static struct dev_power_governor scpsys_suspend_gov = {
+	.system_power_down_ok = scpsys_system_power_down_ok,
+};
+
+static int scpsys_power_on_traced(struct generic_pm_domain *genpd)
+{
+	int ret = scpsys_power_on(genpd);
+
+	if (scpsys_trace || ret)
+		pr_info("%s: power on: %d\n", genpd->name, ret);
+
+	return ret;
+}
+
+static int scpsys_power_off_traced(struct generic_pm_domain *genpd)
+{
+	int ret = scpsys_power_off(genpd);
+
+	if (scpsys_trace || ret)
+		pr_info("%s: power off: %d\n", genpd->name, ret);
+
+	return ret;
+}
+
 static struct
 generic_pm_domain *scpsys_add_one_domain(struct scpsys *scpsys, struct device_node *node,
 					 u8 *domains_idx, u8 *num_domains)
@@ -972,8 +1041,8 @@ generic_pm_domain *scpsys_add_one_domain(struct scpsys *scpsys, struct device_no
 		pd->genpd.name = node->name;
 
 	if (scpsys->soc_data->type == SCPSYS_MTCMOS_TYPE_DIRECT_CTL) {
-		pd->genpd.power_off = scpsys_power_off;
-		pd->genpd.power_on = scpsys_power_on;
+		pd->genpd.power_off = scpsys_power_off_traced;
+		pd->genpd.power_on = scpsys_power_on_traced;
 	} else {
 		pd->genpd.power_off = scpsys_hwv_power_off;
 		pd->genpd.power_on = scpsys_hwv_power_on;
@@ -1013,10 +1082,8 @@ generic_pm_domain *scpsys_add_one_domain(struct scpsys *scpsys, struct device_no
 	if (MTK_SCPD_CAPS(pd, MTK_SCPD_ACTIVE_WAKEUP))
 		pd->genpd.flags |= GENPD_FLAG_ACTIVE_WAKEUP;
 
-	if (MTK_SCPD_CAPS(pd, MTK_SCPD_KEEP_DEFAULT_OFF))
-		pm_genpd_init(&pd->genpd, NULL, true);
-	else
-		pm_genpd_init(&pd->genpd, NULL, false);
+	pm_genpd_init(&pd->genpd, &scpsys_suspend_gov,
+		      MTK_SCPD_CAPS(pd, MTK_SCPD_KEEP_DEFAULT_OFF));
 
 	domains_idx[(*num_domains)++] = (u8) id;
 	scpsys->domains[id] = &pd->genpd;

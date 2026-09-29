@@ -23,7 +23,8 @@
  * COSMO_CPU_OPP_V5T: 1 = this chip's V5_T CPU/CCI tables without L 2106 MHz, 2 = with it.
  * COSMO_SENSOR_ZONES: 1 = per-sensor thermal zones (soc, gpu, md1, cpu-little, cpu-big).
  * COSMO_SVS: 1 = mtk-svs; needs COSMO_CPU_OPP_V5T 2 (or 0) and COSMO_SENSOR_ZONES 1.
- * COSMO_CPUIDLE: 1 = PSCI core-off idle (vendor MCDI state), 2 = also cluster-off.
+ * COSMO_CPUIDLE: 1 = SSPM MCDI mailbox init only, 2 = plus PSCI core-off idle states (vendor MCDI),
+ *   3 = plus cluster-off states (kept disabled by the driver).
  * COSMO_VCODEC: 1 = SCP runs mediatek/mt8183/scp.img instead of the LK-loaded sensor hub, with VDEC/VENC.
  * COSMO_RIGHT_USB: 1 = right USB-C port dual role, host for a sink, D+/D- shared through the GPIO79 mux.
  */
@@ -2102,12 +2103,26 @@
 #endif
 
 /*
- * The vendor's mcdi-cpu and mcdi-cluster PSCI params and latencies (vendor mt6771.dts:165-178);
- * min-residency per cluster from its MCDI governor (mtk_mcdi_state.c:34-47, 82-95). The stock ATF
- * leaves the power cut to the SSPM MCDI task, and for cluster-off the vendor kernel also writes the
- * SSPM CAN_POWER_OFF mailbox slot, which nothing here does (hw-spec/power.org, CPU idle).
+ * The stock ATF leaves the core power cut to the SSPM MCDI task, which the mt6771-mcdi driver
+ * initialises through mailbox 3 (hw-spec/power.org, MCDI kernel protocol). The driver keeps the
+ * idle states below disabled until mtk_mt6771_mcdi.idle_cpus allows them, and never enables
+ * cluster-off: that also needs a CLUSTER_n_CAN_POWER_OFF write before each entry.
+ * PSCI params and latencies from the vendor's mcdi-cpu and mcdi-cluster (vendor mt6771.dts:165-178);
+ * min-residency per cluster from its MCDI governor (mtk_mcdi_state.c:34-47, 82-95).
  */
 #if COSMO_CPUIDLE
+/ {
+	soc {
+		mcdi@10480000 {
+			compatible = "mediatek,mt6771-mcdi";
+			reg = <0 0x10480000 0 0x100>, <0 0x0011b000 0 0x800>;
+			reg-names = "mbox", "sysram";
+		};
+	};
+};
+#endif
+
+#if COSMO_CPUIDLE >= 2
 / {
 	cpus {
 		idle-states {
@@ -2131,7 +2146,7 @@
 				min-residency-us = <1500>;
 			};
 
-#if COSMO_CPUIDLE == 2
+#if COSMO_CPUIDLE == 3
 			MCDI_CLUSTER_LL: cluster-mcdi-ll {
 				compatible = "arm,idle-state";
 				local-timer-stop;
@@ -2154,7 +2169,7 @@
 	};
 };
 
-#if COSMO_CPUIDLE == 2
+#if COSMO_CPUIDLE == 3
 #define COSMO_IDLE_LL	<&MCDI_CPU_LL &MCDI_CLUSTER_LL>
 #define COSMO_IDLE_L	<&MCDI_CPU_L &MCDI_CLUSTER_L>
 #else

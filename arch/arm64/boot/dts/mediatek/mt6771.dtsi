@@ -26,6 +26,11 @@
 	compatible = "mediatek,mt6771";
 };
 
+/* same DPI block, but the vendor clocks it at 148.5 MHz for 1080p60, past the MT8183 limit */
+&dpi0 {
+	compatible = "mediatek,mt6771-dpi", "mediatek,mt8183-dpi";
+};
+
 /*
  * cpuidle stays off: the vendor enters idle through MCDI in the SSPM, and whether this firmware
  * honours the plain PSCI states mt8183.dtsi describes is not established. The mt8183 OPP tables

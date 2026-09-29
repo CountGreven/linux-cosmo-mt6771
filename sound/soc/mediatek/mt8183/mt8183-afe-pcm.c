@@ -115,12 +115,34 @@ static unsigned int dai_memif_rate_transform(struct device *dev,
 	}
 }
 
+static unsigned int pcm_rate_transform(struct device *dev,
+				       unsigned int rate)
+{
+	switch (rate) {
+	case 8000:
+		return MTK_AFE_PCM_RATE_8K;
+	case 16000:
+		return MTK_AFE_PCM_RATE_16K;
+	case 32000:
+		return MTK_AFE_PCM_RATE_32K;
+	case 48000:
+		return MTK_AFE_PCM_RATE_48K;
+	default:
+		dev_warn(dev, "%s(), rate %u invalid, use %d!!!\n",
+			 __func__, rate, MTK_AFE_PCM_RATE_32K);
+		return MTK_AFE_PCM_RATE_32K;
+	}
+}
+
 unsigned int mt8183_rate_transform(struct device *dev,
 				   unsigned int rate, int aud_blk)
 {
 	switch (aud_blk) {
 	case MT8183_MEMIF_MOD_DAI:
 		return dai_memif_rate_transform(dev, rate);
+	case MT8183_DAI_PCM_1:
+	case MT8183_DAI_PCM_2:
+		return pcm_rate_transform(dev, rate);
 	default:
 		return mt8183_general_rate_transform(dev, rate);
 	}

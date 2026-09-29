@@ -21,3 +21,8 @@ done
 sudo install -m 0644 "$here/cosmo-codi-reset.service" /etc/systemd/system/cosmo-codi-reset.service
 sudo systemctl daemon-reload
 sudo systemctl enable cosmo-codi-reset.service
+sudo install -m 0755 "$here/right-usb-otg.py" "$L/right-usb-otg.py"
+sudo install -m 0644 "$here/cosmo-right-usb@.service" /etc/systemd/system/cosmo-right-usb@.service
+sudo install -m 0644 "$here/90-cosmo-right-usb.rules" /etc/udev/rules.d/90-cosmo-right-usb.rules
+sudo systemctl daemon-reload
+sudo udevadm control --reload

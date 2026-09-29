@@ -1,0 +1,4 @@
+# Right USB-C partner (FUSB301, typec port1): tell the cover MCU like Android's AmoledisonService,
+# which switches the right port's D+/D- only after CMD 144 (gpu-video-camera-usb.org 8.10).
+SUBSYSTEM=="typec", KERNEL=="port1-partner", ACTION=="add", RUN+="/bin/systemctl --no-block start cosmo-right-usb@attach.service"
+SUBSYSTEM=="typec", KERNEL=="port1-partner", ACTION=="remove", RUN+="/bin/systemctl --no-block start cosmo-right-usb@detach.service"

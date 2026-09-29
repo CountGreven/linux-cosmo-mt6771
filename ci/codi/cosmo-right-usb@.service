@@ -1,0 +1,8 @@
+[Unit]
+Description=Tell the cover MCU about the right USB-C port (%i)
+ConditionKernelVersion=!4.*
+
+[Service]
+Type=oneshot
+# Android order: status 2 then 1 on attach, 3 then 0 on detach
+ExecStart=/bin/sh -c 'case %i in attach) a=2 b=1;; *) a=3 b=0;; esac; /usr/lib/codi/right-usb-otg.py $a && /usr/lib/codi/right-usb-otg.py $b'

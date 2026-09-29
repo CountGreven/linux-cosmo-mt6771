@@ -23,10 +23,12 @@
  * COSMO_CPU_OPP_V5T: 1 = this chip's V5_T CPU/CCI tables without L 2106 MHz, 2 = with it.
  * COSMO_SENSOR_ZONES: 1 = per-sensor thermal zones (soc, gpu, md1, cpu-little, cpu-big).
  * COSMO_SVS: 1 = mtk-svs; needs COSMO_CPU_OPP_V5T 2 (or 0) and COSMO_SENSOR_ZONES 1.
+ * COSMO_CPUIDLE: 1 = PSCI core-off idle (vendor MCDI state), 2 = also cluster-off.
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
 #define COSMO_SVS		0
+#define COSMO_CPUIDLE		0
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
@@ -1975,6 +1977,100 @@
 #if !COSMO_SVS
 &svs {
 	status = "disabled";
+};
+#endif
+
+/*
+ * The vendor's mcdi-cpu and mcdi-cluster PSCI params and latencies (vendor mt6771.dts:165-178);
+ * min-residency per cluster from its MCDI governor (mtk_mcdi_state.c:34-47, 82-95). The stock ATF
+ * leaves the power cut to the SSPM MCDI task, and for cluster-off the vendor kernel also writes the
+ * SSPM CAN_POWER_OFF mailbox slot, which nothing here does (hw-spec/power.org, CPU idle).
+ */
+#if COSMO_CPUIDLE
+/ {
+	cpus {
+		idle-states {
+			entry-method = "psci";
+
+			MCDI_CPU_LL: cpu-mcdi-ll {
+				compatible = "arm,idle-state";
+				local-timer-stop;
+				arm,psci-suspend-param = <0x00010001>;
+				entry-latency-us = <600>;
+				exit-latency-us = <600>;
+				min-residency-us = <4500>;
+			};
+
+			MCDI_CPU_L: cpu-mcdi-l {
+				compatible = "arm,idle-state";
+				local-timer-stop;
+				arm,psci-suspend-param = <0x00010001>;
+				entry-latency-us = <600>;
+				exit-latency-us = <600>;
+				min-residency-us = <1500>;
+			};
+
+#if COSMO_CPUIDLE == 2
+			MCDI_CLUSTER_LL: cluster-mcdi-ll {
+				compatible = "arm,idle-state";
+				local-timer-stop;
+				arm,psci-suspend-param = <0x01010001>;
+				entry-latency-us = <600>;
+				exit-latency-us = <600>;
+				min-residency-us = <4500>;
+			};
+
+			MCDI_CLUSTER_L: cluster-mcdi-l {
+				compatible = "arm,idle-state";
+				local-timer-stop;
+				arm,psci-suspend-param = <0x01010001>;
+				entry-latency-us = <600>;
+				exit-latency-us = <600>;
+				min-residency-us = <1500>;
+			};
+#endif
+		};
+	};
+};
+
+#if COSMO_CPUIDLE == 2
+#define COSMO_IDLE_LL	<&MCDI_CPU_LL &MCDI_CLUSTER_LL>
+#define COSMO_IDLE_L	<&MCDI_CPU_L &MCDI_CLUSTER_L>
+#else
+#define COSMO_IDLE_LL	<&MCDI_CPU_LL>
+#define COSMO_IDLE_L	<&MCDI_CPU_L>
+#endif
+
+&cpu0 {
+	cpu-idle-states = COSMO_IDLE_LL;
+};
+
+&cpu1 {
+	cpu-idle-states = COSMO_IDLE_LL;
+};
+
+&cpu2 {
+	cpu-idle-states = COSMO_IDLE_LL;
+};
+
+&cpu3 {
+	cpu-idle-states = COSMO_IDLE_LL;
+};
+
+&cpu4 {
+	cpu-idle-states = COSMO_IDLE_L;
+};
+
+&cpu5 {
+	cpu-idle-states = COSMO_IDLE_L;
+};
+
+&cpu6 {
+	cpu-idle-states = COSMO_IDLE_L;
+};
+
+&cpu7 {
+	cpu-idle-states = COSMO_IDLE_L;
 };
 #endif
 

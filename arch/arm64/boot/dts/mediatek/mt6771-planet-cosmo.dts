@@ -455,6 +455,14 @@
 		reg = <0x25>;
 #if COSMO_RIGHT_USB
 		interrupts-extended = <&pio 166 IRQ_TYPE_EDGE_BOTH>;
+		/* spec 8.8.7: GPIO178 is the right 5 V, off only while a charger or PC is on the right */
+		vbus-supply = <&right_5v>;
+		fcs,vbus-on-unless-source;
+		/* GPIO54 sil9022_hdmi_det_stat, GPIO52 aeon_irq_stm32 (usb_typec.c:330-334, 410-428) */
+		hdmi-detect-gpios = <&pio 54 GPIO_ACTIVE_HIGH>;
+		source-notify-gpios = <&pio 52 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&right_usb_pins>;
 #else
 		interrupts-extended = <&pio 166 IRQ_TYPE_LEVEL_LOW>;
 #endif
@@ -1319,6 +1327,40 @@
 };
 
 #if COSMO_RIGHT_USB
+/*
+ * GPIO178 enables the right connector's 5 V and the keyboard light supply (spec 8.8.7). On from boot;
+ * the FUSB301 holds it except while a source is on the right, as the vendor poll does (usb_typec.c:
+ * 410-428), which also overrides the keyboard light there (aw9524_key.c:483-600). pwm-leds has no
+ * supply, and its own reference would keep 5 V on a charger, so the light takes none.
+ */
+/ {
+	right_5v: regulator-right-5v {
+		compatible = "regulator-fixed";
+		regulator-name = "right-port-5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&pio 178 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+	};
+};
+
+/* Vendor DWS defaults: GPIO54 input pull-down, GPIO52 output low (spec 8.8.2) */
+&pio {
+	right_usb_pins: right-usb-pins {
+		pins-hdmi-det {
+			pinmux = <PINMUX_GPIO54__FUNC_GPIO54>;
+			input-enable;
+			bias-pull-down;
+		};
+
+		pins-stm32-irq {
+			pinmux = <PINMUX_GPIO52__FUNC_GPIO52>;
+			output-low;
+		};
+	};
+};
+
 /*
  * GPIO79 routes D+/D- to the left (low) or right (high) connector (vendor force_to_otg,
  * usb_typec.c). The mux gives the one controller to one port at a time.
@@ -2265,12 +2307,14 @@
 		};
 	};
 
+#if !COSMO_RIGHT_USB
 	kbd-light-enable-hog {
 		gpio-hog;
 		gpios = <178 GPIO_ACTIVE_HIGH>;
 		output-high;
 		line-name = "keyboard-light-enable";
 	};
+#endif
 };
 
 &pwm1 {

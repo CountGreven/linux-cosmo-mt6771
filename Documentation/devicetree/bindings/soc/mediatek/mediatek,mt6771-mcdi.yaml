@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/soc/mediatek/mediatek,mt6771-mcdi.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: MediaTek MT6771 SSPM multi-core deep idle (MCDI) mailbox
+
+maintainers:
+  - Fredrik Lindlöf <fredrik.lindlof@gmail.com>
+
+description:
+  Mailbox 3 of the MT6771 SSPM, through which the kernel tells the SSPM MCDI firmware task
+  which CPU cores it may power off in idle, and the SRAM area where that task keeps its
+  statistics.
+
+properties:
+  compatible:
+    const: mediatek,mt6771-mcdi
+
+  reg:
+    minItems: 1
+    items:
+      - description: SSPM mailbox 3
+      - description: MCDI statistics SRAM
+
+  reg-names:
+    minItems: 1
+    items:
+      - const: mbox
+      - const: sysram
+
+required:
+  - compatible
+  - reg
+  - reg-names
+
+additionalProperties: false
+
+examples:
+  - |
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+
+        mcdi@10480000 {
+            compatible = "mediatek,mt6771-mcdi";
+            reg = <0 0x10480000 0 0x100>, <0 0x0011b000 0 0x800>;
+            reg-names = "mbox", "sysram";
+        };
+    };

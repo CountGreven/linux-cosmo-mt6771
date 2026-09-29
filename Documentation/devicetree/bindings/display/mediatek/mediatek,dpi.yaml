@@ -30,6 +30,7 @@ properties:
           - mediatek,mt8195-dpi
       - items:
           - enum:
+              - mediatek,mt6771-dpi
               - mediatek,mt6795-dpi
           - const: mediatek,mt8183-dpi
       - items:

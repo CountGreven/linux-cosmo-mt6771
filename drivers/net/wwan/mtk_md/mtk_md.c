@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/miscdevice.h>
+#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/poll.h>
 #include <linux/of.h>
@@ -279,6 +280,8 @@ struct mtk_md {
 	struct wwan_port *at_port;
 	struct mtk_md_cport cport[MTK_MD_CPORTS];
 	struct miscdevice fs_misc;
+	struct miscdevice audio_misc;
+	atomic_t audio_open;
 	struct sk_buff_head fs_rx;
 	wait_queue_head_t fs_wq;
 	atomic_t fs_open;
@@ -1857,6 +1860,88 @@ static int mtk_md_cports_register(struct mtk_md *md)
 	return devm_add_action_or_reset(md->dev, mtk_md_cports_unregister, md);
 }
 
+/* port_smem.c smem_dev_fops for ccci_raw_audio: what ccci_smem_get() in libccci_util uses */
+static struct mtk_md *mtk_md_audio_md(struct file *file)
+{
+	return container_of(file->private_data, struct mtk_md, audio_misc);
+}
+
+static int mtk_md_audio_open(struct inode *inode, struct file *file)
+{
+	if (atomic_cmpxchg(&mtk_md_audio_md(file)->audio_open, 0, 1))
+		return -EBUSY;
+	return 0;
+}
+
+static int mtk_md_audio_release(struct inode *inode, struct file *file)
+{
+	atomic_set(&mtk_md_audio_md(file)->audio_open, 0);
+	return 0;
+}
+
+static long mtk_md_audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct mtk_md *md = mtk_md_audio_md(file);
+	u32 __user *p = (u32 __user *)arg;
+
+	switch (cmd) {
+	case MTK_MD_IOC_SMEM_BASE:
+		return put_user(lower_32_bits(md->smem_nc + MTK_MD_SMEM_RAW_AUDIO_OFFSET), p);
+	case MTK_MD_IOC_SMEM_LEN:
+		return put_user(MTK_MD_SMEM_RAW_AUDIO_SIZE, p);
+	}
+	return -ENOTTY;
+}
+
+/* write-combined like the driver's own alias of this memory, not the vendor's Device mapping */
+static int mtk_md_audio_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct mtk_md *md = mtk_md_audio_md(file);
+	unsigned long len = vma->vm_end - vma->vm_start;
+	u64 off;
+
+	if (vma->vm_pgoff >= MTK_MD_SMEM_RAW_AUDIO_SIZE >> PAGE_SHIFT)
+		return -EINVAL;
+	off = (u64)vma->vm_pgoff << PAGE_SHIFT;
+	if (mtk_md_smem_map_check(MTK_MD_SMEM_RAW_AUDIO_SIZE, off, len))
+		return -EINVAL;
+	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	return remap_pfn_range(vma, vma->vm_start,
+			       PHYS_PFN(md->smem_nc + MTK_MD_SMEM_RAW_AUDIO_OFFSET + off), len,
+			       vma->vm_page_prot);
+}
+
+static const struct file_operations mtk_md_audio_fops = {
+	.owner = THIS_MODULE,
+	.open = mtk_md_audio_open,
+	.release = mtk_md_audio_release,
+	.unlocked_ioctl = mtk_md_audio_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
+	.mmap = mtk_md_audio_mmap,
+	.llseek = noop_llseek,
+};
+
+static void mtk_md_audio_unregister(void *data)
+{
+	struct mtk_md *md = data;
+
+	misc_deregister(&md->audio_misc);
+}
+
+static int mtk_md_audio_register(struct mtk_md *md)
+{
+	int ret;
+
+	md->audio_misc.minor = MISC_DYNAMIC_MINOR;
+	md->audio_misc.name = "ccci_raw_audio";
+	md->audio_misc.fops = &mtk_md_audio_fops;
+	md->audio_misc.parent = md->dev;
+	ret = misc_register(&md->audio_misc);
+	if (ret)
+		return ret;
+	return devm_add_action_or_reset(md->dev, mtk_md_audio_unregister, md);
+}
+
 static struct mtk_md *mtk_md_fs_md(struct file *file)
 {
 	return container_of(file->private_data, struct mtk_md, fs_misc);
@@ -2177,7 +2262,8 @@ static const struct mtk_md_rt_src mtk_md_rt_srcs[MTK_MD_FEATURE_COUNT] = {
 	[MTK_MD_RT_AP_CCMNI_MTU]		= { RT_U32 },
 	[MTK_MD_RT_CCCI_FAST_HEADER]		= { RT_U32 },
 	[MTK_MD_RT_LWA_SHARE_MEMORY]		= { RT_SHM, true, SZ_1M, 0 },
-	[MTK_MD_RT_AUDIO_RAW_SHARE_MEMORY]	= { RT_SHM, false, 108 * SZ_1K, 52 * SZ_1K },
+	[MTK_MD_RT_AUDIO_RAW_SHARE_MEMORY]	= { RT_SHM, false, MTK_MD_SMEM_RAW_AUDIO_OFFSET,
+						    MTK_MD_SMEM_RAW_AUDIO_SIZE },
 	[MTK_MD_RT_MULTI_MD_MPU]		= { RT_EMPTY },
 	[MTK_MD_RT_CCISM_SHARE_MEMORY_EXP]	= { RT_SHM, false, 865 * SZ_1K, 121 * SZ_1K },
 	[MTK_MD_RT_MD_PHY_CAPTURE]		= { RT_SHM, true, SZ_1M, 0 },
@@ -2662,6 +2748,10 @@ static int mtk_md_probe(struct platform_device *pdev)
 	ret = mtk_md_cports_register(md);
 	if (ret)
 		return dev_err_probe(dev, ret, "vendor char ports\n");
+
+	ret = mtk_md_audio_register(md);
+	if (ret)
+		return dev_err_probe(dev, ret, "raw audio share memory\n");
 
 	ret = wwan_register_ops(dev, &mtk_md_wwan_ops, md, WWAN_NO_DEFAULT_LINK);
 	if (ret)

@@ -451,6 +451,15 @@ u32 mtk_md_smem_md_view(u64 ap_phys)
 }
 EXPORT_SYMBOL_GPL(mtk_md_smem_md_view);
 
+/* smem_dev_mmap(): the mapping must stay inside the region */
+int mtk_md_smem_map_check(u32 size, u64 off, u64 len)
+{
+	if (!len || off >= size || len > size - off)
+		return -EINVAL;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtk_md_smem_map_check);
+
 /* config_ap_runtime_data_v2_1() in eccci/modem_sys1.c. */
 void mtk_md_ap_query_fill(struct mtk_md_ap_query *q, u32 ap_rt_addr, u32 noncached_start,
 			  u32 noncached_size, u32 cached_start, u32 cached_size)

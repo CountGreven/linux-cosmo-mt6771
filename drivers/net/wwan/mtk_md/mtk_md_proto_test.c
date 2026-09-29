@@ -829,6 +829,30 @@ static void ccb_ctrl_fill(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, le32_to_cpu(ctrl[19 * 16 + 13]), 66560);
 }
 
+/* ccci_smem_get() in libccci_util.so issues these numbers on /dev/ccci_raw_audio */
+static void smem_raw_audio(struct kunit *test)
+{
+	KUNIT_EXPECT_EQ(test, MTK_MD_IOC_SMEM_BASE, 0x80044330U);
+	KUNIT_EXPECT_EQ(test, MTK_MD_IOC_SMEM_LEN, 0x80044331U);
+	KUNIT_EXPECT_EQ(test, MTK_MD_SMEM_RAW_AUDIO_OFFSET, 0x1b000);
+	KUNIT_EXPECT_EQ(test, MTK_MD_SMEM_RAW_AUDIO_SIZE, 0xd000);
+}
+
+static void smem_map_check(struct kunit *test)
+{
+	const u32 size = MTK_MD_SMEM_RAW_AUDIO_SIZE;
+
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0, size), 0);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0, 0x1000), 0);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0xc000, 0x1000), 0);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0, size + 0x1000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0x1000, size), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, size, 0x1000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, U64_MAX - 0xfff, 0x1000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(size, 0, 0), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mtk_md_smem_map_check(0, 0, 0x1000), -EINVAL);
+}
+
 static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rpc_parse),
 	KUNIT_CASE(rpc_build),
@@ -855,6 +879,8 @@ static struct kunit_case mtk_md_proto_cases[] = {
 	KUNIT_CASE(rt_append),
 	KUNIT_CASE(dbm_fill),
 	KUNIT_CASE(ccb_ctrl_fill),
+	KUNIT_CASE(smem_raw_audio),
+	KUNIT_CASE(smem_map_check),
 	{}
 };
 

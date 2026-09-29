@@ -12,6 +12,7 @@
 #define __MTK_MD_PROTO_H__
 
 #include <linux/bits.h>
+#include <linux/ioctl.h>
 #include <linux/types.h>
 
 /*
@@ -220,6 +221,17 @@ int mtk_md_rt_append(u8 *buf, size_t size, size_t *pos, u8 id, u8 support, const
 #define MTK_MD_SMEM_RUNTIME_MD_SIZE	0x800
 
 u32 mtk_md_smem_md_view(u64 ap_phys);
+
+/*
+ * SMEM_USER_RAW_AUDIO, the speech driver's rings (eccci/ccci_modem.c:61), and the ioctls of the
+ * vendor's smem nodes (port_smem.c:318-328): the AP physical base truncated to 32 bits, the size.
+ */
+#define MTK_MD_SMEM_RAW_AUDIO_OFFSET	(108 * SZ_1K)
+#define MTK_MD_SMEM_RAW_AUDIO_SIZE	(52 * SZ_1K)
+#define MTK_MD_IOC_SMEM_BASE		_IOR('C', 48, unsigned int)
+#define MTK_MD_IOC_SMEM_LEN		_IOR('C', 49, unsigned int)
+
+int mtk_md_smem_map_check(u32 size, u64 off, u64 len);
 
 /* The AP's answer to HS1 (ap_query_md_feature_v2_1), behind a CCCI header in CCIF SRAM. */
 struct mtk_md_ap_query {

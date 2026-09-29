@@ -442,23 +442,21 @@
 	 * (CTL 0x02); RSTN is GPIO109, left low (chip in reset) by the boot loader.
 	 */
 	/*
-	 * Right USB-C port CC controller (vendor fusb301a@25, IRQ GPIO166). Disabled until the Type
-	 * register meaning is read on the phone with a charger and with a peripheral attached
-	 * (24-right-usb-codi-research.org), and the D+/D- mux on GPIO79 is modelled.
+	 * Right USB-C port CC controller (vendor fusb301a@25, IRQ GPIO166). Sink only: the vendor
+	 * never sources VBUS here and the OTG boost also feeds the left port. D+/D- stay on the
+	 * left until the GPIO79 mux is modelled.
 	 */
 	typec@25 {
 		compatible = "fcs,fusb301";
 		reg = <0x25>;
 		interrupts-extended = <&pio 166 IRQ_TYPE_LEVEL_LOW>;
 		vbus-supply = <&mt6370_otg_vbus>;
-		status = "disabled";
 
 		connector {
 			compatible = "usb-c-connector";
 			label = "USB-C right";
-			power-role = "dual";
-			try-power-role = "sink";
-			data-role = "dual";
+			power-role = "sink";
+			data-role = "device";
 			typec-power-opmode = "default";
 			pd-disable;
 		};

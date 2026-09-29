@@ -100,7 +100,8 @@ static int idle_cpus_set(const char *val, const struct kernel_param *kp)
 {
 	int ret = param_set_uint(val, kp);
 
-	if (!ret)
+	/* a cmdline value arrives before any lock is usable; the gate init applies it */
+	if (!ret && READ_ONCE(mcdi_gate_live))
 		mcdi_apply_gate();
 	return ret;
 }
@@ -311,7 +312,7 @@ static int __init mt6771_mcdi_gate_init(void)
 		return 0;
 
 	mutex_lock(&mcdi_gate_lock);
-	mcdi_gate_live = true;
+	WRITE_ONCE(mcdi_gate_live, true);
 	mutex_unlock(&mcdi_gate_lock);
 	mcdi_apply_gate();
 	mcdi_pause(false);

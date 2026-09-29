@@ -8,7 +8,9 @@ snd-soc-mt8183-afe-y := \
 	mt8183-dai-tdm.o \
 	mt8183-dai-pcm.o \
 	mt8183-dai-hostless.o \
-	mt8183-dai-adda.o
+	mt8183-dai-adda.o \
+	mt8183-dai-connsys-i2s.o \
+	mt8183-dai-hw-gain.o
 
 obj-$(CONFIG_SND_SOC_MT8183) += snd-soc-mt8183-afe.o
 obj-$(CONFIG_SND_SOC_MT6771_COSMO) += mt6771-cosmo.o

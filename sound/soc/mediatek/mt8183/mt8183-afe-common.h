@@ -36,6 +36,9 @@ enum {
 	MT8183_DAI_TDM,
 	MT8183_DAI_HOSTLESS_LPBK,
 	MT8183_DAI_HOSTLESS_SPEECH,
+	MT8183_DAI_CONNSYS_I2S,
+	MT8183_DAI_HW_GAIN_1,
+	MT8183_DAI_HOSTLESS_FM,
 	MT8183_DAI_NUM,
 };
 
@@ -108,4 +111,6 @@ int mt8183_dai_pcm_register(struct mtk_base_afe *afe);
 int mt8183_dai_i2s_register(struct mtk_base_afe *afe);
 int mt8183_dai_tdm_register(struct mtk_base_afe *afe);
 int mt8183_dai_hostless_register(struct mtk_base_afe *afe);
+int mt8183_dai_connsys_i2s_register(struct mtk_base_afe *afe);
+int mt8183_dai_hw_gain_register(struct mtk_base_afe *afe);
 #endif

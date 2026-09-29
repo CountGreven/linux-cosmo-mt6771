@@ -777,6 +777,8 @@ static const dai_register_cb dai_register_cbs[] = {
 	mt8183_dai_pcm_register,
 	mt8183_dai_tdm_register,
 	mt8183_dai_hostless_register,
+	mt8183_dai_connsys_i2s_register,
+	mt8183_dai_hw_gain_register,
 	mt8183_dai_memif_register,
 };
 

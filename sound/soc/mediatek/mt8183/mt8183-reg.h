@@ -743,6 +743,24 @@
 #define AFE_GAIN1_CUR_MASK                            0xfffff
 #define AFE_GAIN1_CUR_MASK_SFT                        (0xfffff << 0)
 
+/* AFE_ASRC_2CH_CON0 */
+#define CON0_CHSET_EN_SFT                             6
+#define CON0_CHSET_EN_MASK                            0x1
+#define CON0_CHSET_EN_MASK_SFT                        (0x1 << 6)
+#define CON0_ASM_ON_SFT                               0
+#define CON0_ASM_ON_MASK                              0x1
+#define CON0_ASM_ON_MASK_SFT                          (0x1 << 0)
+
+/* AFE_ASRC_2CH_CON2 */
+#define CHSET_IS_MONO_SFT                             16
+#define CHSET_IS_MONO_MASK                            0x1
+#define CHSET_IS_MONO_MASK_SFT                        (0x1 << 16)
+
+/* AFE_ASRC_2CH_CON5 */
+#define CALI_EN_SFT                                   0
+#define CALI_EN_MASK                                  0x1
+#define CALI_EN_MASK_SFT                              (0x1 << 0)
+
 /* AFE_GAIN2_CUR */
 #define AFE_GAIN2_CUR_SFT                             0
 #define AFE_GAIN2_CUR_MASK                            0xfffff

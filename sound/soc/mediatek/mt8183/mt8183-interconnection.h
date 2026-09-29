@@ -30,4 +30,8 @@
 #define I_I2S2_CH1 25
 #define I_I2S2_CH2 26
 
+#define I_32_OFFSET 32
+#define I_CONNSYS_I2S_CH1 (34 - I_32_OFFSET)
+#define I_CONNSYS_I2S_CH2 (35 - I_32_OFFSET)
+
 #endif

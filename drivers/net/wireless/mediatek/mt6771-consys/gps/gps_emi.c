@@ -28,9 +28,8 @@
 #include <linux/uaccess.h>
 #include <linux/printk.h>
 #include <linux/version.h>
-#include <asm/memblock.h>
 #if EMI_MPU_PROTECTION_IS_READY
-#include <mt_emi_api.h>
+#include <mtk_plat_shim.h>
 #endif
 #include "gps.h"
 
@@ -173,7 +172,7 @@ INT32 mtk_wcn_consys_gps_emi_init(void)
 			CONSYS_REG_READ(conn_reg.topckgen_base + CONSYS_EMI_MAPPING_OFFSET));
 		#endif
 
-		pGpsEmibaseaddr = ioremap_nocache(gGpsEmiPhyBase, GPS_EMI_MPU_SIZE);
+		pGpsEmibaseaddr = ioremap(gGpsEmiPhyBase, GPS_EMI_MPU_SIZE);
 		if (pGpsEmibaseaddr != NULL) {
 			unsigned char *pFullPatchName = "MNL.bin";
 			osal_firmware *pPatch = NULL;
@@ -338,7 +337,7 @@ static int gps_emi_probe(struct platform_device *dev)
 		GPS_ERR("cdev_add fail: %d\n", err);
 		goto err_out;
 	}
-	devobj->cls = class_create(THIS_MODULE, "gpsemi");
+	devobj->cls = class_create("gpsemi");
 	if (IS_ERR(devobj->cls)) {
 		GPS_ERR("Unable to create class, err = %d\n", (int)PTR_ERR(devobj->cls));
 		goto err_out;
@@ -362,11 +361,11 @@ err_out:
 }
 
 /*****************************************************************************/
-static int gps_emi_remove(struct platform_device *dev)
+static void gps_emi_remove(struct platform_device *dev)
 {
 	if (!devobj) {
 		GPS_ERR("null pointer: %p\n", devobj);
-		return -1;
+		return;
 	}
 
 	GPS_DBG("Unregistering chardev\n");
@@ -376,7 +375,6 @@ static int gps_emi_remove(struct platform_device *dev)
 	class_destroy(devobj->cls);
 	kfree(devobj);
 	GPS_DBG("Done\n");
-	return 0;
 }
 
 /*****************************************************************************/
@@ -452,7 +450,7 @@ static int __init gps_emi_mod_init(void)
 		GPS_ERR("cdev_add fail: %d\n", err);
 		goto err_out;
 	}
-	devobj->cls = class_create(THIS_MODULE, "gpsemi");
+	devobj->cls = class_create("gpsemi");
 	if (IS_ERR(devobj->cls)) {
 		GPS_ERR("Unable to create class, err = %d\n", (int)PTR_ERR(devobj->cls));
 	goto err_out;

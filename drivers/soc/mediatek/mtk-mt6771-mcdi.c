@@ -22,6 +22,8 @@
 #include <linux/platform_device.h>
 #include <linux/pm_qos.h>
 #include <linux/seq_file.h>
+#include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
+#include <linux/spinlock.h>
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
 
@@ -40,6 +42,10 @@ static unsigned int mcdi_paused;
 static DEFINE_MUTEX(mcdi_pause_lock);
 
 static unsigned int idle_cpus;
+
+/* SSPM task pause holders: this driver's syscore and the deep sleep driver */
+static DEFINE_RAW_SPINLOCK(mcdi_hold_lock);
+static unsigned int mcdi_holds;
 
 static u32 mcdi_read(unsigned int slot)
 {
@@ -167,25 +173,50 @@ static int mcdi_task_pause(u32 pause)
 					 1, MCDI_PAUSE_TIMEOUT_US);
 }
 
+/*
+ * Pause the SSPM MCDI task (vendor mcdi_task_pause) while any holder needs it paused; the task
+ * resumes when the last holder lets go. Syscore context: last CPU, interrupts off.
+ */
+int mtk_mt6771_mcdi_task_hold(bool hold)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	if (!READ_ONCE(mcdi_ready))
+		return -ENODEV;
+
+	raw_spin_lock_irqsave(&mcdi_hold_lock, flags);
+	if (hold) {
+		if (!mcdi_holds) {
+			ret = mcdi_task_pause(1);
+			if (ret)
+				mcdi_write(MCDI_SLOT_PAUSE_ACTION, 0);
+		}
+		if (!ret)
+			mcdi_holds++;
+	} else if (mcdi_holds && !--mcdi_holds) {
+		ret = mcdi_task_pause(0);
+	}
+	raw_spin_unlock_irqrestore(&mcdi_hold_lock, flags);
+
+	if (ret)
+		pr_err("mt6771-mcdi: SSPM did not ack %s\n", hold ? "pause" : "resume");
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_task_hold);
+
 /* Deep suspend only, like the vendor's slp_suspend_ops_enter; s2idle never reaches syscore */
 static int mcdi_syscore_suspend(void *data)
 {
-	int ret;
-
 	if (pm_suspend_target_state != PM_SUSPEND_MEM)
 		return 0;
-	ret = mcdi_task_pause(1);
-	if (ret) {
-		mcdi_write(MCDI_SLOT_PAUSE_ACTION, 0);
-		pr_err("mt6771-mcdi: SSPM did not ack pause\n");
-	}
-	return ret;
+	return mtk_mt6771_mcdi_task_hold(true);
 }
 
 static void mcdi_syscore_resume(void *data)
 {
-	if (pm_suspend_target_state == PM_SUSPEND_MEM && mcdi_task_pause(0))
-		pr_err("mt6771-mcdi: SSPM did not ack resume\n");
+	if (pm_suspend_target_state == PM_SUSPEND_MEM)
+		mtk_mt6771_mcdi_task_hold(false);
 }
 
 static const struct syscore_ops mcdi_syscore_ops = {

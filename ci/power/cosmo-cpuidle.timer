@@ -1,0 +1,10 @@
+[Unit]
+Description=Open the core-off idle gate 60 s after boot
+ConditionKernelVersion=!4.*
+
+[Timer]
+# Late on purpose: a boot that goes wrong after this still leaves a minute to ssh in and mask it.
+OnBootSec=60s
+
+[Install]
+WantedBy=timers.target

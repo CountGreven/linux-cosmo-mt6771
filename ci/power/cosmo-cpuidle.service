@@ -1,0 +1,8 @@
+[Unit]
+Description=Allow MT6771 core-off idle (SSPM MCDI) on all CPUs
+ConditionKernelVersion=!4.*
+ConditionPathExists=/sys/module/mtk_mt6771_mcdi/parameters/idle_cpus
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo 0xff > /sys/module/mtk_mt6771_mcdi/parameters/idle_cpus'

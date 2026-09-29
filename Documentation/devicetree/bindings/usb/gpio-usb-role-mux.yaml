@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/usb/gpio-usb-role-mux.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: GPIO USB role switch multiplexer
+
+maintainers:
+  - Fredrik Lindlöf <fredrik.lindlof@gmail.com>
+
+description:
+  One dual-role USB controller shared by two connectors. A GPIO-controlled
+  analog switch routes the USB 2.0 data lines to one connector at a time.
+  Each input is a USB role switch for that connector's port controller;
+  the output port links to the controller's own role switch.
+
+properties:
+  compatible:
+    const: gpio-usb-role-mux
+
+  select-gpios:
+    maxItems: 1
+    description: Low routes the lines to input 0, high to input 1.
+
+  port:
+    $ref: /schemas/graph.yaml#/properties/port
+    description: Link to the USB controller, which is a USB role switch.
+
+  '#address-cells':
+    const: 1
+
+  '#size-cells':
+    const: 0
+
+patternProperties:
+  '^input@[01]$':
+    type: object
+    additionalProperties: false
+
+    properties:
+      reg:
+        maximum: 1
+
+      label:
+        description: Name of the connector, used in sysfs.
+
+      usb-role-switch: true
+
+      port:
+        $ref: /schemas/graph.yaml#/properties/port
+        description: Link to the connector.
+
+    required:
+      - reg
+      - usb-role-switch
+      - port
+
+required:
+  - compatible
+  - select-gpios
+  - port
+  - '#address-cells'
+  - '#size-cells'
+  - input@0
+  - input@1
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    usb-role-mux {
+      compatible = "gpio-usb-role-mux";
+      select-gpios = <&pio 79 GPIO_ACTIVE_HIGH>;
+      #address-cells = <1>;
+      #size-cells = <0>;
+
+      port {
+        endpoint {
+          remote-endpoint = <&usb_hs_ep>;
+        };
+      };
+
+      input@0 {
+        reg = <0>;
+        label = "left";
+        usb-role-switch;
+
+        port {
+          endpoint {
+            remote-endpoint = <&left_hs_ep>;
+          };
+        };
+      };
+
+      input@1 {
+        reg = <1>;
+        label = "right";
+        usb-role-switch;
+
+        port {
+          endpoint {
+            remote-endpoint = <&right_hs_ep>;
+          };
+        };
+      };
+    };

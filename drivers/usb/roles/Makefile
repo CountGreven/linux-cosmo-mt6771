@@ -3,3 +3,5 @@
 obj-$(CONFIG_USB_ROLE_SWITCH)		+= roles.o
 roles-y					:= class.o
 obj-$(CONFIG_USB_ROLES_INTEL_XHCI)	+= intel-xhci-usb-role-switch.o
+obj-$(CONFIG_USB_ROLES_GPIO_MUX)	+= gpio-role-mux.o
+obj-$(CONFIG_USB_ROLES_GPIO_MUX_KUNIT_TEST)	+= gpio-role-mux-test.o

@@ -26,4 +26,21 @@ config USB_ROLES_INTEL_XHCI
 	  To compile the driver as a module, choose M here: the module will
 	  be called intel-xhci-usb-role-switch.
 
+config USB_ROLES_GPIO_MUX
+	tristate "GPIO USB role switch multiplexer"
+	depends on GPIOLIB && OF
+	help
+	  Shares one dual-role USB controller between two connectors whose
+	  USB 2.0 data lines are routed by a GPIO-controlled switch. Each
+	  connector gets its own role switch; a host request takes the lines
+	  from a device one, otherwise the first connector keeps them.
+
+	  To compile the driver as a module, choose M here: the module will
+	  be called gpio-role-mux.
+
+config USB_ROLES_GPIO_MUX_KUNIT_TEST
+	tristate "KUnit tests for the GPIO USB role switch multiplexer" if !KUNIT_ALL_TESTS
+	depends on USB_ROLES_GPIO_MUX && KUNIT
+	default KUNIT_ALL_TESTS
+
 endif # USB_ROLE_SWITCH

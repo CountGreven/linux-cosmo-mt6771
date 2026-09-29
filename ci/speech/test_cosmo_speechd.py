@@ -104,6 +104,88 @@ class PcmParamsTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<I', b, 36), (4,))		# S16_LE
 
 
+class ShmTest(unittest.TestCase):
+    """formatShareMemory @0xa0900 and resetShareMemoryIndex @0xa0cf0 (speech-gen93.org 1.5)."""
+
+    def formatted(self):
+        buf = bytearray(b'\xff' * speechd.SHM_SIZE)
+        speechd.shm_format(buf)
+        return buf
+
+    def test_header_bytes(self):
+        buf = self.formatted()
+        self.assertEqual(bytes(buf[:0x20]), b'\x0a' * 32)
+        self.assertEqual(bytes(buf[0x20:0x80]), h(
+            '01000000 00000000'
+            '80000000 00300000 00000000 00000000'
+            '80300000 00200000 00000000 00000000'
+            '80500000 607f0000 00000000 00000000') + bytes(36) + h('7c000000'))
+
+    def test_rings_and_tail(self):
+        buf = self.formatted()
+        self.assertEqual(bytes(buf[0x80:0xCFE0]), bytes(0xCF60))
+        self.assertEqual(bytes(buf[0xCFE0:0xD000]), b'\x0a' * 32)
+        # the three rings tile the space between the header and the tail guard
+        end = 0x80
+        for off, size in speechd.SHM_REGIONS:
+            self.assertEqual(off, end)
+            end = off + size
+        self.assertEqual(end, speechd.SHM_TAIL)
+
+    def test_only_sph_shm_t(self):
+        buf = bytearray(b'\xff' * 0xE000)
+        speechd.shm_format(buf)
+        self.assertEqual(bytes(buf[0xD000:]), b'\xff' * 0x1000)
+        with self.assertRaises(ValueError):
+            speechd.shm_format(bytearray(0xC000))
+
+    def test_intact(self):
+        buf = self.formatted()
+        self.assertTrue(speechd.shm_intact(buf))
+        self.assertFalse(speechd.shm_intact(bytearray(speechd.SHM_SIZE)))
+        buf[0xCFFF] = 0
+        self.assertFalse(speechd.shm_intact(buf))
+
+    def test_reset_indices(self):
+        buf = self.formatted()
+        for k in range(3):
+            struct.pack_into('<II', buf, 0x30 + 16 * k, 5 + k, 9 + k)
+        struct.pack_into('<I', buf, 0x24, 2)		# modem reading
+        self.assertFalse(speechd.shm_reset_indices(buf))
+        self.assertEqual(struct.unpack_from('<II', buf, 0x30), (5, 9))
+        struct.pack_into('<I', buf, 0x24, 1)
+        self.assertTrue(speechd.shm_reset_indices(buf))
+        for k in range(3):
+            self.assertEqual(struct.unpack_from('<II', buf, 0x30 + 16 * k), (0, 0))
+        self.assertEqual(struct.unpack_from('<I', buf, 0x20), (1,))
+
+    def test_once_per_boot(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, 'shm_init')
+            buf = bytearray(speechd.SHM_SIZE)
+            ra = speechd.RawAudio(lambda s: None, None, marker, buf)
+            ra.ensure()
+            self.assertTrue(os.path.exists(marker))
+            struct.pack_into('<I', buf, 0x34, 0x40)		# live index survives a restart
+            speechd.RawAudio(lambda s: None, None, marker, buf).ensure()
+            self.assertEqual(struct.unpack_from('<I', buf, 0x34), (0x40,))
+            buf[:] = bytes(len(buf))			# cleared by the driver: format again
+            ra.ensure()
+            self.assertTrue(speechd.shm_intact(buf))
+
+
+class FakeShm:
+    def __init__(self, events):
+        self.events = events
+
+    def ensure(self):
+        self.events.append(('shm',))
+
+    def reset_indices(self):
+        self.events.append(('shm reset',))
+
+
 class FakePcm:
     def __init__(self):
         self.events = []
@@ -165,6 +247,13 @@ class SpeechTest(unittest.TestCase):
         self.assertEqual(self.sp.command('stop'), 'ok speech off')
         self.assertEqual(self.sent, [0x2F20, 0x2F02, 0x2F02, 0x2F02, 0x2F21])
         self.assertEqual(self.pcm.events, [('open', 32000), ('close',)])
+
+    def test_shm_before_sph_on(self):
+        self.sp.shm = FakeShm(self.pcm.events)
+        self.assertEqual(self.sp.command('start'), 'ok speech on at 32000 Hz')
+        self.assertEqual(self.pcm.events, [('shm',), ('open', 32000)])
+        self.assertEqual(self.sp.command('stop'), 'ok speech off')
+        self.assertEqual(self.pcm.events[2:], [('close',), ('shm reset',)])
 
     def test_rejects(self):
         self.assertTrue(self.sp.command('start 44100').startswith('error'))

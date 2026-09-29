@@ -14,7 +14,13 @@ Voice_MD1 PCM (device 3) is open in both directions.
   status, mailbox ID [P16 [P32]] (debugging: any mailbox, hex)
 
 The daemon answers MD_ALIVE, EPOF and network codec notifications whenever they come
-and logs every frame in hex. Commands go over /run/cosmo-speechd.sock; the same script
+and logs every frame in hex. Once the modem is ready (POLLOUT on /dev/ccci_aud) it maps
+/dev/ccci_raw_audio (SMEM_BASE, SMEM_LEN ioctls, 52 KiB) and formats it as the HAL's
+formatShareMemory: 0x0A guards at both ends, the sph_param, ap_data and md_data ring
+descriptors, checksum 0x7C, ap_flag bit0. Once per boot (/run/cosmo-speechd.shm_init),
+again if the header is found cleared; start formats it too if that has not happened
+yet, before SPH_ON. After the SPH_OFF ack the six ring indices go back to 0 unless the
+modem flags that it is reading. Commands go over /run/cosmo-speechd.sock; the same script
 is the client.
 
 The PCMs are opened with raw ALSA ioctls (hw_params, sw_params, prepare, start) and then
@@ -23,8 +29,8 @@ pointer never moves, so they would see a stalled stream after 10 s, and they nee
 pipe for no reason. The sw_params mark the playback buffer as endless silence so START
 does not fail for lack of data.
 
-Not done (see the spec's UNKNOWN list): the parameter blob, the raw audio share memory
-(ccci_raw_audio, not exposed by mtk_md), gains (2F00/2F01), device change (2F2B), BT.
+Not done (see the spec's UNKNOWN list): the parameter blob (the sph_param ring stays
+empty), gains (2F00/2F01), device change (2F2B), BT.
 
 Install
 -------
@@ -39,11 +45,16 @@ Phone test plan (one step at a time, check each result)
 1. Kernel with the Voice_MD1 link: aplay -l lists card cosmo device 3 "Voice_MD1".
    amixer -c cosmo cget name='PCM_2_PB_CH1 ADDA_UL_CH1' (and PCM_2_PB_CH2 ADDA_UL_CH2,
    ADDA_DL_CH1 PCM_2_CAP_CH1, ADDA_DL_CH2 PCM_2_CAP_CH1) all read on.
-   ls -l /dev/ccci_aud.
+   ls -l /dev/ccci_aud /dev/ccci_raw_audio.
 
 2. Daemon in the foreground, modem up: cosmo-speechd daemon. Look for rx frames from the
    modem (MD_ALIVE 0xAFA0 is expected after a modem boot; it is queued even if nobody had
-   the node open) and the tx MD_ALIVE_ACK.
+   the node open) and the tx MD_ALIVE_ACK. Then "/dev/ccci_raw_audio: base 0x...,
+   53248 bytes", "raw audio shm formatted" and a header line with ap_flag 0x1,
+   checksum 124, regions 0x80+0x3000 0x3080+0x2000 0x5080+0x7f60, all indices 0.
+   Note md_flag: bit0 set means the modem saw the memory (checkModemAlive); 0 is
+   UNKNOWN territory, record it. Restart the daemon: no second "formatted" line, the
+   same header.
 
 3. Output and mic routes, as UCM's Earpiece and Mic devices:
      amixer -c cosmo cset name='RCV Mux' 'Voice Playback'
@@ -57,7 +68,9 @@ Phone test plan (one step at a time, check each result)
 4. Dry run without a call: cosmo-speechd start. Expect "ok speech on at 32000 Hz", and
    in the daemon log SPH_ON_ACK (0xAF20) and MUTE_UL_ACK (0xAF02). PCM2_INTF_CON (AFE
    0x53c, /sys/kernel/debug/regmap/*afe*/registers) should read 0x57 at 32 kHz (0x4F at
-   16 kHz, 0x47 at 8 kHz). cosmo-speechd stop; expect SPH_OFF_ACK (0xAF21).
+   16 kHz, 0x47 at 8 kHz). cosmo-speechd stop; expect SPH_OFF_ACK (0xAF21) and no
+   "modem still reading" line. Compare the SPH_ON ack and any modem messages with a run
+   before this change (raw audio shm unformatted).
 
 5. Outgoing call. Without ModemManager, on the AT port:
      python3 ci/modem/atcmd.py 'ATD<number>;'

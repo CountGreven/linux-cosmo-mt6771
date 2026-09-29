@@ -6,7 +6,8 @@ The vendor audio HAL (SpeechDriverNormal, SpeechMessengerNormal) starts the mode
 with SPH_ON and stops it with SPH_OFF; the voice samples themselves run over the AFE PCM2
 interface, kept up by the card's hostless Voice_MD1 PCM. This is the minimal sequence of
 /storage/notes/projects/cosmo/hw-spec/speech-gen93.org section 3, without the parameter blob
-(sph_param_valid = 0) and without the raw audio share memory.
+(sph_param_valid = 0). The raw audio share memory (/dev/ccci_raw_audio) is formatted once per
+boot after the modem is ready, as the HAL does, and its ring indices are reset after SPH_OFF.
 
   cosmo-speechd.py daemon            serve /run/cosmo-speechd.sock, answer the modem at any time
   cosmo-speechd.py start [RATE]      PCMs up, SPH_ON, UL unmute (RATE 32000, 16000 or 8000)
@@ -19,7 +20,9 @@ interface, kept up by the card's hostless Voice_MD1 PCM. This is the minimal seq
 import argparse
 import errno
 import fcntl
+import mmap
 import os
+import select
 import signal
 import socket
 import struct
@@ -123,6 +126,120 @@ def cstr(b):
     return b.split(b'\0', 1)[0].decode('latin-1')
 
 
+# ---- raw audio share memory (sph_shm_t, speech-gen93.org 1.5) ------------------------------------
+
+CCCI_IOC_SMEM_BASE, CCCI_IOC_SMEM_LEN = 0x80044330, 0x80044331
+SHM_SIZE = 0xD000
+SHM_GUARD = b'\x0a' * 32
+SHM_TAIL = SHM_SIZE - len(SHM_GUARD)
+SHM_AP_FLAG, SHM_MD_FLAG, SHM_REGIONS_AT, SHM_CHECKSUM = 0x20, 0x24, 0x28, 0x7C
+SHM_REGIONS = ((0x80, 0x3000), (0x3080, 0x2000), (0x5080, 0x7F60))	# sph_param, ap_data, md_data
+SHM_FORMATTED, SHM_BUSY = 1, 2		# ap_flag bits; md_flag bit1 is the modem reading
+REGION = struct.Struct('<4I')		# offset, size, read_idx, write_idx
+
+
+def shm_format(buf):
+    """formatShareMemory @0xa0900, in its store order: ap_flag bit0 goes up last."""
+    if len(buf) < SHM_SIZE:
+        raise ValueError('share memory of %d bytes, sph_shm_t needs %d' % (len(buf), SHM_SIZE))
+    buf[0:len(SHM_GUARD)] = SHM_GUARD
+    struct.pack_into('<II', buf, SHM_AP_FLAG, 0, 0)
+    for k, (off, size) in enumerate(SHM_REGIONS):
+        REGION.pack_into(buf, SHM_REGIONS_AT + REGION.size * k, off, size, 0, 0)
+    struct.pack_into('<9I', buf, 0x58, *([0] * 9))
+    struct.pack_into('<I', buf, SHM_CHECKSUM, SHM_CHECKSUM)
+    for off, size in SHM_REGIONS:
+        buf[off:off + size] = bytes(size)
+    buf[SHM_TAIL:SHM_SIZE] = SHM_GUARD
+    ap = struct.unpack_from('<I', buf, SHM_AP_FLAG)[0]
+    struct.pack_into('<I', buf, SHM_AP_FLAG, ap | SHM_FORMATTED)
+
+
+def shm_header(buf):
+    ap, md = struct.unpack_from('<II', buf, SHM_AP_FLAG)
+    regions = [REGION.unpack_from(buf, SHM_REGIONS_AT + REGION.size * k) for k in range(3)]
+    return ap, md, regions, struct.unpack_from('<I', buf, SHM_CHECKSUM)[0]
+
+
+def shm_intact(buf):
+    if len(buf) < SHM_SIZE:
+        return False
+    ap, _, regions, checksum = shm_header(buf)
+    return (bytes(buf[:len(SHM_GUARD)]) == SHM_GUARD and bytes(buf[SHM_TAIL:SHM_SIZE]) == SHM_GUARD
+            and ap & SHM_FORMATTED and checksum == SHM_CHECKSUM
+            and [r[:2] for r in regions] == [tuple(r) for r in SHM_REGIONS])
+
+
+def shm_reset_indices(buf):
+    """resetShareMemoryIndex @0xa0cf0: all six indices to 0 unless the modem is reading."""
+    ap = struct.unpack_from('<I', buf, SHM_AP_FLAG)[0]
+    struct.pack_into('<I', buf, SHM_AP_FLAG, ap | SHM_BUSY)
+    ok = not struct.unpack_from('<I', buf, SHM_MD_FLAG)[0] & SHM_BUSY
+    if ok:
+        for k in range(3):
+            struct.pack_into('<II', buf, SHM_REGIONS_AT + REGION.size * k + 8, 0, 0)
+    ap = struct.unpack_from('<I', buf, SHM_AP_FLAG)[0]
+    struct.pack_into('<I', buf, SHM_AP_FLAG, ap & ~SHM_BUSY)
+    return ok
+
+
+class RawAudio:
+    """ccci_smem_get(): open, SMEM_BASE, SMEM_LEN, mmap the length; the fd stays open. The
+    vendor.audiohal.speech.shm_init property becomes a file in /run; a header that is not
+    intact (the driver cleared the memory since) is formatted again."""
+
+    def __init__(self, log, dev, marker, buf=None):
+        self.log, self.dev, self.marker, self.buf = log, dev, marker, buf
+        self.lock = threading.Lock()
+
+    def open(self):
+        fd = os.open(self.dev, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            arg = bytearray(4)
+            fcntl.ioctl(fd, CCCI_IOC_SMEM_BASE, arg, True)
+            base = struct.unpack('<I', arg)[0]
+            fcntl.ioctl(fd, CCCI_IOC_SMEM_LEN, arg, True)
+            length = struct.unpack('<I', arg)[0]
+            if length < SHM_SIZE:
+                raise ValueError('%s: %d bytes, sph_shm_t needs %d' % (self.dev, length, SHM_SIZE))
+            self.buf = mmap.mmap(fd, length, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        except (OSError, ValueError):
+            os.close(fd)
+            raise
+        self.fd = fd
+        self.log('%s: base %#x, %d bytes' % (self.dev, base, length))
+
+    def ensure(self):
+        with self.lock:
+            if self.buf is None:
+                self.open()
+            if not os.path.exists(self.marker) or not shm_intact(self.buf):
+                shm_format(self.buf)
+                with open(self.marker, 'w'):
+                    pass
+                self.log('raw audio shm formatted')
+            ap, md, regions, checksum = shm_header(self.buf)
+            self.log('raw audio shm ap_flag %#x md_flag %#x checksum %d, regions %s' % (
+                ap, md, checksum, ' '.join('%#x+%#x r%d w%d' % r for r in regions)))
+
+    def reset_indices(self):
+        with self.lock:
+            if self.buf is not None and not shm_reset_indices(self.buf):
+                self.log('raw audio shm: modem still reading, indices kept')
+
+
+def wait_modem_ready(fd, tries=3000):
+    """checkModemReady every 100 ms, as formatShareMemoryThread: mtk_md offers POLLOUT once
+    the modem is ready."""
+    p = select.poll()
+    p.register(fd, select.POLLOUT)
+    for _ in range(tries):
+        if p.poll(0):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 # ---- hostless PCM, straight ioctls ----------------------------------------------------------------
 
 UL = struct.calcsize('L')
@@ -216,8 +333,9 @@ class HostlessPcm:
 # ---- modem side -----------------------------------------------------------------------------------
 
 class Speech:
-    def __init__(self, fd, log, pcm, ack_timeout):
+    def __init__(self, fd, log, pcm, ack_timeout, shm=None):
         self.fd, self.log, self.pcm, self.ack_timeout = fd, log, pcm, ack_timeout
+        self.shm = shm
         self.cond = threading.Condition()
         self.acks = set()
         self.epof = False
@@ -313,6 +431,7 @@ class Speech:
             return 'error: speech already on at %d Hz' % self.rate
         if rate not in RATE_ENUM:
             return 'error: rate %d, want one of %s' % (rate, sorted(RATE_ENUM))
+        self.format_shm()
         try:
             self.pcm.open(rate)
         except OSError as e:
@@ -336,8 +455,24 @@ class Speech:
         self.pcm.close()
         if not self.mailbox(SPH_OFF):
             notes.append('SPH_OFF not acked')
+        elif self.shm:
+            self.shm.reset_indices()
         self.on = False
         return 'ok speech off' + ('' if not notes else ' (%s)' % ', '.join(notes))
+
+    def format_shm(self):
+        if not self.shm:
+            return
+        try:
+            self.shm.ensure()
+        except (OSError, ValueError) as e:
+            self.log('raw audio shm: %s' % e)
+
+    def format_shm_when_ready(self):
+        if wait_modem_ready(self.fd):
+            self.format_shm()
+        else:
+            self.log('modem not ready after 300 s, raw audio shm left for start')
 
     def mute(self, on):
         if not self.on:
@@ -382,8 +517,10 @@ def serve(a, log):
             time.sleep(0.5)
     log('opened %s' % a.dev)
     pcm = HostlessPcm(log, a.card, a.pcm, a.channels, a.period, 2)
-    sp = Speech(fd, log, pcm, a.ack_timeout)
+    shm = RawAudio(log, a.raw_audio, a.shm_marker)
+    sp = Speech(fd, log, pcm, a.ack_timeout, shm)
     threading.Thread(target=sp.reader, daemon=True).start()
+    threading.Thread(target=sp.format_shm_when_ready, daemon=True).start()
 
     try:
         os.unlink(a.socket)
@@ -433,6 +570,9 @@ def main():
     ap.add_argument('cmd', choices=['daemon', 'start', 'stop', 'mute', 'status', 'mailbox'])
     ap.add_argument('args', nargs='*')
     ap.add_argument('--dev', default='/dev/ccci_aud')
+    ap.add_argument('--raw-audio', default='/dev/ccci_raw_audio')
+    ap.add_argument('--shm-marker', default='/run/cosmo-speechd.shm_init',
+                    help='present once the raw audio shm was formatted this boot')
     ap.add_argument('--socket', default='/run/cosmo-speechd.sock')
     ap.add_argument('--card', default='cosmo', help='ALSA card id or index')
     ap.add_argument('--pcm', type=int, default=3, help='Voice_MD1 PCM device number')

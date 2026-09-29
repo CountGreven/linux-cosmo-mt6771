@@ -58,8 +58,9 @@
 */
 static INT32 mtk_wmt_probe(struct platform_device *pdev);
 static void mtk_wmt_remove(struct platform_device *pdev);
-static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state);
-static INT32 mtk_wmt_resume(struct platform_device *pdev);
+static int mtk_wmt_suspend(struct device *dev);
+static int mtk_wmt_resume(struct device *dev);
+static DEFINE_SIMPLE_DEV_PM_OPS(mtk_wmt_pm_ops, mtk_wmt_suspend, mtk_wmt_resume);
 
 /*******************************************************************************
 *                            P U B L I C   D A T A
@@ -101,10 +102,9 @@ struct CONSYS_BASE_ADDRESS conn_reg;
 static struct platform_driver mtk_wmt_dev_drv = {
 	.probe = mtk_wmt_probe,
 	.remove = mtk_wmt_remove,
-	.suspend = mtk_wmt_suspend,
-	.resume = mtk_wmt_resume,
 	.driver = {
 		   .name = "mtk_wmt",
+		   .pm = pm_sleep_ptr(&mtk_wmt_pm_ops),
 		   .owner = THIS_MODULE,
 #ifdef CONFIG_OF
 		   .of_match_table = apwmt_of_ids,
@@ -267,12 +267,13 @@ static bool suspend_dump;
 module_param(suspend_dump, bool, 0644);
 MODULE_PARM_DESC(suspend_dump, "debug: log infracfg/SPM/DCXO state at suspend and resume");
 
-static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state)
+/* dev_pm_ops, not platform_driver.suspend: genpd only calls driver->pm */
+static int mtk_wmt_suspend(struct device *dev)
 {
 	WMT_STEP_DO_ACTIONS_FUNC(STEP_TRIGGER_POINT_WHEN_AP_SUSPEND);
 
 	/* CONNSYS runs on across AP suspend (vendor SPM keeps it powered): keep the CONN domain on */
-	device_set_awake_path(&pdev->dev);
+	device_set_awake_path(dev);
 
 	if (suspend_dump)
 		mtk_wcn_consys_suspend_dump("suspend");
@@ -280,7 +281,7 @@ static INT32 mtk_wmt_suspend(struct platform_device *pdev, pm_message_t state)
 	return 0;
 }
 
-static INT32 mtk_wmt_resume(struct platform_device *pdev)
+static int mtk_wmt_resume(struct device *dev)
 {
 	WMT_STEP_DO_ACTIONS_FUNC(STEP_TRIGGER_POINT_WHEN_AP_RESUME);
 

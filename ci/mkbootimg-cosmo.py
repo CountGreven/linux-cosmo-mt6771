@@ -62,7 +62,7 @@ CMDLINE = ("bootopt=64S3,32N2,64N2 log_buf_len=4M printk.disable_uart=1 "
            # The stock ATF maps PSCI SYSTEM_SUSPEND ("deep") to StateID 0, which skips its SPM suspend
            # hooks and parks the core in WFI with nothing to power it off or wake it. s2idle until a
            # driver arms the SPM (hw-spec/power.org, System suspend).
-           "mem_sleep_default=s2idle "
+           "mem_sleep_default=s2idle no_console_suspend "
            # To trace a restart that hangs, add: shutdown_trace=/dev/mmcblk0p42@32505856 (the last MiB of the
            # UBPORTS test slot; the image never reaches it). Read with dd bs=1M skip=31 + strings. Off by
            # default: it skips the eMMC's shutdown hooks and writes during the restart it observes.

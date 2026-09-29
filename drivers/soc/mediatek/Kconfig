@@ -111,4 +111,18 @@ config MTK_MT6771_MCDI_KUNIT_TEST
 	depends on KUNIT
 	default KUNIT_ALL_TESTS
 
+config MTK_MT6771_SLEEP
+	tristate "MediaTek MT6771 SPM deep sleep"
+	depends on ARM64 && SUSPEND && MTK_MT6771_MCDI && MFD_SYSCON && OF
+	help
+	  Arms the MT6771 SPM suspend firmware around PSCI SYSTEM_SUSPEND, as the vendor kernel
+	  does around its own suspend entry: SSPM notification, SPM flags and wake timer, MCDI
+	  task pause, and optionally the MT6358 low-power rail table. Does nothing until
+	  mtk_mt6771_sleep.deep_enable is set and "deep" is chosen in /sys/power/mem_sleep.
+
+config MTK_MT6771_SLEEP_KUNIT_TEST
+	tristate "KUnit tests for the MT6771 deep sleep helpers" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+
 endmenu

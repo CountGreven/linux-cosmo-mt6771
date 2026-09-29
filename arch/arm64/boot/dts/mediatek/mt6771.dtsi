@@ -35,21 +35,27 @@
  * cpuidle stays off: the vendor enters idle through MCDI in the SSPM, and whether this firmware
  * honours the plain PSCI states mt8183.dtsi describes is not established. The mt8183 OPP tables
  * stay: they equal the vendor's V5_4 speed bin and are at or above the V5_T bin at every point.
+ * A53 dynamic power: the vendor upower table gives 81.5 uW/MHz/V^2 at every OPP
+ * (mtk_unified_power_data_mt6771.h upower_tbl_l_FY4); the A73 value 211 already matches.
  */
 &cpu0 {
 	/delete-property/ cpu-idle-states;
+	dynamic-power-coefficient = <81>;
 };
 
 &cpu1 {
 	/delete-property/ cpu-idle-states;
+	dynamic-power-coefficient = <81>;
 };
 
 &cpu2 {
 	/delete-property/ cpu-idle-states;
+	dynamic-power-coefficient = <81>;
 };
 
 &cpu3 {
 	/delete-property/ cpu-idle-states;
+	dynamic-power-coefficient = <81>;
 };
 
 &cpu4 {

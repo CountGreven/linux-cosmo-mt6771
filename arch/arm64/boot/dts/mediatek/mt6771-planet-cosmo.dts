@@ -1087,6 +1087,9 @@
  * The vendor thermal policy budgets CPU and GPU power together; add the GPU to the SoC zone. The
  * vendor keeps at least 250 mW for the GPU (thermal.conf clatm min GPU): state 15 is 340 MHz, about
  * 243 mW with the power model above, so throttling stops there (state 13 in the 16-OPP SVS table).
+ * The vendor serves a busy GPU first and leaves the CPUs the rest, at least 635 mW
+ * (mtk_cooler_atm.c P_adaptive). Weight 6400: with all eight CPUs at 1989 MHz (weighted request
+ * 3982 mW) the GPU gets its full request once the budget exceeds it by 637 mW.
  */
 &cpu_thermal {
 	cooling-maps {
@@ -1097,7 +1100,7 @@
 #else
 			cooling-device = <&gpu THERMAL_NO_LIMIT 15>;
 #endif
-			contribution = <1024>;
+			contribution = <6400>;
 		};
 	};
 };

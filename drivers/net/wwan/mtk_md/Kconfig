@@ -20,6 +20,19 @@ config MTK_MD
 config MTK_MD_PROTO
 	tristate
 
+config MTK_CONN_MD
+	tristate "MediaTek connsys/modem message bridge (LTE coexistence)"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	help
+	  Routes the in-device coexistence (IDC) messages between the
+	  MT6771 modem and the CONNSYS Wi-Fi/Bluetooth core, as the
+	  vendor's conn_md does: the modem driver relays its LTE layer's
+	  IPC messages, the CONNSYS WMT core turns them into firmware
+	  commands and sends the firmware's Wi-Fi/Bluetooth channel
+	  reports back. Without it both radios work, uncoordinated.
+
+	  If unsure, say N.
+
 config MTK_MD_KUNIT_TEST
 	tristate "KUnit tests for the MT6771 modem protocol" if !KUNIT_ALL_TESTS
 	depends on KUNIT

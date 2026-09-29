@@ -18,6 +18,20 @@
  * kernel's mtk_pmic_info.h defines as PMIC6358_E2_CID_CODE. Otto Pflueger's tree includes it too. */
 #include "mt6358.dtsi"
 
+/*
+ * Power features prepared but not yet tested on the phone; 0 keeps the tested configuration.
+ * COSMO_CPU_OPP_V5T: 1 = this chip's V5_T CPU/CCI tables without L 2106 MHz, 2 = with it.
+ * COSMO_SENSOR_ZONES: 1 = per-sensor thermal zones (soc, gpu, md1, cpu-little, cpu-big).
+ * COSMO_SVS: 1 = mtk-svs; needs COSMO_CPU_OPP_V5T 2 (or 0) and COSMO_SENSOR_ZONES 1.
+ */
+#define COSMO_CPU_OPP_V5T	0
+#define COSMO_SENSOR_ZONES	0
+#define COSMO_SVS		0
+
+#if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
+#error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
+#endif
+
 / {
 	model = "Planet Computers Cosmo Communicator";
 	chassis-type = "handset";
@@ -1038,13 +1052,17 @@
 /*
  * The vendor thermal policy budgets CPU and GPU power together; add the GPU to the SoC zone. The
  * vendor keeps at least 250 mW for the GPU (thermal.conf clatm min GPU): state 15 is 340 MHz, about
- * 243 mW with the power model above, so throttling stops there.
+ * 243 mW with the power model above, so throttling stops there (state 13 in the 16-OPP SVS table).
  */
 &cpu_thermal {
 	cooling-maps {
 		map2 {
 			trip = <&target>;
+#if COSMO_SVS
+			cooling-device = <&gpu THERMAL_NO_LIMIT 13>;
+#else
 			cooling-device = <&gpu THERMAL_NO_LIMIT 15>;
+#endif
 			contribution = <1024>;
 		};
 	};
@@ -1061,6 +1079,12 @@
 		opp-hz = /bits/ 64 <900000000>;
 		opp-microvolt = <900000>;
 	};
+
+#if COSMO_SVS
+	/* the SVS GPU bank needs exactly 16 OPPs; segment 4 has neither of these (mtk_gpufreq_core.h:182-231) */
+	/delete-node/ opp-360000000;
+	/delete-node/ opp-400000000;
+#endif
 };
 
 /*
@@ -1620,6 +1644,339 @@
 &cpu7 {
 	proc-supply = <&mt6358_vproc11_reg>;
 };
+
+/*
+ * This chip's speed bin is V5_T (efuse turbo bit, vendor log "[Power/cpufreq] 6"). Tables from
+ * mtk_cpufreq_opp_table.h:472-561: LL and CCI take the VPROC1 column, L the VPROC2 column. mt8183.dtsi
+ * carries V5_4, at or above these voltages everywhere but without L 1651 and 2106 MHz.
+ */
+/ {
+	cluster0_opp_v5t: opp-table-cluster0v5t {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-793000000 {
+			opp-hz = /bits/ 64 <793000000>;
+			opp-microvolt = <600000>;
+			required-opps = <&cci_v5t_15>;
+		};
+		opp-910000000 {
+			opp-hz = /bits/ 64 <910000000>;
+			opp-microvolt = <637500>;
+			required-opps = <&cci_v5t_14>;
+		};
+		opp-1014000000 {
+			opp-hz = /bits/ 64 <1014000000>;
+			opp-microvolt = <668750>;
+			required-opps = <&cci_v5t_13>;
+		};
+		opp-1131000000 {
+			opp-hz = /bits/ 64 <1131000000>;
+			opp-microvolt = <706250>;
+			required-opps = <&cci_v5t_12>;
+		};
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <737500>;
+			required-opps = <&cci_v5t_11>;
+		};
+		opp-1326000000 {
+			opp-hz = /bits/ 64 <1326000000>;
+			opp-microvolt = <768750>;
+			required-opps = <&cci_v5t_10>;
+		};
+		opp-1417000000 {
+			opp-hz = /bits/ 64 <1417000000>;
+			opp-microvolt = <800000>;
+			required-opps = <&cci_v5t_09>;
+		};
+		opp-1508000000 {
+			opp-hz = /bits/ 64 <1508000000>;
+			opp-microvolt = <818750>;
+			required-opps = <&cci_v5t_08>;
+		};
+		opp-1586000000 {
+			opp-hz = /bits/ 64 <1586000000>;
+			opp-microvolt = <843750>;
+			required-opps = <&cci_v5t_07>;
+		};
+		opp-1625000000 {
+			opp-hz = /bits/ 64 <1625000000>;
+			opp-microvolt = <856250>;
+			required-opps = <&cci_v5t_06>;
+		};
+		opp-1677000000 {
+			opp-hz = /bits/ 64 <1677000000>;
+			opp-microvolt = <881250>;
+			required-opps = <&cci_v5t_05>;
+		};
+		opp-1716000000 {
+			opp-hz = /bits/ 64 <1716000000>;
+			opp-microvolt = <893750>;
+			required-opps = <&cci_v5t_04>;
+		};
+		opp-1781000000 {
+			opp-hz = /bits/ 64 <1781000000>;
+			opp-microvolt = <925000>;
+			required-opps = <&cci_v5t_03>;
+		};
+		opp-1846000000 {
+			opp-hz = /bits/ 64 <1846000000>;
+			opp-microvolt = <950000>;
+			required-opps = <&cci_v5t_02>;
+		};
+		opp-1924000000 {
+			opp-hz = /bits/ 64 <1924000000>;
+			opp-microvolt = <975000>;
+			required-opps = <&cci_v5t_01>;
+		};
+		opp-1989000000 {
+			opp-hz = /bits/ 64 <1989000000>;
+			opp-microvolt = <1000000>;
+			required-opps = <&cci_v5t_00>;
+		};
+	};
+
+	/*
+	 * CCI for an L OPP: the fastest CCI OPP whose (LL column) voltage does not exceed the L
+	 * voltage, as the vendor AP path picks it (mtk_cpufreq_main.c:182-205).
+	 */
+	cluster1_opp_v5t: opp-table-cluster1v5t {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-793000000 {
+			opp-hz = /bits/ 64 <793000000>;
+			opp-microvolt = <675000>;
+			required-opps = <&cci_v5t_14>;
+		};
+		opp-910000000 {
+			opp-hz = /bits/ 64 <910000000>;
+			opp-microvolt = <700000>;
+			required-opps = <&cci_v5t_13>;
+		};
+		opp-1014000000 {
+			opp-hz = /bits/ 64 <1014000000>;
+			opp-microvolt = <725000>;
+			required-opps = <&cci_v5t_12>;
+		};
+		opp-1131000000 {
+			opp-hz = /bits/ 64 <1131000000>;
+			opp-microvolt = <750000>;
+			required-opps = <&cci_v5t_11>;
+		};
+		opp-1248000000 {
+			opp-hz = /bits/ 64 <1248000000>;
+			opp-microvolt = <775000>;
+			required-opps = <&cci_v5t_10>;
+		};
+		opp-1326000000 {
+			opp-hz = /bits/ 64 <1326000000>;
+			opp-microvolt = <800000>;
+			required-opps = <&cci_v5t_09>;
+		};
+		opp-1417000000 {
+			opp-hz = /bits/ 64 <1417000000>;
+			opp-microvolt = <825000>;
+			required-opps = <&cci_v5t_08>;
+		};
+		opp-1508000000 {
+			opp-hz = /bits/ 64 <1508000000>;
+			opp-microvolt = <850000>;
+			required-opps = <&cci_v5t_07>;
+		};
+		opp-1586000000 {
+			opp-hz = /bits/ 64 <1586000000>;
+			opp-microvolt = <875000>;
+			required-opps = <&cci_v5t_06>;
+		};
+		opp-1651000000 {
+			opp-hz = /bits/ 64 <1651000000>;
+			opp-microvolt = <900000>;
+			required-opps = <&cci_v5t_04>;
+		};
+		opp-1716000000 {
+			opp-hz = /bits/ 64 <1716000000>;
+			opp-microvolt = <925000>;
+			required-opps = <&cci_v5t_03>;
+		};
+		opp-1781000000 {
+			opp-hz = /bits/ 64 <1781000000>;
+			opp-microvolt = <950000>;
+			required-opps = <&cci_v5t_02>;
+		};
+		opp-1846000000 {
+			opp-hz = /bits/ 64 <1846000000>;
+			opp-microvolt = <975000>;
+			required-opps = <&cci_v5t_01>;
+		};
+		opp-1924000000 {
+			opp-hz = /bits/ 64 <1924000000>;
+			opp-microvolt = <1000000>;
+			required-opps = <&cci_v5t_00>;
+		};
+		opp-1989000000 {
+			opp-hz = /bits/ 64 <1989000000>;
+			opp-microvolt = <1025000>;
+			required-opps = <&cci_v5t_00>;
+		};
+		/* turbo bin OPP0: the vendor pins it to cpu_t_volt 1050 mV (mtk_eem.c:1579-1580) */
+		opp-2106000000 {
+			opp-hz = /bits/ 64 <2106000000>;
+			opp-microvolt = <1050000>;
+			required-opps = <&cci_v5t_00>;
+#if COSMO_CPU_OPP_V5T == 1
+			/* no supported-hw set by mediatek-cpufreq, so the OPP core skips this OPP */
+			opp-supported-hw = <0>;
+#endif
+		};
+	};
+
+	cci_opp_v5t: opp-table-cciv5t {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		cci_v5t_15: opp-273000000 {
+			opp-hz = /bits/ 64 <273000000>;
+			opp-microvolt = <600000>;
+		};
+		cci_v5t_14: opp-338000000 {
+			opp-hz = /bits/ 64 <338000000>;
+			opp-microvolt = <637500>;
+		};
+		cci_v5t_13: opp-403000000 {
+			opp-hz = /bits/ 64 <403000000>;
+			opp-microvolt = <668750>;
+		};
+		cci_v5t_12: opp-481000000 {
+			opp-hz = /bits/ 64 <481000000>;
+			opp-microvolt = <706250>;
+		};
+		cci_v5t_11: opp-546000000 {
+			opp-hz = /bits/ 64 <546000000>;
+			opp-microvolt = <737500>;
+		};
+		cci_v5t_10: opp-624000000 {
+			opp-hz = /bits/ 64 <624000000>;
+			opp-microvolt = <768750>;
+		};
+		cci_v5t_09: opp-689000000 {
+			opp-hz = /bits/ 64 <689000000>;
+			opp-microvolt = <800000>;
+		};
+		cci_v5t_08: opp-767000000 {
+			opp-hz = /bits/ 64 <767000000>;
+			opp-microvolt = <818750>;
+		};
+		cci_v5t_07: opp-845000000 {
+			opp-hz = /bits/ 64 <845000000>;
+			opp-microvolt = <843750>;
+		};
+		cci_v5t_06: opp-871000000 {
+			opp-hz = /bits/ 64 <871000000>;
+			opp-microvolt = <856250>;
+		};
+		cci_v5t_05: opp-923000000 {
+			opp-hz = /bits/ 64 <923000000>;
+			opp-microvolt = <881250>;
+		};
+		cci_v5t_04: opp-962000000 {
+			opp-hz = /bits/ 64 <962000000>;
+			opp-microvolt = <893750>;
+		};
+		cci_v5t_03: opp-1027000000 {
+			opp-hz = /bits/ 64 <1027000000>;
+			opp-microvolt = <925000>;
+		};
+		cci_v5t_02: opp-1092000000 {
+			opp-hz = /bits/ 64 <1092000000>;
+			opp-microvolt = <950000>;
+		};
+		cci_v5t_01: opp-1144000000 {
+			opp-hz = /bits/ 64 <1144000000>;
+			opp-microvolt = <975000>;
+		};
+		cci_v5t_00: opp-1196000000 {
+			opp-hz = /bits/ 64 <1196000000>;
+			opp-microvolt = <1000000>;
+		};
+	};
+};
+
+#if COSMO_CPU_OPP_V5T
+&cci {
+	operating-points-v2 = <&cci_opp_v5t>;
+};
+
+&cpu0 {
+	operating-points-v2 = <&cluster0_opp_v5t>;
+};
+
+&cpu1 {
+	operating-points-v2 = <&cluster0_opp_v5t>;
+};
+
+&cpu2 {
+	operating-points-v2 = <&cluster0_opp_v5t>;
+};
+
+&cpu3 {
+	operating-points-v2 = <&cluster0_opp_v5t>;
+};
+
+&cpu4 {
+	operating-points-v2 = <&cluster1_opp_v5t>;
+};
+
+&cpu5 {
+	operating-points-v2 = <&cluster1_opp_v5t>;
+};
+
+&cpu6 {
+	operating-points-v2 = <&cluster1_opp_v5t>;
+};
+
+&cpu7 {
+	operating-points-v2 = <&cluster1_opp_v5t>;
+};
+#endif
+
+/*
+ * Per-sensor zones from mt8183.dtsi (TSn is the vendor TS_MCUn: same mux codes, mtk_tc.c:97-118 and
+ * tscpu_settings.h:173-177). tsabb stays off: mainline muxes it with code 0 (the MCU1 point) where
+ * the vendor uses 0x10 (tscpu_settings.h:178).
+ */
+#if !COSMO_SENSOR_ZONES
+&tzts1 {
+	status = "disabled";
+};
+
+&tzts2 {
+	status = "disabled";
+};
+
+&tzts3 {
+	status = "disabled";
+};
+
+&tzts4 {
+	status = "disabled";
+};
+
+&tzts5 {
+	status = "disabled";
+};
+#endif
+
+&tztsABB {
+	status = "disabled";
+};
+
+#if !COSMO_SVS
+&svs {
+	status = "disabled";
+};
+#endif
 
 /*
  * Audio (hw-spec/audio.org). The speakers are fed from the codec headphone buffer through two

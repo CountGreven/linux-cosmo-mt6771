@@ -33,7 +33,7 @@
 #define COSMO_SVS		0
 #define COSMO_CPUIDLE		2
 #define COSMO_VCODEC		0
-#define COSMO_RIGHT_USB		0
+#define COSMO_RIGHT_USB		1
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"

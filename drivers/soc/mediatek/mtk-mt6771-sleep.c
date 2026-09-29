@@ -235,7 +235,6 @@ static void slp_syscore_resume(void *data)
 	slp->armed = false;
 
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND_FINISH, 0, 0);
-	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
 	slp_rgu_spm_wdt(false);
 	/* SW_RSV_0 is the firmware's copy of R12, the wake event bits */
@@ -243,6 +242,7 @@ static void slp_syscore_resume(void *data)
 	slp->wake_sta = slp_spm_read(SPM_WAKEUP_STA);
 	slp->wake_r13 = slp_spm_read(SPM_PCM_REG13_DATA);
 	slp->wake_r15 = slp_spm_read(SPM_PCM_REG15_DATA);
+	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
 
 	ret = slp_sspm_send(SLP_SSPM_RESUME);
 	if (ret)

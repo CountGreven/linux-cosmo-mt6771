@@ -150,6 +150,7 @@ struct mtk_dpi_factor {
  *		     for DPI registers access.
  * @output_1pixel: Enable outputting one pixel per round; if the input is two pixel per
  *                 round, the DPI hardware will internally transform it to 1T1P.
+ * @ck_pol_rising: Output the pixel clock with rising polarity instead of falling.
  */
 struct mtk_dpi_conf {
 	const struct mtk_dpi_factor *dpi_factor;
@@ -172,6 +173,7 @@ struct mtk_dpi_conf {
 	bool edge_cfg_in_mmsys;
 	bool clocked_by_hdmi;
 	bool output_1pixel;
+	bool ck_pol_rising;
 };
 
 static void mtk_dpi_mask(struct mtk_dpi *dpi, u32 offset, u32 val, u32 mask)
@@ -615,7 +617,8 @@ static int mtk_dpi_set_display_mode(struct mtk_dpi *dpi,
 	if (!dpi->conf->clocked_by_hdmi)
 		mtk_dpi_set_pixel_clk(dpi, &vm, mode->clock);
 
-	dpi_pol.ck_pol = MTK_DPI_POLARITY_FALLING;
+	dpi_pol.ck_pol = dpi->conf->ck_pol_rising ? MTK_DPI_POLARITY_RISING :
+						    MTK_DPI_POLARITY_FALLING;
 	dpi_pol.de_pol = MTK_DPI_POLARITY_RISING;
 	dpi_pol.hsync_pol = vm.flags & DISPLAY_FLAGS_HSYNC_HIGH ?
 			    MTK_DPI_POLARITY_FALLING : MTK_DPI_POLARITY_RISING;
@@ -1181,7 +1184,7 @@ static const struct mtk_dpi_conf mt8183_conf = {
 	.csc_enable_bit = CSC_ENABLE,
 };
 
-/* MT6771 is MT8183 silicon; its vendor kernel drives 1080p60 at 148.5 MHz */
+/* MT6771 is MT8183 silicon; its vendor kernel drives 1080p60 at 148.5 MHz with a rising clock */
 static const struct mtk_dpi_conf mt6771_conf = {
 	.dpi_factor = dpi_factor_mt8183,
 	.num_dpi_factor = ARRAY_SIZE(dpi_factor_mt8183),
@@ -1198,6 +1201,7 @@ static const struct mtk_dpi_conf mt6771_conf = {
 	.channel_swap_shift = CH_SWAP,
 	.yuv422_en_bit = YUV422_EN,
 	.csc_enable_bit = CSC_ENABLE,
+	.ck_pol_rising = true,
 };
 
 static const struct mtk_dpi_conf mt8186_conf = {

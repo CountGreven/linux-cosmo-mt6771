@@ -98,7 +98,7 @@ def main():
         try:
             termios.tcflush(fd, termios.TCIFLUSH)
             out = frame(CMD_SYNC_RIGHT_USB_OTG_STATUS, args.status)
-            print("tx " + out.hex(" "))
+            print("tx " + " ".join("%02x" % b for b in out))
             os.write(fd, out)
             termios.tcdrain(fd)
 
@@ -113,7 +113,7 @@ def main():
                     chunk = os.read(fd, 4096)
                     if chunk:
                         rx += chunk
-            print("rx " + (rx.hex(" ") if rx else "(nothing in 1 s)"))
+            print("rx " + (" ".join("%02x" % b for b in rx) if rx else "(nothing in 1 s)"))
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, old)
             fcntl.ioctl(fd, termios.TIOCNXCL)

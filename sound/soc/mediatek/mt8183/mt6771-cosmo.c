@@ -173,6 +173,16 @@ SND_SOC_DAILINK_DEFS(hostless_fm,
 	DAILINK_COMP_ARRAY(COMP_DUMMY()),
 	DAILINK_COMP_ARRAY(COMP_EMPTY()));
 
+SND_SOC_DAILINK_DEFS(voice_md1,
+	DAILINK_COMP_ARRAY(COMP_CPU("Hostless Speech DAI")),
+	DAILINK_COMP_ARRAY(COMP_DUMMY()),
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
+
+SND_SOC_DAILINK_DEFS(pcm2,
+	DAILINK_COMP_ARRAY(COMP_CPU("PCM 2")),
+	DAILINK_COMP_ARRAY(COMP_DUMMY()),
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
+
 SND_SOC_DAILINK_DEFS(hw_gain1,
 	DAILINK_COMP_ARRAY(COMP_CPU("HW Gain 1")),
 	DAILINK_COMP_ARRAY(COMP_DUMMY()),
@@ -216,6 +226,16 @@ static struct snd_soc_dai_link cosmo_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(hostless_fm),
 	},
+	/* Voice call: open both directions to run the mic to the modem and the modem to the DAC */
+	{
+		.name = "Voice_MD1",
+		.stream_name = "Voice_MD1",
+		.trigger = { SND_SOC_DPCM_TRIGGER_PRE, SND_SOC_DPCM_TRIGGER_PRE },
+		.dynamic = 1,
+		.dpcm_merged_rate = 1,
+		.ignore_suspend = 1,
+		SND_SOC_DAILINK_REG(voice_md1),
+	},
 	/* BE */
 	{
 		.name = "Primary Codec",
@@ -236,7 +256,46 @@ static struct snd_soc_dai_link cosmo_dai_links[] = {
 		.ignore_suspend = 1,
 		SND_SOC_DAILINK_REG(connsys_i2s),
 	},
+	{
+		.name = "PCM 2",
+		.no_pcm = 1,
+		.ignore_suspend = 1,
+		SND_SOC_DAILINK_REG(pcm2),
+	},
 };
+
+/*
+ * Vendor Voice MD1 connections: I03/I04 to O17/O18 and I14 to O03/O04. The switches only take
+ * effect while the Voice_MD1 front end runs.
+ */
+static const char * const cosmo_voice_switches[] = {
+	"PCM_2_PB_CH1 ADDA_UL_CH1",
+	"PCM_2_PB_CH2 ADDA_UL_CH2",
+	"ADDA_DL_CH1 PCM_2_CAP_CH1",
+	"ADDA_DL_CH2 PCM_2_CAP_CH1",
+};
+
+static void cosmo_voice_defaults(struct snd_soc_card *card)
+{
+	struct snd_ctl_elem_value *val;
+	struct snd_kcontrol *kctl;
+	int i;
+
+	val = kzalloc_obj(*val);
+	if (!val)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(cosmo_voice_switches); i++) {
+		kctl = snd_soc_card_get_kcontrol(card, cosmo_voice_switches[i]);
+		if (!kctl) {
+			dev_warn(card->dev, "no control %s\n", cosmo_voice_switches[i]);
+			continue;
+		}
+		val->value.integer.value[0] = 1;
+		kctl->put(kctl, val);
+	}
+	kfree(val);
+}
 
 static int cosmo_late_probe(struct snd_soc_card *card)
 {
@@ -248,6 +307,7 @@ static int cosmo_late_probe(struct snd_soc_card *card)
 
 	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch INR");
 	snd_soc_dapm_disable_pin(dapm, "Earpiece Switch OUTR");
+	cosmo_voice_defaults(card);
 
 	if (priv->accdet) {
 		ret = snd_soc_card_jack_new_pins(card, "Headset Jack", SND_JACK_HEADSET |

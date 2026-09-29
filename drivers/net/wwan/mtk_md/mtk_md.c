@@ -37,6 +37,7 @@
 #include <linux/slab.h>
 #include <linux/sizes.h>
 #include <linux/skbuff.h>
+#include <linux/soc/mediatek/mtk_conn_md.h>
 #include <linux/wwan.h>
 #include <linux/netdevice.h>
 #include <linux/if_arp.h>
@@ -1580,6 +1581,104 @@ static void mtk_md_sys_rx(struct mtk_md *md, const struct mtk_md_ccci_hdr *h)
 	}
 }
 
+#if IS_ENABLED(CONFIG_MTK_CONN_MD)
+/* the bridge's handlers carry no context; it serves one modem, MD1, as in the vendor */
+static struct mtk_md *mtk_md_conn;
+
+/* port_ipc_kernel_thread(): messages for the WMT task go to the connsys bridge */
+static bool mtk_md_ipc_rx(struct mtk_md *md, const u8 *msg, u32 len)
+{
+	struct mtk_md_ipc_msg ipc;
+	struct mtk_conn_md_ilm ilm;
+
+	if (mtk_md_ipc_parse(msg, len, &ipc)) {
+		dev_warn_ratelimited(md->dev, "ipc: malformed message (%u bytes)\n", len);
+		return false;
+	}
+	if (ipc.dest != MTK_CONN_MD_AP_WMT)
+		return false;
+
+	ilm = (struct mtk_conn_md_ilm) {
+		.src_mod_id = ipc.src, .dest_mod_id = ipc.dest, .sap_id = ipc.sap,
+		.msg_id = ipc.msg_id, .local_para_ptr = (struct mtk_conn_md_para *)ipc.para,
+	};
+	mtk_md_trace(md, "ipc: %#x from module %u to WMT, %u bytes\n", ipc.msg_id, ipc.src,
+		     ipc.para_len);
+	mtk_conn_md_bridge_send_msg(&ilm);
+	return true;
+}
+
+/* ccci_ipc_send_ilm_to_md1(): what the bridge has for the modem's EL1 */
+static int mtk_md_ipc_from_conn(struct mtk_conn_md_ilm *ilm)
+{
+	struct mtk_md *md = mtk_md_conn;
+	struct mtk_md_ipc_msg ipc = {
+		.src = ilm->src_mod_id, .dest = ilm->dest_mod_id, .sap = ilm->sap_id,
+		.msg_id = ilm->msg_id, .para = (const u8 *)ilm->local_para_ptr,
+		.para_len = ilm->local_para_ptr->msg_len,
+	};
+	size_t size = sizeof(struct mtk_md_ccci_hdr) + MTK_MD_IPC_ILM_LEN + ipc.para_len;
+	u8 *buf;
+	int ret;
+
+	/* port_send_skb_to_md(): no IPC before the modem is ready; the vendor drops it too */
+	if (!md->ready) {
+		dev_dbg_ratelimited(md->dev, "ipc: %#x for module %u before ready, dropped\n",
+				    ipc.msg_id, ipc.dest);
+		return -ENODEV;
+	}
+	buf = kmalloc(size, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+	ret = mtk_md_ipc_build(buf, size, &ipc);
+	if (ret > 0)
+		ret = mtk_md_send(md, MTK_MD_IPC_Q, buf, ret);
+	kfree(buf);
+	if (ret < 0)
+		dev_warn_ratelimited(md->dev, "ipc: %#x for module %u not sent: %d\n",
+				     ipc.msg_id, ipc.dest, ret);
+	else
+		mtk_md_trace(md, "ipc: %#x from WMT to module %u, %u bytes\n", ipc.msg_id,
+			     ipc.dest, ipc.para_len);
+	return ret < 0 ? ret : 0;
+}
+
+static void mtk_md_conn_unregister(void *data)
+{
+	mtk_conn_md_bridge_unreg(MTK_CONN_MD_MD_EL1);
+	mtk_md_conn = NULL;
+}
+
+/* port_ipc_init(): the modem side registers EL1 with the bridge, whatever the modem's state */
+static int mtk_md_conn_register(struct mtk_md *md)
+{
+	static const struct mtk_conn_md_ops ops = { .rx_cb = mtk_md_ipc_from_conn };
+	int ret;
+
+	if (mtk_md_conn) {
+		dev_warn(md->dev, "ipc: the connsys bridge already has a modem\n");
+		return 0;
+	}
+	mtk_md_conn = md;
+	ret = mtk_conn_md_bridge_reg(MTK_CONN_MD_MD_EL1, &ops);
+	if (ret) {
+		mtk_md_conn = NULL;
+		return ret;
+	}
+	return devm_add_action_or_reset(md->dev, mtk_md_conn_unregister, md);
+}
+#else
+static bool mtk_md_ipc_rx(struct mtk_md *md, const u8 *msg, u32 len)
+{
+	return false;
+}
+
+static int mtk_md_conn_register(struct mtk_md *md)
+{
+	return 0;
+}
+#endif
+
 /* port_char_recv_skb() and port_recv_skb() for the vendor char ports */
 static bool mtk_md_cport_rx(struct mtk_md *md, u32 ch, const u8 *msg, u32 len)
 {
@@ -1963,6 +2062,9 @@ static void mtk_md_rx_one(struct mtk_md *md, unsigned int q, const u8 *msg, u32 
 		mtk_md_sys_rx(md, h);
 		return;
 	}
+
+	if (ch == MTK_MD_CH_IPC_RX && mtk_md_ipc_rx(md, msg, len))
+		return;
 
 	if (mtk_md_cport_rx(md, ch, msg, len))
 		return;
@@ -2567,6 +2669,10 @@ static int mtk_md_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	ret = mtk_md_conn_register(md);
+	if (ret)
+		return dev_err_probe(dev, ret, "connsys bridge\n");
+
 	platform_set_drvdata(pdev, md);
 	dev_info(dev, "starting the modem\n");
 	schedule_work(&md->start_work);
@@ -2588,5 +2694,8 @@ static struct platform_driver mtk_md_driver = {
 };
 module_platform_driver(mtk_md_driver);
 
+#if IS_ENABLED(CONFIG_MTK_CONN_MD)
+MODULE_IMPORT_NS("MTK_CONN_MD");
+#endif
 MODULE_DESCRIPTION("MediaTek MT6771 integrated modem");
 MODULE_LICENSE("GPL");

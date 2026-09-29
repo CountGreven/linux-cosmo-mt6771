@@ -4,6 +4,7 @@ config MTK_MD
 	tristate "MediaTek MT6771 integrated modem"
 	depends on ARCH_MEDIATEK || COMPILE_TEST
 	depends on OF && HAS_IOMEM && COMMON_CLK
+	depends on MTK_CONN_MD || !MTK_CONN_MD
 	select MTK_MD_PROTO
 	help
 	  Host side of the modem built into the MediaTek MT6771 (Helio P60/P70),

@@ -391,6 +391,29 @@
 	 * codi-app uses: 1 tab, 2 right, 3 left, 7 fourth group. Current range 1/2 as the vendor sets
 	 * (CTL 0x02); RSTN is GPIO109, left low (chip in reset) by the boot loader.
 	 */
+	/*
+	 * Right USB-C port CC controller (vendor fusb301a@25, IRQ GPIO166). Disabled until the Type
+	 * register meaning is read on the phone with a charger and with a peripheral attached
+	 * (24-right-usb-codi-research.org), and the D+/D- mux on GPIO79 is modelled.
+	 */
+	typec@25 {
+		compatible = "fcs,fusb301";
+		reg = <0x25>;
+		interrupts-extended = <&pio 166 IRQ_TYPE_LEVEL_LOW>;
+		vbus-supply = <&mt6370_otg_vbus>;
+		status = "disabled";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C right";
+			power-role = "dual";
+			try-power-role = "sink";
+			data-role = "dual";
+			typec-power-opmode = "default";
+			pd-disable;
+		};
+	};
+
 	led-controller@5b {
 		compatible = "awinic,aw9524";
 		reg = <0x5b>;

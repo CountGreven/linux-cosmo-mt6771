@@ -31,7 +31,7 @@
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
 #define COSMO_SVS		0
-#define COSMO_CPUIDLE		0
+#define COSMO_CPUIDLE		2
 #define COSMO_VCODEC		0
 #define COSMO_RIGHT_USB		0
 

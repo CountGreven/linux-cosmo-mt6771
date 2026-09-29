@@ -1007,6 +1007,20 @@
 
 &gpu {
 	mali-supply = <&mt6358_vgpu_reg>;
+	#cooling-cells = <2>;
+	/* vendor GPU_ACT_REF_POWER 1285 mW at 900 MHz, 0.90 V (mtk_gpufreq_core.h:276-278) */
+	dynamic-power-coefficient = <1763>;
+};
+
+/* The vendor thermal policy budgets CPU and GPU power together; add the GPU to the SoC zone */
+&cpu_thermal {
+	cooling-maps {
+		map2 {
+			trip = <&target>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			contribution = <1024>;
+		};
+	};
 };
 
 /* Vendor speed segment 4 (efuse speed bound 2 with turbo) runs the GPU up to 900 MHz */

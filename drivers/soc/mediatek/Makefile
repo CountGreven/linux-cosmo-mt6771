@@ -10,3 +10,5 @@ obj-$(CONFIG_MTK_MMSYS) += mtk-mutex.o
 obj-$(CONFIG_MTK_SVS) += mtk-svs.o
 obj-$(CONFIG_MTK_SOCINFO) += mtk-socinfo.o
 obj-$(CONFIG_MTK_MT6771_CPU_PM) += mtk-mt6771-cpu-pm.o
+obj-$(CONFIG_MTK_MT6771_MCDI) += mtk-mt6771-mcdi.o
+obj-$(CONFIG_MTK_MT6771_MCDI_KUNIT_TEST) += mtk-mt6771-mcdi-test.o

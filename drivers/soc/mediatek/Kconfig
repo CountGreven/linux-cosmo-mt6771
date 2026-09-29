@@ -97,4 +97,18 @@ config MTK_MT6771_CPU_PM
 	  for it with a SiP call once the core is dead, or the core can never be brought back
 	  (hotplug and kexec both lose it). Say Y on MT6771 boards.
 
+config MTK_MT6771_MCDI
+	bool "MediaTek MT6771 SSPM multi-core deep idle"
+	depends on ARM64 && CPU_IDLE && HOTPLUG_CPU && OF
+	help
+	  Writes the SSPM MCDI mailbox init the MT6771 firmware relies on before a PSCI
+	  core-off idle state is used, keeps it current across CPU hotplug, and keeps the
+	  DT's deep idle states disabled until mtk_mt6771_mcdi.idle_cpus allows them.
+	  Built in so that this gate exists before the PSCI cpuidle driver registers.
+
+config MTK_MT6771_MCDI_KUNIT_TEST
+	tristate "KUnit tests for the MT6771 MCDI helpers" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+
 endmenu

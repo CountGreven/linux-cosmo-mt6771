@@ -1094,10 +1094,10 @@
  * mt8183.dtsi's nodes; the SoC block is the same one.
  *
  * All of it stays disabled. Type-C is on the MT6370's TCPC at i2c 0x4e (live.dts:3023 usb_type_c@4e), not
- * on the FUSB301A at i2c-3 0x25: that one is a Type-C CC controller the vendor uses to steer the USB3 lane
- * mux (pins 176 and 177, aeon_fusb301a_sw_sel/sw_en, live.dts:7454) and it has no mainline driver, so it
- * is not described. The TCPC has no separate i2c client in the mainline binding; it is the tcpc child of
- * the MT6370 node.
+ * on the FUSB301A at i2c-3 0x25: that one is the right port's CC controller, whose orientation the
+ * vendor uses to steer the HDMI lane switch (pins 176 and 177, aeon_fusb301a_sw_sel/sw_en, live.dts:7454;
+ * see the HDMI block at the end). The TCPC has no separate i2c client in the mainline binding; it is the
+ * tcpc child of the MT6370 node.
  */
 &u3phy {
 	/* on in mt8183.dtsi; nothing may power the PHY until the port above it is described and enabled */
@@ -1755,5 +1755,156 @@
 		aux-devs = <&speaker_amp1>, <&speaker_amp2>, <&earpiece_switch>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&aud_pins>;
+	};
+};
+
+/*
+ * HDMI out on the right USB-C port: DPI0 (12-bit dual edge) -> SiI9022A at i2c3 0x39 -> GPIO lane
+ * switch -> connector. Everything here is disabled until it is tested with a right-port HDMI adapter.
+ * The LK dtbo's sii9022_hdmi@39 and siiedid@50 land on i2c3_lkstub (ci/mkbootimg-cosmo.py), not on
+ * this bus; this node must not take the label "sii9022", which the dtbo sets to okay.
+ */
+/ {
+	/* vendor sil9022_1v2_en; it is the only bridge rail the vendor switches, left on by LK */
+	hdmi_1v2: regulator-hdmi-1v2 {
+		compatible = "regulator-fixed";
+		regulator-name = "hdmi_1v2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&pio 160 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		/* vendor: 70 ms from power on to reset release */
+		startup-delay-us = <70000>;
+		status = "disabled";
+	};
+
+	hdmi-connector {
+		compatible = "hdmi-connector";
+		label = "hdmi";
+		type = "a";
+		status = "disabled";
+
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&hdmi_bridge_out>;
+			};
+		};
+	};
+};
+
+&i2c3 {
+	hdmi_bridge: hdmi-bridge@39 {
+		compatible = "sil,sii9022";
+		reg = <0x39>;
+		interrupts-extended = <&pio 78 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&pio 159 GPIO_ACTIVE_LOW>;
+		iovcc-supply = <&hdmi_1v2>;
+		cvcc12-supply = <&hdmi_1v2>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hdmi_bridge_pins>;
+		status = "disabled";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				hdmi_bridge_in: endpoint {
+					bus-width = <12>;
+					remote-endpoint = <&dpi_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				hdmi_bridge_out: endpoint {
+					remote-endpoint = <&hdmi_connector_in>;
+				};
+			};
+		};
+	};
+};
+
+&dpi0 {
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&dpi_func_pins>;
+	pinctrl-1 = <&dpi_idle_pins>;
+	status = "disabled";
+};
+
+&dpi_out {
+	remote-endpoint = <&hdmi_bridge_in>;
+};
+
+&pio {
+	/*
+	 * Lane switch GPIO177 low (enabled), GPIO176 low: the vendor's state for an HDMI adapter at CC1
+	 * (Android usb_typec.c:335-343). CC2 needs GPIO176 high. Orientation is only known from the
+	 * FUSB301A, which has no driver yet, so this is fixed and is applied when the bridge probes.
+	 */
+	hdmi_bridge_pins: hdmi-bridge-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO78__FUNC_GPIO78>;
+			input-enable;
+			bias-disable;
+		};
+
+		pins-switch {
+			pinmux = <PINMUX_GPIO176__FUNC_GPIO176>,
+				 <PINMUX_GPIO177__FUNC_GPIO177>;
+			output-low;
+		};
+	};
+
+	/* vendor sil9022_dpi_func1 / sil9022_dpi_gpio: raw drive 7 is 16 mA */
+	dpi_func_pins: dpi-func-pins {
+		pins-dpi {
+			pinmux = <PINMUX_GPIO13__FUNC_DBPI_D0>,
+				 <PINMUX_GPIO14__FUNC_DBPI_D1>,
+				 <PINMUX_GPIO15__FUNC_DBPI_D2>,
+				 <PINMUX_GPIO16__FUNC_DBPI_D3>,
+				 <PINMUX_GPIO17__FUNC_DBPI_D4>,
+				 <PINMUX_GPIO18__FUNC_DBPI_D5>,
+				 <PINMUX_GPIO19__FUNC_DBPI_D6>,
+				 <PINMUX_GPIO20__FUNC_DBPI_D7>,
+				 <PINMUX_GPIO21__FUNC_DBPI_D8>,
+				 <PINMUX_GPIO22__FUNC_DBPI_D9>,
+				 <PINMUX_GPIO23__FUNC_DBPI_D10>,
+				 <PINMUX_GPIO24__FUNC_DBPI_D11>,
+				 <PINMUX_GPIO25__FUNC_DBPI_HSYNC>,
+				 <PINMUX_GPIO26__FUNC_DBPI_VSYNC>,
+				 <PINMUX_GPIO27__FUNC_DBPI_DE>,
+				 <PINMUX_GPIO28__FUNC_DBPI_CK>;
+			bias-disable;
+			drive-strength = <16>;
+		};
+	};
+
+	dpi_idle_pins: dpi-idle-pins {
+		pins-idle {
+			pinmux = <PINMUX_GPIO13__FUNC_GPIO13>,
+				 <PINMUX_GPIO14__FUNC_GPIO14>,
+				 <PINMUX_GPIO15__FUNC_GPIO15>,
+				 <PINMUX_GPIO16__FUNC_GPIO16>,
+				 <PINMUX_GPIO17__FUNC_GPIO17>,
+				 <PINMUX_GPIO18__FUNC_GPIO18>,
+				 <PINMUX_GPIO19__FUNC_GPIO19>,
+				 <PINMUX_GPIO20__FUNC_GPIO20>,
+				 <PINMUX_GPIO21__FUNC_GPIO21>,
+				 <PINMUX_GPIO22__FUNC_GPIO22>,
+				 <PINMUX_GPIO23__FUNC_GPIO23>,
+				 <PINMUX_GPIO24__FUNC_GPIO24>,
+				 <PINMUX_GPIO25__FUNC_GPIO25>,
+				 <PINMUX_GPIO26__FUNC_GPIO26>,
+				 <PINMUX_GPIO27__FUNC_GPIO27>,
+				 <PINMUX_GPIO28__FUNC_GPIO28>;
+			output-low;
+			bias-disable;
+			drive-strength = <16>;
+		};
 	};
 };

@@ -26,7 +26,9 @@ properties:
     maxItems: 1
 
   vbus-supply:
-    description: Regulator that provides VBUS when the port is a source.
+    description:
+      Regulator that provides VBUS when the port is a source. Omit it when
+      VBUS is switched by other hardware.
 
   connector:
     type: object
@@ -34,7 +36,9 @@ properties:
     unevaluatedProperties: false
     description:
       The managed USB Type-C connector. Since FUSB301 does not support
-      Power Delivery, the node should have the "pd-disable" property.
+      Power Delivery, the node should have the "pd-disable" property. A
+      graph link from port@0 to a USB role switch lets the driver switch
+      the controller to host when a sink is attached.
 
     properties:
       compatible:
@@ -47,7 +51,6 @@ required:
   - compatible
   - reg
   - interrupts
-  - vbus-supply
   - connector
 
 additionalProperties: false

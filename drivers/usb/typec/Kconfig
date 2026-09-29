@@ -120,6 +120,11 @@ config TYPEC_FUSB301
 	  If you choose to build this driver as a dynamically linked module, the
 	  module will be called fusb301.ko.
 
+config TYPEC_FUSB301_KUNIT_TEST
+	tristate "KUnit tests for the FUSB301 driver" if !KUNIT_ALL_TESTS
+	depends on TYPEC_FUSB301 && KUNIT
+	default KUNIT_ALL_TESTS
+
 source "drivers/usb/typec/mux/Kconfig"
 
 source "drivers/usb/typec/altmodes/Kconfig"

@@ -60,12 +60,70 @@ static void gpio_role_mux_test_forced(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, sel(N, N, NONE, 0), 0);
 }
 
+static struct gpio_role_mux_plan plan(enum usb_role a, enum usb_role b, int active,
+				      enum usb_role out)
+{
+	enum usb_role req[GPIO_ROLE_MUX_INPUTS] = { a, b };
+	struct gpio_role_mux_plan p;
+
+	gpio_role_mux_plan(req, active, AUTO, out, &p);
+	return p;
+}
+
+/*
+ * Vendor rows 6c and 7 (one shared tcpc_otg_attached): a left OTG device or charger leaving
+ * unloads xHCI under a working right host. Here the right host keeps the lines and the
+ * controller is never set to none.
+ */
+static void gpio_role_mux_test_left_detach_keeps_right_host(struct kunit *test)
+{
+	struct gpio_role_mux_plan p;
+
+	/* left OTG device arrives while the right hub is hosted */
+	p = plan(H, H, 1, H);
+	KUNIT_EXPECT_EQ(test, p.sel, 1);
+	KUNIT_EXPECT_EQ(test, p.role, H);
+	KUNIT_EXPECT_FALSE(test, p.drop);
+
+	/* and leaves */
+	p = plan(N, H, 1, H);
+	KUNIT_EXPECT_EQ(test, p.sel, 1);
+	KUNIT_EXPECT_EQ(test, p.role, H);
+	KUNIT_EXPECT_FALSE(test, p.drop);
+
+	/* left charger or PC leaves */
+	p = plan(N, H, 1, H);
+	KUNIT_EXPECT_FALSE(test, p.drop);
+	p = plan(D, H, 1, H);
+	KUNIT_EXPECT_EQ(test, p.sel, 1);
+	KUNIT_EXPECT_FALSE(test, p.drop);
+}
+
+/* Left host drops while the right one waits: the lines go right, the controller ends as host */
+static void gpio_role_mux_test_left_host_hands_over(struct kunit *test)
+{
+	struct gpio_role_mux_plan p;
+
+	p = plan(N, H, 0, H);
+	KUNIT_EXPECT_EQ(test, p.sel, 1);
+	KUNIT_EXPECT_EQ(test, p.role, H);
+	KUNIT_EXPECT_TRUE(test, p.drop);
+
+	/* nothing left on either side */
+	p = plan(N, N, 1, H);
+	KUNIT_EXPECT_EQ(test, p.sel, NONE);
+	KUNIT_EXPECT_EQ(test, p.role, N);
+	KUNIT_EXPECT_TRUE(test, p.drop);
+}
+
 static struct kunit_case gpio_role_mux_test_cases[] = {
 	KUNIT_CASE(gpio_role_mux_test_idle),
 	KUNIT_CASE(gpio_role_mux_test_first_come),
 	KUNIT_CASE(gpio_role_mux_test_host_beats_device),
 	KUNIT_CASE(gpio_role_mux_test_release),
 	KUNIT_CASE(gpio_role_mux_test_forced),
+	KUNIT_CASE(gpio_role_mux_test_left_detach_keeps_right_host),
+	KUNIT_CASE(gpio_role_mux_test_left_host_hands_over),
 	{}
 };
 

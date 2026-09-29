@@ -66,20 +66,31 @@ VISIBLE_IF_KUNIT int gpio_role_mux_select(const enum usb_role *req, int active, 
 }
 EXPORT_SYMBOL_IF_KUNIT(gpio_role_mux_select);
 
+VISIBLE_IF_KUNIT void gpio_role_mux_plan(const enum usb_role *req, int active, int forced,
+					 enum usb_role out_role, struct gpio_role_mux_plan *p)
+{
+	p->sel = gpio_role_mux_select(req, active, forced);
+	p->role = p->sel == GPIO_ROLE_MUX_NONE ? USB_ROLE_NONE : req[p->sel];
+	/* the controller's role is dropped before the data lines move */
+	p->drop = p->sel != active && out_role != USB_ROLE_NONE;
+}
+EXPORT_SYMBOL_IF_KUNIT(gpio_role_mux_plan);
+
 static int gpio_role_mux_apply(struct gpio_role_mux *mux)
 {
 	enum usb_role req[GPIO_ROLE_MUX_INPUTS];
+	struct gpio_role_mux_plan p;
 	enum usb_role role;
 	int i, sel, ret;
 
 	for (i = 0; i < GPIO_ROLE_MUX_INPUTS; i++)
 		req[i] = mux->in[i].req;
 
-	sel = gpio_role_mux_select(req, mux->active, mux->forced);
-	role = sel == GPIO_ROLE_MUX_NONE ? USB_ROLE_NONE : req[sel];
+	gpio_role_mux_plan(req, mux->active, mux->forced, mux->out_role, &p);
+	sel = p.sel;
+	role = p.role;
 
-	/* Drop the controller's role before the data lines move */
-	if (sel != mux->active && mux->out_role != USB_ROLE_NONE) {
+	if (p.drop) {
 		ret = usb_role_switch_set_role(mux->out, USB_ROLE_NONE);
 		if (ret)
 			return ret;

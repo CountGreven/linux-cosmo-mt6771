@@ -24,11 +24,13 @@
  * COSMO_SENSOR_ZONES: 1 = per-sensor thermal zones (soc, gpu, md1, cpu-little, cpu-big).
  * COSMO_SVS: 1 = mtk-svs; needs COSMO_CPU_OPP_V5T 2 (or 0) and COSMO_SENSOR_ZONES 1.
  * COSMO_CPUIDLE: 1 = PSCI core-off idle (vendor MCDI state), 2 = also cluster-off.
+ * COSMO_VCODEC: 1 = SCP runs mediatek/mt8183/scp.img instead of the LK-loaded sensor hub, with VDEC/VENC.
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
 #define COSMO_SVS		0
 #define COSMO_CPUIDLE		0
+#define COSMO_VCODEC		0
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
@@ -287,6 +289,18 @@
 			alignment = <0 0x200000>;
 			alloc-ranges = <0 0x40000000 0 0x80000000>;
 		};
+
+#if COSMO_VCODEC
+		/*
+		 * Fixed address: scp.img links its DRAM segment at physical 0x50000000. Size as every mt8183
+		 * board. Not in LK's mblock list, so its conflict check passes.
+		 */
+		scp_mem_reserved: memory@50000000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x50000000 0 0x2900000>;
+			no-map;
+		};
+#endif
 	};
 
 };
@@ -306,19 +320,39 @@
  * LK finds the SCP node by the vendor compatible "mediatek,scp" and reads its sram size from reg[0].
  * Without it: "[SCP] platform_fdt_scp: getting node from dtb fails". mt8183.dtsi's node already carries
  * the right reg -- sram at 0x10500000 size 0x80000, identical to the vendor tree (live:7006) -- so all
- * it needs is the name the bootloader looks for. The node stays disabled; LK only reads it.
+ * it needs is the name the bootloader looks for. Without COSMO_VCODEC the node stays disabled.
  */
 &scp {
 	compatible = "mediatek,mt8183-scp", "mediatek,scp";
 
+#if COSMO_VCODEC
 	/*
-	 * LK reserves the SCP firmware region itself -- SCP-reserved at 0x9cf00000 in its own
-	 * mblock_reserve list -- and rejects the whole device tree if we declare it a second time. So drop
-	 * mt8183.dtsi's reference rather than duplicate LK's region. The node is disabled here in any case;
-	 * when SCP is actually brought up, take the region from what LK injects rather than declaring one.
+	 * Same CM4 SCP as MT8183: IPC, reset, clock-control and cache registers at the same offsets
+	 * (vendor scp/mt6771/scp_reg.h). mtk_scp boots it at probe, replacing LK's sensor hub image.
+	 */
+	firmware-name = "mediatek/mt8183/scp.img";
+	status = "okay";
+#else
+	/*
+	 * LK reserves its own SCP image region (SCP-reserved at 0x9cf00000, in its own
+	 * mblock_reserve list) and rejects the whole device tree if we declare it a second time. So drop
+	 * mt8183.dtsi's reference rather than duplicate LK's region. With COSMO_VCODEC it points at the
+	 * separate pool scp.img needs instead.
 	 */
 	/delete-property/ memory-region;
+#endif
 };
+
+#if !COSMO_VCODEC
+/* Both are driven through the SCP firmware and cannot probe without it. */
+&vcodec_dec {
+	status = "disabled";
+};
+
+&vcodec_enc {
+	status = "disabled";
+};
+#endif
 
 /*
  * The MT6370 sub-PMIC, for the panel's bias rails (DSV) and backlight (WLED).

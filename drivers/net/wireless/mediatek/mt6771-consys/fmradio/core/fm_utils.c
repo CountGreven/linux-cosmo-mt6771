@@ -392,6 +392,19 @@ signed int fm_spin_lock_put(struct fm_lock *thiz)
  * fm timer
  *
  */
+/* timer_list lost its data field; the owning fm_timer carries it */
+struct fm_timer_priv {
+	struct timer_list timer;
+	struct fm_timer *thiz;
+};
+
+static void fm_timer_trampoline(struct timer_list *t)
+{
+	struct fm_timer_priv *p = container_of(t, struct fm_timer_priv, timer);
+
+	p->thiz->timeout_func(p->thiz->data);
+}
+
 static signed int fm_timer_init(struct fm_timer *thiz, void (*timeout) (unsigned long data),
 			    unsigned long data, signed long time, signed int flag)
 {
@@ -404,8 +417,6 @@ static signed int fm_timer_init(struct fm_timer *thiz, void (*timeout) (unsigned
 	thiz->timeout_ms = time;
 
 	timerlist->expires = jiffies + (thiz->timeout_ms) / (1000 / HZ);
-	timerlist->function = thiz->timeout_func;
-	timerlist->data = (unsigned long)thiz->data;
 
 	return 0;
 }
@@ -437,7 +448,7 @@ static signed int fm_timer_stop(struct fm_timer *thiz)
 	struct timer_list *timerlist = (struct timer_list *)thiz->priv;
 
 	thiz->flag &= ~FM_TIMER_FLAG_ACTIVATED;
-	del_timer(timerlist);
+	timer_delete(timerlist);
 
 	return 0;
 }
@@ -451,7 +462,7 @@ static signed int fm_timer_control(struct fm_timer *thiz, enum fm_timer_ctrl cmd
 struct fm_timer *fm_timer_create(const signed char *name)
 {
 	struct fm_timer *tmp;
-	struct timer_list *timerlist;
+	struct fm_timer_priv *timerlist;
 
 	tmp = fm_zalloc(sizeof(struct fm_timer));
 	if (!tmp) {
@@ -459,14 +470,15 @@ struct fm_timer *fm_timer_create(const signed char *name)
 		return NULL;
 	}
 
-	timerlist = fm_zalloc(sizeof(struct timer_list));
+	timerlist = fm_zalloc(sizeof(*timerlist));
 	if (!timerlist) {
 		WCN_DBG(FM_ALT | MAIN, "fm_zalloc(struct timer_list) -ENOMEM\n");
 		fm_free(tmp);
 		return NULL;
 	}
 
-	init_timer(timerlist);
+	timer_setup(&timerlist->timer, fm_timer_trampoline, 0);
+	timerlist->thiz = tmp;
 
 	fm_memcpy(tmp->name, name, (strlen(name) > FM_NAME_MAX) ? (FM_NAME_MAX) : (strlen(name)));
 	tmp->priv = timerlist;

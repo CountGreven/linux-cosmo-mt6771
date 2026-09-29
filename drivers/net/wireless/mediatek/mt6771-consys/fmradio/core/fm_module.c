@@ -70,10 +70,9 @@ static const struct file_operations fm_ops = {
 static ssize_t fm_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos);
 static ssize_t fm_proc_write(struct file *file, const char *buffer, size_t count, loff_t *ppos);
 
-static const struct file_operations fm_proc_ops = {
-	.owner = THIS_MODULE,
-	.read = fm_proc_read,
-	.write = fm_proc_write,
+static const struct proc_ops fm_proc_ops = {
+	.proc_read = fm_proc_read,
+	.proc_write = fm_proc_write,
 };
 
 #ifdef CONFIG_COMPAT
@@ -1362,7 +1361,7 @@ static signed int fm_cdev_setup(struct fm *fm)
 		return ret;
 	}
 #ifndef FM_DEV_STATIC_ALLOC
-	plat->cls = class_create(THIS_MODULE, FM_NAME);
+	plat->cls = class_create(FM_NAME);
 
 	if (IS_ERR(plat->cls)) {
 		ret = PTR_ERR(plat->cls);
@@ -1465,13 +1464,12 @@ static signed int mt_fm_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static signed int mt_fm_remove(struct platform_device *pdev)
+static void mt_fm_remove(struct platform_device *pdev)
 {
 	WCN_DBG(FM_NTC | MAIN, "%s\n", __func__);
 
 	fm_mod_destroy(g_fm);
 	g_fm = NULL;
-	return 0;
 }
 
 static struct platform_device *pr_fm_device;

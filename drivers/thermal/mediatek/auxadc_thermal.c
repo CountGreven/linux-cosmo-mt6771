@@ -870,6 +870,67 @@ static const struct thermal_zone_device_ops mtk_thermal_ops = {
 	.get_temp = mtk_read_temp,
 };
 
+struct mtk_thermal_sensor {
+	struct mtk_thermal *mt;
+	int index;
+};
+
+static int mtk_read_sensor_temp(struct thermal_zone_device *tz, int *temperature)
+{
+	struct mtk_thermal_sensor *sensor = thermal_zone_device_priv(tz);
+	struct mtk_thermal *mt = sensor->mt;
+	const struct thermal_bank_cfg *cfg = &mt->conf->bank_data[0];
+	struct mtk_thermal_bank *bank = &mt->banks[0];
+	int temp;
+	u32 raw;
+
+	mtk_thermal_get_bank(bank);
+	raw = readl(mt->thermal_base + mt->conf->msr[sensor->index]);
+	mtk_thermal_put_bank(bank);
+
+	temp = mt->raw_to_mcelsius(mt, cfg->sensors[sensor->index], raw);
+	if (!mtk_thermal_temp_is_valid(temp))
+		return -EAGAIN;
+
+	*temperature = temp;
+
+	return 0;
+}
+
+static const struct thermal_zone_device_ops mtk_thermal_sensor_ops = {
+	.get_temp = mtk_read_sensor_temp,
+};
+
+/*
+ * Sensor id 0 is the maximum of all sensors. On single-bank SoCs, id n + 1 is the n-th sensor of
+ * the bank; SVS looks these zones up by name. A missing or failing zone leaves id 0 in place.
+ */
+static void mtk_thermal_register_sensor_zones(struct mtk_thermal *mt)
+{
+	const struct thermal_bank_cfg *cfg = &mt->conf->bank_data[0];
+	struct mtk_thermal_sensor *sensor;
+	struct thermal_zone_device *tzdev;
+	int i;
+
+	if (mt->conf->num_banks != 1)
+		return;
+
+	for (i = 0; i < cfg->num_sensors; i++) {
+		sensor = devm_kzalloc(mt->dev, sizeof(*sensor), GFP_KERNEL);
+		if (!sensor)
+			return;
+
+		sensor->mt = mt;
+		sensor->index = i;
+
+		tzdev = devm_thermal_of_zone_register(mt->dev, i + 1, sensor,
+						      &mtk_thermal_sensor_ops);
+		if (IS_ERR(tzdev) && PTR_ERR(tzdev) != -ENODEV)
+			dev_warn(mt->dev, "sensor %d: no thermal zone: %pe\n",
+				 i + 1, tzdev);
+	}
+}
+
 static void mtk_thermal_init_bank(struct mtk_thermal *mt, int num,
 				  u32 apmixed_phys_base, u32 auxadc_phys_base,
 				  int ctrl_id)
@@ -1293,6 +1354,8 @@ static int mtk_thermal_probe(struct platform_device *pdev)
 	ret = devm_thermal_add_hwmon_sysfs(&pdev->dev, tzdev);
 	if (ret)
 		dev_warn(&pdev->dev, "error in thermal_add_hwmon_sysfs");
+
+	mtk_thermal_register_sensor_zones(mt);
 
 	return 0;
 }

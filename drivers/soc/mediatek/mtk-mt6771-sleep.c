@@ -71,6 +71,8 @@ struct mt6771_sleep {
 	void __iomem *rgu_req;
 	u32 rgu_mode;
 	u32 rgu_irq;
+	u32 rgu_mode_set;
+	u32 rgu_irq_set;
 	struct regmap *spm;
 	struct regmap *pmic;
 	bool armed;
@@ -158,6 +160,10 @@ static void slp_rgu_spm_wdt(bool sleep)
 	}
 	writel(RGU_REQ_IRQ_KEY | (irq & 0xffffff), slp->rgu_req + RGU_REQ_IRQ_EN);
 	writel(RGU_REQ_MODE_KEY | (mode & 0xffffff), slp->rgu_req + RGU_REQ_MODE);
+	if (sleep) {
+		slp->rgu_mode_set = readl(slp->rgu_req + RGU_REQ_MODE);
+		slp->rgu_irq_set = readl(slp->rgu_req + RGU_REQ_IRQ_EN);
+	}
 }
 
 static int slp_syscore_suspend(void *data)
@@ -170,6 +176,7 @@ static int slp_syscore_suspend(void *data)
 
 	slp->cycles++;
 	slp->fw_status = slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0);
+	pr_emerg("mt6771-sleep: bc1 fw %u\n", slp->fw_status);
 	if (!slp->fw_status) {
 		ret = -EBUSY;
 		pr_err("mt6771-sleep: SPM firmware not loaded\n");
@@ -177,16 +184,19 @@ static int slp_syscore_suspend(void *data)
 	}
 
 	ret = mtk_mt6771_mcdi_task_hold(true);
+	pr_emerg("mt6771-sleep: bc2 mcdi held\n");
 	if (ret)
 		goto out;
 
 	/* Vendor PM notifier sends PREPARE; here it goes with SUSPEND, interrupts already off */
 	ret = slp_sspm_send(SLP_SSPM_SUSPEND_PREPARE);
+	pr_emerg("mt6771-sleep: bc3 sspm prepare %d\n", ret);
 	if (ret) {
 		pr_err("mt6771-sleep: SSPM SUSPEND_PREPARE %d\n", ret);
 		goto release;
 	}
 	ret = slp_sspm_send(SLP_SSPM_SUSPEND);
+	pr_emerg("mt6771-sleep: bc4 sspm suspend %d\n", ret);
 	if (ret) {
 		pr_err("mt6771-sleep: SSPM SUSPEND %d\n", ret);
 		slp_sspm_send(SLP_SSPM_POST_SUSPEND);
@@ -197,10 +207,12 @@ static int slp_syscore_suspend(void *data)
 	flags1 = slp_pcm_flags1(READ_ONCE(spm_big_buck));
 	timer = slp_timer_val(READ_ONCE(wake_sec));
 	slp_rgu_spm_wdt(true);
+	pr_emerg("mt6771-sleep: bc5 rgu mode 0x%08x irq 0x%08x\n", slp->rgu_mode_set, slp->rgu_irq_set);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, SPM_PCM_WDT_SEC);
 	slp_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, flags1, timer);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND, 0, 0);
+	pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u\n", flags, flags1, timer);
 	slp->armed = true;
 	pr_info("mt6771-sleep: SPM armed, flags 0x%x 0x%x timer %u r15 0x%x\n", flags, flags1,
 		timer, slp_spm_read(SPM_PCM_REG15_DATA));
@@ -223,6 +235,7 @@ static void slp_syscore_resume(void *data)
 	slp->armed = false;
 
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND_FINISH, 0, 0);
+	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
 	slp_rgu_spm_wdt(false);
 	/* SW_RSV_0 is the firmware's copy of R12, the wake event bits */
@@ -345,6 +358,7 @@ static int slp_status_show(struct seq_file *s, void *unused)
 	seq_printf(s, "firmware_status %lu\n", slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0));
 	seq_printf(s, "rgu_req_mode 0x%08x rgu_req_irq_en 0x%08x\n", readl(slp->rgu_req + RGU_REQ_MODE),
 		   readl(slp->rgu_req + RGU_REQ_IRQ_EN));
+	seq_printf(s, "rgu_mode_set 0x%08x rgu_irq_set 0x%08x\n", slp->rgu_mode_set, slp->rgu_irq_set);
 	seq_printf(s, "pcm_reg13 0x%08x pcm_reg15 0x%08x sw_rsv_0 0x%08x wakeup_sta 0x%08x\n",
 		   slp_spm_read(SPM_PCM_REG13_DATA), slp_spm_read(SPM_PCM_REG15_DATA),
 		   slp_spm_read(SPM_SW_RSV_0), slp_spm_read(SPM_WAKEUP_STA));

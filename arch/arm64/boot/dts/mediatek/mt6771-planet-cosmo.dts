@@ -25,12 +25,14 @@
  * COSMO_SVS: 1 = mtk-svs; needs COSMO_CPU_OPP_V5T 2 (or 0) and COSMO_SENSOR_ZONES 1.
  * COSMO_CPUIDLE: 1 = PSCI core-off idle (vendor MCDI state), 2 = also cluster-off.
  * COSMO_VCODEC: 1 = SCP runs mediatek/mt8183/scp.img instead of the LK-loaded sensor hub, with VDEC/VENC.
+ * COSMO_RIGHT_USB: 1 = right USB-C port dual role, host for a sink, D+/D- shared through the GPIO79 mux.
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
 #define COSMO_SVS		0
 #define COSMO_CPUIDLE		0
 #define COSMO_VCODEC		0
+#define COSMO_RIGHT_USB		0
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
@@ -442,23 +444,47 @@
 	 * (CTL 0x02); RSTN is GPIO109, left low (chip in reset) by the boot loader.
 	 */
 	/*
-	 * Right USB-C port CC controller (vendor fusb301a@25, IRQ GPIO166). Sink only: the vendor
-	 * never sources VBUS here and the OTG boost also feeds the left port. D+/D- stay on the
-	 * left until the GPIO79 mux is modelled.
+	 * Right USB-C port CC controller (vendor fusb301a@25). No vbus-supply: neither the vendor
+	 * kernel nor Android switches a VBUS source on a right-port attach, and the MT6370 OTG boost
+	 * feeds the left connector. The vendor reads GPIO166 as a level, low while attached, and
+	 * flips the trigger after each event, so it needs both edges once the port can be a source.
 	 */
 	typec@25 {
 		compatible = "fcs,fusb301";
 		reg = <0x25>;
+#if COSMO_RIGHT_USB
+		interrupts-extended = <&pio 166 IRQ_TYPE_EDGE_BOTH>;
+#else
 		interrupts-extended = <&pio 166 IRQ_TYPE_LEVEL_LOW>;
-		vbus-supply = <&mt6370_otg_vbus>;
+#endif
 
 		connector {
 			compatible = "usb-c-connector";
 			label = "USB-C right";
+#if COSMO_RIGHT_USB
+			power-role = "dual";
+			data-role = "host";
+#else
 			power-role = "sink";
 			data-role = "device";
+#endif
 			typec-power-opmode = "default";
 			pd-disable;
+#if COSMO_RIGHT_USB
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					right_hs_ep: endpoint {
+						remote-endpoint = <&mux_right_ep>;
+					};
+				};
+			};
+#endif
 		};
 	};
 
@@ -1290,6 +1316,66 @@
 		};
 	};
 };
+
+#if COSMO_RIGHT_USB
+/*
+ * GPIO79 routes D+/D- to the left (low) or right (high) connector (vendor force_to_otg,
+ * usb_typec.c). The mux gives the one controller to one port at a time.
+ */
+/ {
+	usb-role-mux {
+		compatible = "gpio-usb-role-mux";
+		select-gpios = <&pio 79 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_default_pins>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port {
+			mux_out_ep: endpoint {
+				remote-endpoint = <&ssusb_hs_ep>;
+			};
+		};
+
+		input@0 {
+			reg = <0>;
+			label = "left";
+			usb-role-switch;
+
+			port {
+				mux_left_ep: endpoint {
+					remote-endpoint = <&tcpc_hs_ep>;
+				};
+			};
+		};
+
+		input@1 {
+			reg = <1>;
+			label = "right";
+			usb-role-switch;
+
+			port {
+				mux_right_ep: endpoint {
+					remote-endpoint = <&right_hs_ep>;
+				};
+			};
+		};
+	};
+};
+
+&ssusb {
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+};
+
+&ssusb_hs_ep {
+	remote-endpoint = <&mux_out_ep>;
+};
+
+&tcpc_hs_ep {
+	remote-endpoint = <&mux_left_ep>;
+};
+#endif
 
 /*
  * CONSYS (wifi/BT/GPS block) and its wifi interface, for the vendor gen3 stack ported under

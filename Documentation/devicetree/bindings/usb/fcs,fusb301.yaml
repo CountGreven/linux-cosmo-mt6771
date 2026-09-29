@@ -30,6 +30,27 @@ properties:
       Regulator that provides VBUS when the port is a source. Omit it when
       VBUS is switched by other hardware.
 
+  fcs,vbus-on-unless-source:
+    type: boolean
+    description:
+      Keep vbus-supply enabled while no partner or a sink partner is
+      attached, and release it only while a source partner is attached. For
+      a rail that also feeds other loads on the board. The partner type is
+      polled, since a source partner may not raise an interrupt.
+
+  hdmi-detect-gpios:
+    maxItems: 1
+    description:
+      Input that an HDMI adapter drives active once VBUS is up. It is read
+      400 ms after a sink partner attaches; while it is active the port takes
+      no USB data role.
+
+  source-notify-gpios:
+    maxItems: 1
+    description:
+      Output driven active while a source partner (charger or host) is
+      attached, for a companion controller.
+
   connector:
     type: object
     $ref: ../connector/usb-connector.yaml#
@@ -57,6 +78,7 @@ additionalProperties: false
 
 examples:
   - |
+    #include <dt-bindings/gpio/gpio.h>
     #include <dt-bindings/interrupt-controller/irq.h>
 
     i2c {
@@ -69,6 +91,9 @@ examples:
         interrupt-parent = <&gpio0>;
         interrupts = <4 IRQ_TYPE_LEVEL_LOW>;
         vbus-supply = <&otg_switch>;
+        fcs,vbus-on-unless-source;
+        hdmi-detect-gpios = <&gpio0 54 GPIO_ACTIVE_HIGH>;
+        source-notify-gpios = <&gpio0 52 GPIO_ACTIVE_HIGH>;
 
         connector {
           compatible = "usb-c-connector";

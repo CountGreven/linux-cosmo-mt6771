@@ -7,12 +7,16 @@
  * Based on wusb3801.c, Copyright (C) 2022 Samuel Holland <samuel@sholland.org>
  */
 
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/usb/role.h>
 #include <linux/usb/typec.h>
+#include <linux/workqueue.h>
 #include <kunit/visibility.h>
 
 #include "fusb301.h"
@@ -78,6 +82,11 @@
 #define FUSB301_INTERRUPT_DETACH	BIT(1)
 #define FUSB301_INTERRUPT_ATTACH	BIT(0)
 
+/* The vendor polls every 5 s; a source can face our VBUS until the next read */
+#define FUSB301_POLL_MS			1000
+/* Vendor wait between GPIO178 high and reading GPIO54 (usb_typec.c:329-334) */
+#define FUSB301_HDMI_DETECT_MS		400
+
 struct fusb301 {
 	struct typec_capability	cap;
 	struct device		*dev;
@@ -86,10 +95,16 @@ struct fusb301 {
 	struct regmap		*regmap;
 	struct regulator	*vbus_supply;
 	struct usb_role_switch	*role_sw;
+	struct gpio_desc	*hdmi_gpio;
+	struct gpio_desc	*notify_gpio;
+	struct delayed_work	poll_work;
+	struct mutex		lock;
 	unsigned int		partner_type;
 	enum typec_port_type	port_type;
 	enum typec_pwr_opmode	pwr_opmode;
+	bool			vbus_idle_on;
 	bool			vbus_on;
+	bool			hdmi;
 };
 
 static enum typec_role fusb301_get_default_role(struct fusb301 *fusb301)
@@ -122,34 +137,67 @@ VISIBLE_IF_KUNIT unsigned int fusb301_mode(enum typec_port_type type)
 }
 EXPORT_SYMBOL_IF_KUNIT(fusb301_mode);
 
-/* Only a sink partner makes us host; the vendor never runs the gadget on this port */
-VISIBLE_IF_KUNIT void fusb301_decode(unsigned int type, enum typec_role default_role,
-				     struct fusb301_state *st)
+/* Source vs not from Type & 0x18 alone, as the vendor poll does (usb_typec.c:410-428) */
+VISIBLE_IF_KUNIT enum fusb301_partner fusb301_partner_kind(unsigned int type)
 {
-	st->attached = true;
+	switch (type & (FUSB301_TYPE_SINK | FUSB301_TYPE_SOURCE)) {
+	case FUSB301_TYPE_SOURCE:
+		return FUSB301_PARTNER_SOURCE;
+	case FUSB301_TYPE_SINK:
+		return FUSB301_PARTNER_SINK;
+	case 0:
+		break;
+	default:
+		return FUSB301_PARTNER_NONE;
+	}
+
+	switch (type & (FUSB301_TYPE_DEBUGACC | FUSB301_TYPE_AUDIOACC)) {
+	case FUSB301_TYPE_AUDIOACC:
+		return FUSB301_PARTNER_AUDIO;
+	case FUSB301_TYPE_DEBUGACC:
+		return FUSB301_PARTNER_DEBUG;
+	default:
+		return FUSB301_PARTNER_NONE;
+	}
+}
+EXPORT_SYMBOL_IF_KUNIT(fusb301_partner_kind);
+
+/*
+ * Only a sink partner makes us host, and not an HDMI adapter; the vendor never runs the gadget on
+ * this port. vbus_idle_on keeps VBUS up unless a source is attached (vendor GPIO178 poll), and
+ * source_notify is the vendor's GPIO52 to the STM32.
+ */
+VISIBLE_IF_KUNIT void fusb301_decode(unsigned int type, enum typec_role default_role,
+				     bool vbus_idle_on, bool hdmi, struct fusb301_state *st)
+{
+	st->partner = fusb301_partner_kind(type);
+	st->attached = st->partner != FUSB301_PARTNER_NONE;
 	st->pwr_role = default_role;
 	st->usb_role = USB_ROLE_NONE;
 	st->accessory = TYPEC_ACCESSORY_NONE;
 
-	switch (type & (FUSB301_TYPE_SINK | FUSB301_TYPE_SOURCE |
-			FUSB301_TYPE_DEBUGACC | FUSB301_TYPE_AUDIOACC)) {
-	case FUSB301_TYPE_SINK:
+	switch (st->partner) {
+	case FUSB301_PARTNER_SINK:
 		st->pwr_role = TYPEC_SOURCE;
-		st->usb_role = USB_ROLE_HOST;
+		if (!hdmi)
+			st->usb_role = USB_ROLE_HOST;
 		break;
-	case FUSB301_TYPE_SOURCE:
+	case FUSB301_PARTNER_SOURCE:
 		st->pwr_role = TYPEC_SINK;
 		break;
-	case FUSB301_TYPE_AUDIOACC:
+	case FUSB301_PARTNER_AUDIO:
 		st->accessory = TYPEC_ACCESSORY_AUDIO;
 		break;
-	case FUSB301_TYPE_DEBUGACC:
+	case FUSB301_PARTNER_DEBUG:
 		st->accessory = TYPEC_ACCESSORY_DEBUG;
 		break;
-	default:
-		st->attached = false;
+	case FUSB301_PARTNER_NONE:
 		break;
 	}
+
+	st->source_notify = st->partner == FUSB301_PARTNER_SOURCE;
+	st->vbus = st->partner == FUSB301_PARTNER_SINK ||
+		   (vbus_idle_on && !st->source_notify);
 }
 EXPORT_SYMBOL_IF_KUNIT(fusb301_decode);
 
@@ -261,13 +309,46 @@ static int fusb301_hw_init(struct fusb301 *fusb301)
 	return 0;
 }
 
+static void fusb301_set_vbus(struct fusb301 *fusb301, bool on)
+{
+	int ret;
+
+	if (!fusb301->vbus_supply || on == fusb301->vbus_on)
+		return;
+
+	if (on) {
+		ret = regulator_enable(fusb301->vbus_supply);
+		if (ret) {
+			dev_warn(fusb301->dev, "Failed to enable VBUS: %d\n", ret);
+			return;
+		}
+	} else {
+		regulator_disable(fusb301->vbus_supply);
+	}
+	fusb301->vbus_on = on;
+}
+
+/* Vendor order: GPIO52 up before VBUS goes, VBUS up before GPIO52 drops */
+static void fusb301_apply_power(struct fusb301 *fusb301, const struct fusb301_state *st)
+{
+	if (st->source_notify)
+		gpiod_set_value_cansleep(fusb301->notify_gpio, 1);
+	fusb301_set_vbus(fusb301, st->vbus);
+	if (!st->source_notify)
+		gpiod_set_value_cansleep(fusb301->notify_gpio, 0);
+}
+
 static void fusb301_hw_update(struct fusb301 *fusb301)
 {
 	struct typec_port *port = fusb301->port;
 	struct device *dev = fusb301->dev;
 	unsigned int partner_type, status;
+	enum typec_role default_role;
 	struct fusb301_state st;
+	bool hdmi, changed;
 	int ret;
+
+	guard(mutex)(&fusb301->lock);
 
 	ret = regmap_read(fusb301->regmap, FUSB301_REG_STATUS, &status);
 	if (ret) {
@@ -287,23 +368,25 @@ static void fusb301_hw_update(struct fusb301 *fusb301)
 			FUSB301_TYPE_SOURCE |
 			FUSB301_TYPE_AUDIOACC |
 			FUSB301_TYPE_DEBUGACC;
+	changed = partner_type != fusb301->partner_type;
+	default_role = fusb301_get_default_role(fusb301);
 
-	fusb301_decode(partner_type, fusb301_get_default_role(fusb301), &st);
+	hdmi = changed ? false : fusb301->hdmi;
+	fusb301_decode(partner_type, default_role, fusb301->vbus_idle_on, hdmi, &st);
+	fusb301_apply_power(fusb301, &st);
 
-	if (fusb301->vbus_supply && st.pwr_role == TYPEC_SOURCE && st.attached) {
-		if (!fusb301->vbus_on) {
-			ret = regulator_enable(fusb301->vbus_supply);
-			if (ret)
-				dev_warn(dev, "Failed to enable VBUS: %d\n", ret);
-			else
-				fusb301->vbus_on = true;
-		}
-	} else if (fusb301->vbus_on) {
-		regulator_disable(fusb301->vbus_supply);
-		fusb301->vbus_on = false;
+	/* An HDMI adapter needs VBUS before it can drive its detect line */
+	if (changed && st.partner == FUSB301_PARTNER_SINK && fusb301->hdmi_gpio) {
+		msleep(FUSB301_HDMI_DETECT_MS);
+		ret = gpiod_get_value_cansleep(fusb301->hdmi_gpio);
+		hdmi = ret > 0;
+		if (hdmi)
+			dev_info(dev, "HDMI adapter, no USB role\n");
+		fusb301_decode(partner_type, default_role, fusb301->vbus_idle_on, hdmi, &st);
 	}
+	fusb301->hdmi = hdmi;
 
-	if (partner_type != fusb301->partner_type) {
+	if (changed) {
 		struct typec_partner_desc desc = { .accessory = st.accessory };
 
 		if (fusb301->partner) {
@@ -331,13 +414,29 @@ static void fusb301_hw_update(struct fusb301 *fusb301)
 	}
 
 	typec_set_pwr_opmode(fusb301->port,
-			     partner_type == FUSB301_TYPE_SOURCE
+			     st.partner == FUSB301_PARTNER_SOURCE
 				? fusb301_unmap_pwr_opmode(status)
 				: fusb301->pwr_opmode);
 	typec_set_orientation(fusb301->port,
 			      fusb301_unmap_orientation(status));
 
 	fusb301->partner_type = partner_type;
+}
+
+/* A source partner does not move the interrupt line on the Cosmo (vendor polls Type instead) */
+static void fusb301_poll(struct work_struct *work)
+{
+	struct fusb301 *fusb301 = container_of(to_delayed_work(work),
+					       struct fusb301, poll_work);
+
+	fusb301_hw_update(fusb301);
+	queue_delayed_work(system_freezable_wq, &fusb301->poll_work,
+			   msecs_to_jiffies(FUSB301_POLL_MS));
+}
+
+static bool fusb301_needs_poll(struct fusb301 *fusb301)
+{
+	return fusb301->vbus_supply || fusb301->notify_gpio;
 }
 
 static irqreturn_t fusb301_irq(int irq, void *data)
@@ -383,13 +482,29 @@ static int fusb301_probe(struct i2c_client *client)
 	if (IS_ERR(fusb301->regmap))
 		return PTR_ERR(fusb301->regmap);
 
-	/* Optional: the vendor never switches a VBUS source on this port itself */
+	ret = devm_mutex_init(dev, &fusb301->lock);
+	if (ret)
+		return ret;
+	INIT_DEFERRABLE_WORK(&fusb301->poll_work, fusb301_poll);
+
 	fusb301->vbus_supply = devm_regulator_get_optional(dev, "vbus");
 	if (IS_ERR(fusb301->vbus_supply)) {
 		if (PTR_ERR(fusb301->vbus_supply) != -ENODEV)
 			return PTR_ERR(fusb301->vbus_supply);
 		fusb301->vbus_supply = NULL;
 	}
+	fusb301->vbus_idle_on = fusb301->vbus_supply &&
+		device_property_read_bool(dev, "fcs,vbus-on-unless-source");
+
+	fusb301->hdmi_gpio = devm_gpiod_get_optional(dev, "hdmi-detect", GPIOD_IN);
+	if (IS_ERR(fusb301->hdmi_gpio))
+		return dev_err_probe(dev, PTR_ERR(fusb301->hdmi_gpio),
+				     "Failed to get HDMI detect GPIO\n");
+
+	fusb301->notify_gpio = devm_gpiod_get_optional(dev, "source-notify", GPIOD_OUT_LOW);
+	if (IS_ERR(fusb301->notify_gpio))
+		return dev_err_probe(dev, PTR_ERR(fusb301->notify_gpio),
+				     "Failed to get source notify GPIO\n");
 
 	connector = device_get_named_child_node(dev, "connector");
 	if (!connector) {
@@ -424,6 +539,10 @@ static int fusb301_probe(struct i2c_client *client)
 	}
 	fusb301->pwr_opmode = ret;
 
+	/* An idle-on rail (shared with other loads) stays up across the reset and the first read */
+	if (fusb301->vbus_idle_on)
+		fusb301_set_vbus(fusb301, true);
+
 	/* Initialize the hardware with the devicetree settings. */
 	ret = fusb301_hw_init(fusb301);
 	if (ret) {
@@ -454,6 +573,10 @@ static int fusb301_probe(struct i2c_client *client)
 	fusb301_hw_update(fusb301);
 	enable_irq(client->irq);
 
+	if (fusb301_needs_poll(fusb301))
+		queue_delayed_work(system_freezable_wq, &fusb301->poll_work,
+				   msecs_to_jiffies(FUSB301_POLL_MS));
+
 	fwnode_handle_put(connector);
 
 	return 0;
@@ -463,6 +586,7 @@ err_unregister_port:
 err_put_connector:
 	usb_role_switch_put(fusb301->role_sw);
 	fwnode_handle_put(connector);
+	fusb301_set_vbus(fusb301, false);
 
 	return ret;
 }
@@ -472,6 +596,7 @@ static void fusb301_remove(struct i2c_client *client)
 	struct fusb301 *fusb301 = i2c_get_clientdata(client);
 
 	free_irq(client->irq, fusb301);
+	cancel_delayed_work_sync(&fusb301->poll_work);
 
 	if (fusb301->role_sw) {
 		usb_role_switch_set_role(fusb301->role_sw, USB_ROLE_NONE);

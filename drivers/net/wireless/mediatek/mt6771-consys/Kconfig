@@ -48,6 +48,17 @@ config MT6771_CONSYS_FM
 	  core): the vendor /dev/fm character device, unchanged in
 	  interface, for the vendor FM HAL.
 
+config MTK_CONN_LTE_IDC_SUPPORT
+	bool "LTE coexistence (IDC) messages with the modem"
+	depends on MT6771_CONSYS && MTK_CONN_MD
+	depends on MTK_CONN_MD = y || MT6771_CONSYS = m
+	default y
+	help
+	  The WMT core exchanges in-device coexistence messages with the
+	  modem's LTE layer through the connsys/modem bridge, and tells
+	  the CONNSYS firmware at power-on that it shares the device with
+	  LTE, as the vendor kernel does on this phone.
+
 # The vendor Makefiles and sources test these by their vendor names. They
 # are fixed for the one chip this directory supports and are not meant to
 # be set by hand.

@@ -51,6 +51,8 @@
 #define MT6370_ADC_CHAN_MAX		9
 
 enum mt6370_chg_reg_field {
+	/* MT6370_REG_CHG_CTRL1 -- bit 2 HZ_EN (vendor mt6370_pmu_charger.c:1587-1596) */
+	F_HZ,
 	/* MT6370_REG_CHG_CTRL2 */
 	F_TE_EN,
 	F_IINLMTSEL, F_CFO_EN, F_CHG_EN,
@@ -182,6 +184,7 @@ static const struct mt6370_chg_field mt6370_chg_fields[F_MAX] = {
 	MT6370_CHG_FIELD_RANGE(F_IEOC, MT6370_REG_CHG_CTRL9, 4, 7),
 	MT6370_CHG_FIELD(F_WT_FC, MT6370_REG_CHG_CTRL12, 5, 7),
 	MT6370_CHG_FIELD(F_TMR_EN, MT6370_REG_CHG_CTRL12, 1, 1),
+	MT6370_CHG_FIELD(F_HZ, MT6370_REG_CHG_CTRL1, 2, 2),
 	MT6370_CHG_FIELD(F_USBCHGEN, MT6370_REG_DEVICE_TYPE, 7, 7),
 	MT6370_CHG_FIELD(F_USB_STAT, MT6370_REG_USB_STATUS1, 4, 6),
 	MT6370_CHG_FIELD(F_CHGDET, MT6370_REG_USB_STATUS1, 3, 3),
@@ -651,11 +654,27 @@ static int mt6370_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_USB_TYPE:
 		val->intval = priv->psy_usb_type;
 		return 0;
-	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
-		ret = mt6370_chg_field_get(priv, F_CHG_EN, &val->intval);
-		val->intval = val->intval ? POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
-					    POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
-		return ret;
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR: {
+		unsigned int hz;
+		int ret2;
+
+		ret = mt6370_chg_field_get(priv, F_HZ, &hz);
+		if (ret)
+			return ret;
+		if (hz)
+			val->intval = POWER_SUPPLY_CHARGE_BEHAVIOUR_FORCE_DISCHARGE;
+		else {
+			unsigned int chg_en;
+
+			ret2 = mt6370_chg_field_get(priv, F_CHG_EN, &chg_en);
+			if (ret2)
+				return ret2;
+			val->intval = chg_en ?
+				POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
+				POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+		}
+		return 0;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -685,10 +704,22 @@ static int mt6370_chg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 		return mt6370_chg_field_set(priv, F_IEOC, val->intval);
 	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
-		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO)
+		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_FORCE_DISCHARGE)
+			return mt6370_chg_field_set(priv, F_HZ, 1);
+		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) {
+			int ret2 = mt6370_chg_field_set(priv, F_HZ, 0);
+
+			if (ret2)
+				return ret2;
 			return mt6370_chg_field_set(priv, F_CHG_EN, 1);
-		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE)
+		}
+		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) {
+			int ret2 = mt6370_chg_field_set(priv, F_HZ, 0);
+
+			if (ret2)
+				return ret2;
 			return mt6370_chg_field_set(priv, F_CHG_EN, 0);
+		}
 		return -EINVAL;
 	default:
 		return -EINVAL;
@@ -738,7 +769,8 @@ static const struct power_supply_desc mt6370_chg_psy_desc = {
 	.set_property = mt6370_chg_set_property,
 	.property_is_writeable = mt6370_chg_property_is_writeable,
 	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
-			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
+			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) |
+			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_FORCE_DISCHARGE),
 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_SDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
 		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |

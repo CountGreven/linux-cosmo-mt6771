@@ -138,6 +138,9 @@
  * pages, same camsys gate). The vendor left the SENINF interrupt (SPI 251) disabled and it is not
  * described here. Which port a sensor uses is board specific: the board hangs its sensors on the
  * ports. Disabled: the driver has only been built, never run against the device.
+ *
+ * CAMSV0 (0x1a050000, SPI 258) takes the stream of SENINF mux 0. The DMA has no known IOMMU port
+ * yet, so the board gives it a memory region and the larbs to keep powered.
  */
 / {
 	soc {
@@ -201,6 +204,31 @@
 
 				seninf_csi0b: port@4 {
 					reg = <4>;
+				};
+
+				seninf_mux0: port@5 {
+					reg = <5>;
+				};
+			};
+		};
+
+		camsv0: camsv@1a050000 {
+			compatible = "mediatek,mt6771-camsv", "mediatek,mt8183-camsv";
+			reg = <0 0x1a050000 0 0x1000>;
+			interrupts = <GIC_SPI 258 IRQ_TYPE_LEVEL_LOW>;
+			clocks = <&camsys CLK_CAM_CAMSV0>,
+				 <&camsys CLK_CAM_CAM>,
+				 <&camsys CLK_CAM_CAMTG>;
+			clock-names = "camsv", "cam", "camtg";
+			power-domains = <&spm MT8183_POWER_DOMAIN_CAM>;
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				camsv0_in: port@0 {
+					reg = <0>;
 				};
 			};
 		};

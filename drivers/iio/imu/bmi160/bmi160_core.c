@@ -906,7 +906,42 @@ static int bmi160_core_runtime_resume(struct device *dev)
 	return iio_device_resume_triggering(indio_dev);
 }
 
+/* Nothing suspends the sensors otherwise: both stay in normal mode from probe on */
+static int bmi160_core_suspend(struct device *dev)
+{
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct bmi160_data *data = iio_priv(indio_dev);
+	int ret;
+
+	ret = iio_device_suspend_triggering(indio_dev);
+	if (ret)
+		return ret;
+
+	bmi160_set_mode(data, BMI160_GYRO, false);
+	bmi160_set_mode(data, BMI160_ACCEL, false);
+
+	return 0;
+}
+
+static int bmi160_core_resume(struct device *dev)
+{
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct bmi160_data *data = iio_priv(indio_dev);
+	int ret;
+
+	ret = bmi160_set_mode(data, BMI160_ACCEL, true);
+	if (ret)
+		return ret;
+
+	ret = bmi160_set_mode(data, BMI160_GYRO, true);
+	if (ret)
+		return ret;
+
+	return iio_device_resume_triggering(indio_dev);
+}
+
 const struct dev_pm_ops bmi160_core_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(bmi160_core_suspend, bmi160_core_resume)
 	RUNTIME_PM_OPS(bmi160_core_runtime_suspend, bmi160_core_runtime_resume, NULL)
 };
 EXPORT_SYMBOL_NS_GPL(bmi160_core_pm_ops, "IIO_BMI160");

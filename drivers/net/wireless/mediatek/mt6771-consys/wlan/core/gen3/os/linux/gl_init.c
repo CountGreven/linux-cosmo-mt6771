@@ -35,6 +35,7 @@
 */
 #include <linux/kernel_read_file.h>
 #include <linux/vmalloc.h>
+#include <linux/suspend.h>
 #include <linux/unaligned.h>
 #include <net/ieee80211_radiotap.h>
 #include "gl_os.h"
@@ -2931,6 +2932,56 @@ static void wlan_late_resume(struct early_suspend *h)
 }
 #endif
 
+/*
+ * Mainline has no early-suspend, so enter the firmware suspend mode (RX filter, multicast list,
+ * ARP/NS offload) before the system sleeps; otherwise every broadcast or multicast frame wakes it.
+ * Unicast still reaches the host. A mode already set through SETSUSPENDMODE is left alone.
+ */
+static bool fgWlanPmSuspended;
+
+static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, void *data)
+{
+	P_GLUE_INFO_T prGlueInfo;
+	struct net_device *prDev;
+
+	if (!u4WlanDevNum || u4WlanDevNum > CFG_MAX_WLAN_DEVICES)
+		return NOTIFY_DONE;
+
+	prDev = arWlanDevInfo[u4WlanDevNum - 1].prDev;
+	if (!prDev)
+		return NOTIFY_DONE;
+
+	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prDev));
+	if (!prGlueInfo)
+		return NOTIFY_DONE;
+
+	switch (action) {
+	case PM_SUSPEND_PREPARE:
+		if (!prGlueInfo->u4ReadyFlag || !netif_running(prDev) || kalIsHalted() ||
+		    prGlueInfo->fgIsInSuspendMode)
+			break;
+		prGlueInfo->fgIsInSuspendMode = TRUE;
+		wlanSetSuspendMode(prGlueInfo, TRUE);
+		p2pSetSuspendMode(prGlueInfo, TRUE);
+		fgWlanPmSuspended = true;
+		break;
+	case PM_POST_SUSPEND:
+		if (!fgWlanPmSuspended)
+			break;
+		fgWlanPmSuspended = false;
+		prGlueInfo->fgIsInSuspendMode = FALSE;
+		wlanSetSuspendMode(prGlueInfo, FALSE);
+		p2pSetSuspendMode(prGlueInfo, FALSE);
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block wlan_pm_nb = {
+	.notifier_call = wlan_pm_notifier,
+};
+
 VOID nicConfigProcSetCamCfgWrite(BOOLEAN enabled)
 {
 	struct net_device *prDev = NULL;
@@ -3646,10 +3697,12 @@ static int initWlan(void)
 		return -1;
 
 	glP2pCreateWirelessDevice(prGlueInfo);
+	register_pm_notifier(&wlan_pm_nb);
 
 	ret = ((glRegisterBus(wlanProbe, wlanRemove) == WLAN_STATUS_SUCCESS) ? 0 : -EIO);
 
 	if (ret == -EIO) {
+		unregister_pm_notifier(&wlan_pm_nb);
 		kalUninitIOBuffer();
 		return ret;
 	}
@@ -3679,6 +3732,7 @@ static int initWlan(void)
 /* 1 Module Leave Point */
 static VOID exitWlan(void)
 {
+	unregister_pm_notifier(&wlan_pm_nb);
 	cancel_delayed_work_sync(&wlan_self_on_work);
 	wifi_power_set(0);
 

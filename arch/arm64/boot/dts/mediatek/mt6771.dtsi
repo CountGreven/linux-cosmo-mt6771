@@ -20,6 +20,8 @@
  * in mt6771-planet-cosmo.dts: the memory size, the firmware-owned reservations, the framebuffer.
  */
 
+#include <dt-bindings/phy/phy.h>
+
 #include "mt8183.dtsi"
 
 / {
@@ -125,6 +127,82 @@
 			mediatek,topckgen = <&topckgen>;
 			mediatek,apmixedsys = <&apmixedsys>;
 			status = "disabled";
+		};
+	};
+};
+
+/*
+ * MIPI CSI-2 receiver: three analog D-PHY receivers (CSI0 can also be split into two 2 lane halves)
+ * and the SENINF decoders behind them. Layout, clocks and the CAM power domain are those of
+ * MT8183 (vendor mt6771.dts: analog 0x11c80000 in six 0x1000 blocks, SENINF 0x1a040000 in eight
+ * pages, same camsys gate). The vendor left the SENINF interrupt (SPI 251) disabled and it is not
+ * described here. Which port a sensor uses is board specific: the board hangs its sensors on the
+ * ports. Disabled: the driver has only been built, never run against the device.
+ */
+/ {
+	soc {
+		csi0_rx: phy@11c80000 {
+			compatible = "mediatek,mt6771-csi-rx", "mediatek,mt8183-csi-rx";
+			reg = <0 0x11c80000 0 0x2000>;
+			num-lanes = <4>;
+			#phy-cells = <2>;
+			status = "disabled";
+		};
+
+		csi1_rx: phy@11c82000 {
+			compatible = "mediatek,mt6771-csi-rx", "mediatek,mt8183-csi-rx";
+			reg = <0 0x11c82000 0 0x2000>;
+			phy-type = <PHY_TYPE_DPHY>;
+			num-lanes = <4>;
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		csi2_rx: phy@11c84000 {
+			compatible = "mediatek,mt6771-csi-rx", "mediatek,mt8183-csi-rx";
+			reg = <0 0x11c84000 0 0x2000>;
+			phy-type = <PHY_TYPE_DPHY>;
+			num-lanes = <4>;
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
+		seninf: csi@1a040000 {
+			compatible = "mediatek,mt6771-seninf", "mediatek,mt8183-seninf";
+			reg = <0 0x1a040000 0 0x8000>;
+			clocks = <&camsys CLK_CAM_SENINF>,
+				 <&topckgen CLK_TOP_MUX_SENINF>;
+			clock-names = "seninf", "seninf_mux";
+			power-domains = <&spm MT8183_POWER_DOMAIN_CAM>;
+			phys = <&csi0_rx PHY_TYPE_DPHY 0>, <&csi1_rx>, <&csi2_rx>,
+			       <&csi0_rx PHY_TYPE_DPHY 1>, <&csi0_rx PHY_TYPE_DPHY 2>;
+			phy-names = "csi0", "csi1", "csi2", "csi0a", "csi0b";
+			status = "disabled";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				seninf_csi0: port@0 {
+					reg = <0>;
+				};
+
+				seninf_csi1: port@1 {
+					reg = <1>;
+				};
+
+				seninf_csi2: port@2 {
+					reg = <2>;
+				};
+
+				seninf_csi0a: port@3 {
+					reg = <3>;
+				};
+
+				seninf_csi0b: port@4 {
+					reg = <4>;
+				};
+			};
 		};
 	};
 };

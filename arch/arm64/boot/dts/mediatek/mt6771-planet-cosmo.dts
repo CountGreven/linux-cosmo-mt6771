@@ -11,6 +11,7 @@
 #include <dt-bindings/power/mt8183-power.h>
 #include <dt-bindings/clock/mt8183-clk.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/media/video-interfaces.h>
 #include <dt-bindings/usb/pd.h>
 #include <dt-bindings/iio/adc/mediatek,mt6358-auxadc.h>
 #include "mt6771.dtsi"
@@ -28,8 +29,8 @@
  * COSMO_VCODEC: 1 = SCP runs mediatek/mt8183/scp.img instead of the LK-loaded sensor hub, with VDEC/VENC.
  * COSMO_RIGHT_USB: 1 = right USB-C port dual role, host for a sink, D+/D- shared through the GPIO79 mux.
  * COSMO_DEEP_SLEEP: 1 = SPM deep sleep node for mtk-mt6771-sleep (still gated by its deep_enable).
- * COSMO_CAMERA: 1 = S5K2X7 (main, i2c2) and GC5035 (sub, i2c4) sensor nodes; no CSI receiver yet, so they
- *   only power up and read their chip id.
+ * COSMO_CAMERA: 1 = S5K2X7 (main, i2c2) and GC5035 (sub, i2c4) sensor nodes and the CSI-2 receiver they
+ *   hang on (mtk-seninf, started from its debugfs until a capture driver exists).
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
@@ -2723,5 +2724,54 @@
 			};
 		};
 	};
+};
+
+/*
+ * The CSI-2 receiver. No source names the port a sensor is wired to (the vendor decides it in user
+ * space), so these are guesses: main on CSI0 (4 lanes need a 4D1C port: CSI0, CSI1 or CSI2), sub on
+ * CSI1. To try another port change the label of the sensor's block, one line each:
+ *   main: &seninf_csi0, &seninf_csi1 or &seninf_csi2
+ *   sub:  &seninf_csi1, &seninf_csi2, &seninf_csi0a or &seninf_csi0b (the halves of CSI0, not
+ *         together with a main sensor on CSI0)
+ * The debugfs port knob of mtk-seninf can also override the port without a rebuild.
+ */
+&csi0_rx {
+	status = "okay";
+};
+
+&csi1_rx {
+	status = "okay";
+};
+
+&csi2_rx {
+	status = "okay";
+};
+
+&seninf {
+	status = "okay";
+};
+
+&seninf_csi0 {
+	seninf_main_ep: endpoint {
+		remote-endpoint = <&cam_main_ep>;
+		bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+		data-lanes = <1 2 3 4>;
+	};
+};
+
+&seninf_csi1 {
+	seninf_sub_ep: endpoint {
+		remote-endpoint = <&cam_sub_ep>;
+		bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+		data-lanes = <1 2>;
+	};
+};
+
+&cam_main_ep {
+	remote-endpoint = <&seninf_main_ep>;
+};
+
+&cam_sub_ep {
+	remote-endpoint = <&seninf_sub_ep>;
 };
 #endif

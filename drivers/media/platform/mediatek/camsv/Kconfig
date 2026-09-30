@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VIDEO_MEDIATEK_CAMSV
+	tristate "MediaTek CAMSV raw capture"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV && OF
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on PM
+	select MEDIA_CONTROLLER
+	select V4L2_FWNODE
+	select VIDEO_V4L2_SUBDEV_API
+	select VIDEOBUF2_DMA_CONTIG
+	help
+	  Support for the CAMSV raw capture units of the MediaTek MT8183
+	  family (also MT6771). A CAMSV unit takes the stream of one SENINF
+	  mux and writes the raw Bayer frames to memory.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called mtk-camsv.

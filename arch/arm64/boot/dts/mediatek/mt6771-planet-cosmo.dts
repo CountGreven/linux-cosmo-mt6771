@@ -1528,7 +1528,7 @@
 	 * (inputs, interrupt on change), P1_0..6 the columns, driven low one at a time. Four positions
 	 * (row 7, columns 3..6) are unpopulated. KEY_LEFTMETA is the vendor's "meta" (Fn) key.
 	 */
-	keyboard {
+	kbd_matrix: keyboard {
 		compatible = "gpio-matrix-keypad";
 		/* the Gemian keyboard driver rescans every 10 ms while a key is held (aw9523_key.c) */
 		rescan-while-pressed-ms = <10>;
@@ -1662,7 +1662,7 @@
 };
 
 / {
-	gpio-keys {
+	gpio_keys: gpio-keys {
 		compatible = "gpio-keys";
 		pinctrl-names = "default";
 		pinctrl-0 = <&gpio_keys_pins>;
@@ -1683,6 +1683,17 @@
 			linux,code = <KEY_VOLUMEDOWN>;
 			debounce-interval = <20>;
 		};
+	};
+
+	/*
+	 * Esc is the PMIC power-key line: Fn+Esc is KEY_POWER (vendor hal_kpd.c kpd_pmic_pwrkey_hal),
+	 * and the keyboard is mute while the lid is closed because the screen presses the keys.
+	 */
+	fn-power {
+		compatible = "linux,fn-power-combiner";
+		keyboard = <&kbd_matrix>;
+		power-key = <&mt6358keys>;
+		lid-switch = <&gpio_keys>;
 	};
 
 	/* MT6358 VIBR LDO, fixed 2.8 V as the vendor drives it */

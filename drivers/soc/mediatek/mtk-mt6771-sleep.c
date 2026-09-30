@@ -18,6 +18,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeup.h>
 #include <linux/regmap.h>
 #include <linux/sched/clock.h>
 #include <linux/seq_file.h>
@@ -281,6 +282,9 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	slp->wake_r13 = slp_spm_read(SPM_PCM_REG13_DATA);
 	slp->wake_r15 = slp_spm_read(SPM_PCM_REG15_DATA);
 	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
+	/* The PCM timer has no Linux interrupt; without this s2idle would re-enter sleep */
+	if (slp->wake_r12)
+		pm_system_wakeup();
 
 	if (!(slp->skipped & 2)) {
 		ret = slp_sspm_send(SLP_SSPM_RESUME);

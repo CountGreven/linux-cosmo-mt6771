@@ -79,6 +79,7 @@ struct mt6771_sleep {
 	u32 wake_sta;
 	u32 wake_r13;
 	u32 wake_r15;
+	u32 skipped;
 };
 
 static struct mt6771_sleep *slp;
@@ -91,6 +92,7 @@ static unsigned int wake_sec = 30;
 static bool infra_pdn;
 static bool spm_big_buck;
 static bool spm_wdt_irq;
+static unsigned int skip;
 
 static unsigned long slp_smc(unsigned long id, unsigned long a1, unsigned long a2,
 			     unsigned long a3)
@@ -183,19 +185,35 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 		goto out;
 	}
 
-	ret = mtk_mt6771_mcdi_task_hold(true);
-	pr_emerg("mt6771-sleep: bc2 mcdi held\n");
+	slp->skipped = READ_ONCE(skip);
+	if (!(slp->skipped & 1)) {
+		ret = mtk_mt6771_mcdi_task_hold(true);
+		pr_emerg("mt6771-sleep: bc2 mcdi held\n");
+	} else {
+		ret = 0;
+		pr_emerg("mt6771-sleep: bc2 mcdi held (skipped)\n");
+	}
 	if (ret)
 		goto out;
 
-	ret = slp_sspm_send(SLP_SSPM_SUSPEND_PREPARE);
-	pr_emerg("mt6771-sleep: bc3 sspm prepare %d\n", ret);
+	if (!(slp->skipped & 2)) {
+		ret = slp_sspm_send(SLP_SSPM_SUSPEND_PREPARE);
+		pr_emerg("mt6771-sleep: bc3 sspm prepare %d\n", ret);
+	} else {
+		ret = 0;
+		pr_emerg("mt6771-sleep: bc3 sspm prepare 0 (skipped)\n");
+	}
 	if (ret) {
 		pr_err("mt6771-sleep: SSPM SUSPEND_PREPARE %d\n", ret);
 		goto release;
 	}
-	ret = slp_sspm_send(SLP_SSPM_SUSPEND);
-	pr_emerg("mt6771-sleep: bc4 sspm suspend %d\n", ret);
+	if (!(slp->skipped & 2)) {
+		ret = slp_sspm_send(SLP_SSPM_SUSPEND);
+		pr_emerg("mt6771-sleep: bc4 sspm suspend %d\n", ret);
+	} else {
+		ret = 0;
+		pr_emerg("mt6771-sleep: bc4 sspm suspend 0 (skipped)\n");
+	}
 	if (ret) {
 		pr_err("mt6771-sleep: SSPM SUSPEND %d\n", ret);
 		slp_sspm_send(SLP_SSPM_POST_SUSPEND);
@@ -205,13 +223,23 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 	flags = slp_pcm_flags(READ_ONCE(infra_pdn));
 	flags1 = slp_pcm_flags1(READ_ONCE(spm_big_buck));
 	timer = slp_timer_val(READ_ONCE(wake_sec));
-	slp_rgu_spm_wdt(true);
-	pr_emerg("mt6771-sleep: bc5 rgu mode 0x%08x irq 0x%08x\n", slp->rgu_mode_set, slp->rgu_irq_set);
-	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0);
-	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, SPM_PCM_WDT_SEC);
-	slp_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, flags1, timer);
-	pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u\n", flags, flags1, timer);
-	mtk_mt6771_mcdi_suspend_state(true);
+	if (!(slp->skipped & 16)) {
+		slp_rgu_spm_wdt(true);
+		pr_emerg("mt6771-sleep: bc5 rgu mode 0x%08x irq 0x%08x\n", slp->rgu_mode_set, slp->rgu_irq_set);
+	} else {
+		pr_emerg("mt6771-sleep: bc5 rgu mode 0x%08x irq 0x%08x (skipped)\n", slp->rgu_mode_set, slp->rgu_irq_set);
+	}
+	if (!(slp->skipped & 4)) {
+		slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0);
+		slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, SPM_PCM_WDT_SEC);
+		slp_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, flags1, timer);
+	}
+	if (slp->skipped & 4)
+		pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u (skipped)\n", flags, flags1, timer);
+	else
+		pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u\n", flags, flags1, timer);
+	if (!(slp->skipped & 8))
+		mtk_mt6771_mcdi_suspend_state(true);
 	slp->armed = true;
 	pr_info("mt6771-sleep: SPM armed, flags 0x%x 0x%x timer %u r15 0x%x\n", flags, flags1,
 		timer, slp_spm_read(SPM_PCM_REG15_DATA));
@@ -219,7 +247,8 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 	return 0;
 
 release:
-	mtk_mt6771_mcdi_task_hold(false);
+	if (!(slp->skipped & 1))
+		mtk_mt6771_mcdi_task_hold(false);
 out:
 	slp->last_err = ret;
 	return ret;
@@ -227,15 +256,18 @@ out:
 
 static int mt6771_sleep_resume_noirq(struct device *dev)
 {
-	int ret;
+	int ret = 0;
 
 	if (!slp->armed)
 		return 0;
 	slp->armed = false;
-	mtk_mt6771_mcdi_suspend_state(false);
+	if (!(slp->skipped & 8))
+		mtk_mt6771_mcdi_suspend_state(false);
 
-	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
-	slp_rgu_spm_wdt(false);
+	if (!(slp->skipped & 4))
+		slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
+	if (!(slp->skipped & 16))
+		slp_rgu_spm_wdt(false);
 	/* SW_RSV_0 is the firmware's copy of R12, the wake event bits */
 	slp->wake_r12 = slp_spm_read(SPM_SW_RSV_0);
 	slp->wake_sta = slp_spm_read(SPM_WAKEUP_STA);
@@ -243,13 +275,22 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	slp->wake_r15 = slp_spm_read(SPM_PCM_REG15_DATA);
 	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
 
-	ret = slp_sspm_send(SLP_SSPM_RESUME);
-	if (ret)
-		pr_err("mt6771-sleep: SSPM RESUME %d\n", ret);
-	ret = slp_sspm_send(SLP_SSPM_POST_SUSPEND);
-	if (ret)
-		pr_err("mt6771-sleep: SSPM POST_SUSPEND %d\n", ret);
-	mtk_mt6771_mcdi_task_hold(false);
+	if (!(slp->skipped & 2)) {
+		ret = slp_sspm_send(SLP_SSPM_RESUME);
+		if (ret)
+			pr_err("mt6771-sleep: SSPM RESUME %d\n", ret);
+	} else {
+		pr_emerg("mt6771-sleep: bc8 sspm resume 0 (skipped)\n");
+	}
+	if (!(slp->skipped & 2)) {
+		ret = slp_sspm_send(SLP_SSPM_POST_SUSPEND);
+		if (ret)
+			pr_err("mt6771-sleep: SSPM POST_SUSPEND %d\n", ret);
+	} else {
+		pr_emerg("mt6771-sleep: bc9 sspm post_suspend 0 (skipped)\n");
+	}
+	if (!(slp->skipped & 1))
+		mtk_mt6771_mcdi_task_hold(false);
 
 	pr_info("mt6771-sleep: woke, r12 0x%x wakeup_sta 0x%x r13 0x%x r15 0x%x\n",
 		slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
@@ -346,6 +387,8 @@ module_param(spm_big_buck, bool, 0644);
 MODULE_PARM_DESC(spm_big_buck, "Let the SPM switch the big-cluster buck (default 0)");
 module_param(spm_wdt_irq, bool, 0644);
 MODULE_PARM_DESC(spm_wdt_irq, "SPM watchdog expiry in sleep raises an RGU IRQ instead of a reset (default off: reset mode like Android)");
+module_param(skip, uint, 0644);
+MODULE_PARM_DESC(skip, "debug: skip suspend steps: 1 MCDI hold, 2 SSPM messages, 4 SUSPEND_ARGS smc, 8 SPM idle state, 16 RGU request");
 
 static int slp_status_show(struct seq_file *s, void *unused)
 {
@@ -360,6 +403,7 @@ static int slp_status_show(struct seq_file *s, void *unused)
 		   slp_spm_read(SPM_SW_RSV_0), slp_spm_read(SPM_WAKEUP_STA));
 	seq_printf(s, "sspm_out_irq 0x%08x\n", readl(slp->mbox_ctrl + SSPM_MBOX_OUT_IRQ));
 	seq_printf(s, "cycles %u last_err %d\n", slp->cycles, slp->last_err);
+	seq_printf(s, "skip 0x%x\n", skip);
 	seq_printf(s, "last_wake r12 0x%08x wakeup_sta 0x%08x r13 0x%08x r15 0x%08x\n",
 		   slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
 	return 0;

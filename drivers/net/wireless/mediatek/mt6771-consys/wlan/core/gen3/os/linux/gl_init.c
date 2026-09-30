@@ -36,6 +36,7 @@
 #include <linux/kernel_read_file.h>
 #include <linux/vmalloc.h>
 #include <linux/suspend.h>
+#include <linux/delay.h>
 #include <linux/unaligned.h>
 #include <net/ieee80211_radiotap.h>
 #include "gl_os.h"
@@ -2937,7 +2938,27 @@ static void wlan_late_resume(struct early_suspend *h)
  * ARP/NS offload) before the system sleeps; otherwise every broadcast or multicast frame wakes it.
  * Unicast still reaches the host. A mode already set through SETSUSPENDMODE is left alone.
  */
+#define WLAN_PM_FW_OWN_WAIT_MS 2000
+
 static bool fgWlanPmSuspended;
+
+/*
+ * The commands are answered synchronously, but the firmware then reports EVENT_ID_SLEEPY_INFO a
+ * few hundred ms later and only afterwards is the ownership handed back. That HIF interrupt would
+ * land in the suspended system and wake it, so stop the 1 s perf monitor timer (it makes the
+ * driver take ownership again) and wait until the firmware owns the chip.
+ */
+static void wlan_wait_fw_own(P_GLUE_INFO_T prGlueInfo)
+{
+	unsigned long deadline = jiffies + msecs_to_jiffies(WLAN_PM_FW_OWN_WAIT_MS);
+
+	kalPerMonStop(prGlueInfo);
+	while (!prGlueInfo->prAdapter->fgIsFwOwn && time_before(jiffies, deadline))
+		msleep(20);
+
+	if (!prGlueInfo->prAdapter->fgIsFwOwn)
+		DBGLOG(INIT, WARN, "firmware still not owning the chip before suspend\n");
+}
 
 static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, void *data)
 {
@@ -2964,6 +2985,7 @@ static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, voi
 		wlanSetSuspendMode(prGlueInfo, TRUE);
 		p2pSetSuspendMode(prGlueInfo, TRUE);
 		fgWlanPmSuspended = true;
+		wlan_wait_fw_own(prGlueInfo);
 		break;
 	case PM_POST_SUSPEND:
 		if (!fgWlanPmSuspended)

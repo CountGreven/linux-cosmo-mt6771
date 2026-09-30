@@ -135,3 +135,8 @@
 		/delete-node/ idle-states;
 	};
 };
+
+/* own compatible: panfrost gates the clocks and rails on runtime suspend (GPU_PM_RT_PWR) */
+&gpu {
+	compatible = "mediatek,mt6771-mali", "arm,mali-bifrost";
+};

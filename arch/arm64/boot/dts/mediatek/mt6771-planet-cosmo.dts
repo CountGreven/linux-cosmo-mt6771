@@ -442,6 +442,8 @@
 		firmware-gpios = <&pio 73 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&nfc_pins>;
+		/* the vendor driver arms the interrupt as a wake source at probe (pn553.c:1391) */
+		wakeup-source;
 	};
 
 	/*
@@ -614,6 +616,8 @@
 		 * "running" (its binding example uses GPIO_ACTIVE_HIGH), so no inversion here.
 		 */
 		reset-gpios = <&pio 175 GPIO_ACTIVE_HIGH>;
+		/* vendor: RSTN low in suspend, so no key wakes the phone (aw9523_key.c:1073-1091) */
+		awinic,reset-in-suspend;
 	};
 };
 &i2c5 { status = "okay"; };
@@ -1518,7 +1522,6 @@
 		col-scan-delay-us = <500>;
 		debounce-delay-ms = <10>;
 		gpio-activelow;
-		wakeup-source;
 		linux,keymap = <
 			MATRIX_KEY(0, 0, KEY_1)
 			MATRIX_KEY(0, 1, KEY_2)

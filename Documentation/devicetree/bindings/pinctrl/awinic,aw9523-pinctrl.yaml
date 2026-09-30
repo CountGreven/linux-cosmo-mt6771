@@ -46,6 +46,13 @@ properties:
   reset-gpios:
     maxItems: 1
 
+  awinic,reset-in-suspend:
+    type: boolean
+    description:
+      Hold the chip in reset (RSTN low) across system suspend and restore its
+      configuration on resume. Only for boards where no pin has to keep its
+      level while the system sleeps.
+
 # PIN CONFIGURATION NODES
 patternProperties:
   '-pins$':

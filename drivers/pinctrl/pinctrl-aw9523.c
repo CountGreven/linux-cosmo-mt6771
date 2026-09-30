@@ -14,6 +14,7 @@
 #include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/pm.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -73,6 +74,7 @@ struct aw9523_irq {
  * @i2c_lock: Mutex lock for i2c operations
  * @reset_gpio: Hardware reset (RSTN) signal GPIO
  * @vio_vreg: VCC regulator (Optional)
+ * @reset_in_suspend: hold the chip in reset across system suspend
  * @pctl: pinctrl handle for current device
  * @gpio: structure holding gpiochip params
  * @irq: Interrupt controller structure
@@ -83,6 +85,7 @@ struct aw9523 {
 	struct mutex i2c_lock;
 	struct gpio_desc *reset_gpio;
 	int vio_vreg;
+	bool reset_in_suspend;
 	struct pinctrl_dev *pctl;
 	struct gpio_chip gpio;
 	struct aw9523_irq *irq;
@@ -896,14 +899,12 @@ static const struct regmap_config aw9523_regmap = {
 	.num_reg_defaults_raw = AW9523_REG_SOFT_RESET,
 };
 
-static int aw9523_hw_init(struct aw9523 *awi)
+/* Bring the chip from reset to the safe default configuration; the cache is bypassed */
+static int aw9523_chip_setup(struct aw9523 *awi)
 {
 	u8 p1_pin = AW9523_PINS_PER_PORT;
 	unsigned int val;
 	int ret;
-
-	/* No register caching during initialization */
-	regcache_cache_bypass(awi->regmap, true);
 
 	/* Bring up the chip */
 	ret = aw9523_hw_reset(awi);
@@ -952,7 +953,17 @@ static int aw9523_hw_init(struct aw9523 *awi)
 	ret = aw9523_get_port_state(awi->regmap, 0, 0, &val);
 	if (ret)
 		return ret;
-	ret = aw9523_get_port_state(awi->regmap, p1_pin, 0, &val);
+	return aw9523_get_port_state(awi->regmap, p1_pin, 0, &val);
+}
+
+static int aw9523_hw_init(struct aw9523 *awi)
+{
+	int ret;
+
+	/* No register caching during initialization */
+	regcache_cache_bypass(awi->regmap, true);
+
+	ret = aw9523_chip_setup(awi);
 	if (ret)
 		return ret;
 
@@ -960,6 +971,65 @@ static int aw9523_hw_init(struct aw9523 *awi)
 	regcache_cache_bypass(awi->regmap, false);
 	return regmap_reinit_cache(awi->regmap, &aw9523_regmap);
 }
+
+/*
+ * The vendor keyboard driver holds RSTN low across suspend and resets the chip on resume
+ * (aw9523_key.c aw9523_i2c_suspend). The pin configuration is restored from the register cache.
+ */
+static int aw9523_suspend(struct device *dev)
+{
+	struct aw9523 *awi = dev_get_drvdata(dev);
+
+	if (!awi->reset_in_suspend)
+		return 0;
+
+	guard(mutex)(&awi->i2c_lock);
+
+	regcache_cache_only(awi->regmap, true);
+	gpiod_set_value_cansleep(awi->reset_gpio, 0);
+
+	return 0;
+}
+
+static int aw9523_resume(struct device *dev)
+{
+	struct aw9523 *awi = dev_get_drvdata(dev);
+	unsigned int port0, port1;
+	int ret;
+
+	if (!awi->reset_in_suspend)
+		return 0;
+
+	guard(mutex)(&awi->i2c_lock);
+
+	/* the vendor waits 5 ms after releasing RSTN (aw9523_key.c:290-292) */
+	gpiod_set_value_cansleep(awi->reset_gpio, 1);
+	usleep_range(5000, 6000);
+
+	regcache_cache_only(awi->regmap, false);
+	regcache_cache_bypass(awi->regmap, true);
+	ret = aw9523_chip_setup(awi);
+	regcache_cache_bypass(awi->regmap, false);
+	if (ret)
+		return ret;
+
+	/* The reset restored the defaults the cache was built on: write out what differs */
+	regcache_mark_dirty(awi->regmap);
+	ret = regcache_sync(awi->regmap);
+	if (ret || !awi->irq)
+		return ret;
+
+	/* Level changes while asleep are not reported, only later ones */
+	ret = regmap_read(awi->regmap, AW9523_REG_IN_STATE(0), &port0);
+	if (!ret)
+		ret = regmap_read(awi->regmap, AW9523_REG_IN_STATE(AW9523_PINS_PER_PORT), &port1);
+	if (!ret)
+		awi->irq->cached_gpio = (u8)port0 | (u8)port1 << 8;
+
+	return ret;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(aw9523_pm_ops, aw9523_suspend, aw9523_resume);
 
 static int aw9523_probe(struct i2c_client *client)
 {
@@ -979,6 +1049,7 @@ static int aw9523_probe(struct i2c_client *client)
 	if (IS_ERR(awi->reset_gpio))
 		return PTR_ERR(awi->reset_gpio);
 	gpiod_set_consumer_name(awi->reset_gpio, "aw9523 reset");
+	awi->reset_in_suspend = device_property_read_bool(dev, "awinic,reset-in-suspend");
 
 	awi->regmap = devm_regmap_init_i2c(client, &aw9523_regmap);
 	if (IS_ERR(awi->regmap))
@@ -1061,6 +1132,7 @@ static struct i2c_driver aw9523_driver = {
 	.driver = {
 		.name = "aw9523-pinctrl",
 		.of_match_table = of_aw9523_i2c_match,
+		.pm = pm_sleep_ptr(&aw9523_pm_ops),
 	},
 	.probe = aw9523_probe,
 	.remove = aw9523_remove,

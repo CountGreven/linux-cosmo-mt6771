@@ -228,6 +228,57 @@ static const struct file_operations mtk_seninf_dbg_regs_fops = {
 	.release = single_release,
 };
 
+/* reg: read or write one register of a page: "page off" reads, "page off val" writes */
+
+static ssize_t mtk_seninf_dbg_reg_write(struct file *file, const char __user *ubuf,
+					size_t len, loff_t *ppos)
+{
+	struct mtk_seninf *priv = file_inode(file)->i_private;
+	unsigned int page, off, val;
+	char buf[48];
+	int n;
+
+	if (len >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = 0;
+
+	n = sscanf(buf, "%i %i %i", &page, &off, &val);
+	if (n < 2 || page >= SENINF_NUM_PAGES || off >= SENINF_PAGE_SIZE || off & 3)
+		return -EINVAL;
+
+	mutex_lock(&priv->lock);
+	if (!mtk_seninf_dbg_get(priv)) {
+		mutex_unlock(&priv->lock);
+		return -EAGAIN;
+	}
+	if (n == 3)
+		seninf_write(priv, page, off, val);
+	priv->dbg_reg_val = seninf_read(priv, page, off);
+	mtk_seninf_dbg_put(priv);
+	mutex_unlock(&priv->lock);
+
+	return len;
+}
+
+static ssize_t mtk_seninf_dbg_reg_read(struct file *file, char __user *ubuf,
+				       size_t len, loff_t *ppos)
+{
+	struct mtk_seninf *priv = file_inode(file)->i_private;
+	char buf[16];
+	int n = scnprintf(buf, sizeof(buf), "%08x\n", priv->dbg_reg_val);
+
+	return simple_read_from_buffer(ubuf, len, ppos, buf, n);
+}
+
+static const struct file_operations mtk_seninf_dbg_reg_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read = mtk_seninf_dbg_reg_read,
+	.write = mtk_seninf_dbg_reg_write,
+};
+
 /* stream: bring-up only, start and stop a sensor without a capture driver */
 
 static ssize_t mtk_seninf_dbg_stream_write(struct file *file, const char __user *ubuf,
@@ -379,6 +430,7 @@ void mtk_seninf_debugfs_init(struct mtk_seninf *priv)
 	debugfs_create_file("power", 0644, dir, priv, &mtk_seninf_dbg_power_fops);
 	debugfs_create_file("regs", 0644, dir, priv, &mtk_seninf_dbg_regs_fops);
 	debugfs_create_file("stream", 0644, dir, priv, &mtk_seninf_dbg_stream_fops);
+	debugfs_create_file("reg", 0644, dir, priv, &mtk_seninf_dbg_reg_fops);
 	debugfs_create_file("tm", 0644, dir, priv, &mtk_seninf_dbg_tm_fops);
 
 	/* Applied by the next stream on */

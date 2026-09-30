@@ -93,6 +93,7 @@ struct mtk_seninf {
 	bool dbg_power;
 	bool tm_on;
 	unsigned int dbg_page;
+	u32 dbg_reg_val;
 };
 
 extern const struct mtk_seninf_port_info mtk_seninf_port_info[SENINF_NUM_PORTS];

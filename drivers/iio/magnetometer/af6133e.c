@@ -6,11 +6,13 @@
  * compensation follow the vendor MediaTek driver (af6133e.c, version 3.0.0).
  */
 
+#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/math.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/pm.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 
@@ -59,6 +61,7 @@ static const char * const af6133e_supply_names[] = { "vdd", "vddio" };
 
 struct af6133e_data {
 	struct regmap *regmap;
+	struct regulator_bulk_data supplies[ARRAY_SIZE(af6133e_supply_names)];
 	/* Serialises a measurement trigger and its result read */
 	struct mutex lock;
 	struct iio_mount_matrix orientation;
@@ -314,6 +317,13 @@ static const struct regmap_config af6133e_regmap_config = {
 	.max_register = AF6133E_REG_TEST2 + 1,
 };
 
+static void af6133e_disable_supplies(void *arg)
+{
+	struct af6133e_data *data = arg;
+
+	regulator_bulk_disable(ARRAY_SIZE(data->supplies), data->supplies);
+}
+
 static int af6133e_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
@@ -321,7 +331,7 @@ static int af6133e_probe(struct i2c_client *client)
 	struct iio_dev *indio_dev;
 	s16 bist[3][3] = { };
 	unsigned int pcode;
-	int ret;
+	int ret, i;
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*data));
 	if (!indio_dev)
@@ -340,10 +350,21 @@ static int af6133e_probe(struct i2c_client *client)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read mount matrix\n");
 
-	ret = devm_regulator_bulk_get_enable(dev, ARRAY_SIZE(af6133e_supply_names),
-					     af6133e_supply_names);
+	for (i = 0; i < ARRAY_SIZE(af6133e_supply_names); i++)
+		data->supplies[i].supply = af6133e_supply_names[i];
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(data->supplies), data->supplies);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to get supplies\n");
+
+	ret = regulator_bulk_enable(ARRAY_SIZE(data->supplies), data->supplies);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to enable supplies\n");
+
+	ret = devm_add_action_or_reset(dev, af6133e_disable_supplies, data);
+	if (ret)
+		return ret;
+
+	i2c_set_clientdata(client, indio_dev);
 
 	ret = regmap_read(data->regmap, AF6133E_REG_PCODE, &pcode);
 	if (ret)
@@ -375,6 +396,43 @@ static int af6133e_probe(struct i2c_client *client)
 	return devm_iio_device_register(dev, indio_dev);
 }
 
+/*
+ * The vendor driver has no suspend hook: the chip measures once per trigger and idles between
+ * reads, so there is no chip state to change. With switchable supplies they are dropped, and
+ * the registers are written again on resume; the self-test calibration is kept.
+ */
+static int af6133e_suspend(struct device *dev)
+{
+	struct af6133e_data *data = iio_priv(dev_get_drvdata(dev));
+
+	guard(mutex)(&data->lock);
+
+	return regulator_bulk_disable(ARRAY_SIZE(data->supplies), data->supplies);
+}
+
+static int af6133e_resume(struct device *dev)
+{
+	struct af6133e_data *data = iio_priv(dev_get_drvdata(dev));
+	unsigned int pcode;
+	int ret;
+
+	guard(mutex)(&data->lock);
+
+	ret = regulator_bulk_enable(ARRAY_SIZE(data->supplies), data->supplies);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(data->regmap, AF6133E_REG_PCODE, &pcode);
+	if (ret)
+		return ret;
+	if (pcode != AF6133E_PCODE)
+		dev_warn(dev, "unexpected product code 0x%02x after resume\n", pcode);
+
+	return af6133e_init(data);
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(af6133e_pm_ops, af6133e_suspend, af6133e_resume);
+
 static const struct of_device_id af6133e_of_match[] = {
 	{ .compatible = "voltafield,af6133e" },
 	{ }
@@ -391,6 +449,7 @@ static struct i2c_driver af6133e_driver = {
 	.driver = {
 		.name = "af6133e",
 		.of_match_table = af6133e_of_match,
+		.pm = pm_sleep_ptr(&af6133e_pm_ops),
 	},
 	.probe = af6133e_probe,
 	.id_table = af6133e_id,

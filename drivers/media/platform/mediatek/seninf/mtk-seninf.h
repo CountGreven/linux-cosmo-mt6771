@@ -34,6 +34,8 @@ enum mtk_seninf_port_id {
 
 #define SENINF_NUM_CLKS		2
 
+struct dentry;
+
 struct mtk_seninf_port_info {
 	const char *phy_name;
 	u8 page;		/* SENINF page holding the CSI-2 decoder */
@@ -85,6 +87,12 @@ struct mtk_seninf {
 	unsigned int stream_hw_port;	/* receiver port in use */
 	struct v4l2_subdev *stream_sensor;
 	unsigned int stream_sensor_pad;
+
+	/* Bring-up aid, see mtk-seninf-debugfs.c */
+	struct dentry *debugfs;
+	bool dbg_power;
+	bool tm_on;
+	unsigned int dbg_page;
 };
 
 extern const struct mtk_seninf_port_info mtk_seninf_port_info[SENINF_NUM_PORTS];
@@ -113,5 +121,13 @@ static inline void seninf_update(struct mtk_seninf *priv, unsigned int page,
 
 int mtk_seninf_start(struct mtk_seninf *priv, unsigned int sink_port);
 void mtk_seninf_stop(struct mtk_seninf *priv);
+
+#ifdef CONFIG_DEBUG_FS
+void mtk_seninf_debugfs_init(struct mtk_seninf *priv);
+void mtk_seninf_debugfs_exit(struct mtk_seninf *priv);
+#else
+static inline void mtk_seninf_debugfs_init(struct mtk_seninf *priv) { }
+static inline void mtk_seninf_debugfs_exit(struct mtk_seninf *priv) { }
+#endif
 
 #endif

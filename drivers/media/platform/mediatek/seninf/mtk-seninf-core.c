@@ -172,7 +172,7 @@ int mtk_seninf_start(struct mtk_seninf *priv, unsigned int sink_port)
 
 	mutex_lock(&priv->lock);
 
-	if (priv->streaming) {
+	if (priv->streaming || priv->tm_on) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -625,6 +625,8 @@ static int mtk_seninf_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_nf;
 
+	mtk_seninf_debugfs_init(priv);
+
 	return 0;
 
 err_nf:
@@ -643,6 +645,7 @@ static void mtk_seninf_remove(struct platform_device *pdev)
 {
 	struct mtk_seninf *priv = platform_get_drvdata(pdev);
 
+	mtk_seninf_debugfs_exit(priv);
 	mtk_seninf_stop(priv);
 
 	v4l2_async_nf_unregister(&priv->notifier);

@@ -71,8 +71,13 @@
 #define GC5035_XCLK_FREQ		(24 * HZ_PER_MHZ)
 #define GC5035_DATA_LANES		2
 #define GC5035_BITS_PER_PIXEL		10
-/* The output color order is taken from the vendor's RAW_R, not measured. */
+/* Unflipped color order is taken from the vendor's RAW_R, measured with the test pattern. */
 #define GC5035_MBUS_CODE		MEDIA_BUS_FMT_SRGGB10_1X10
+
+#define GC5035_REG_ORIENTATION		CCI_REG8(0x17)
+#define GC5035_ORIENTATION_BASE		0x80
+#define GC5035_ORIENTATION_HFLIP	BIT(0)
+#define GC5035_ORIENTATION_VFLIP	BIT(1)
 
 #define GC5035_POWER_STEP_US		(10 * USEC_PER_MSEC)
 
@@ -544,6 +549,8 @@ struct gc5035 {
 	struct v4l2_ctrl *exposure;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *hblank;
+	struct v4l2_ctrl *hflip;
+	struct v4l2_ctrl *vflip;
 
 	struct regmap *regmap;
 	unsigned long link_freq_bitmap;
@@ -611,6 +618,20 @@ static int gc5035_power_off(struct device *dev)
 	return 0;
 }
 
+/* The flips move the first pixel of the array, which changes the Bayer order. */
+static u32 gc5035_mbus_code(const struct gc5035 *gc5035)
+{
+	static const u32 codes[2][2] = {
+		{ MEDIA_BUS_FMT_SRGGB10_1X10, MEDIA_BUS_FMT_SGRBG10_1X10 },
+		{ MEDIA_BUS_FMT_SGBRG10_1X10, MEDIA_BUS_FMT_SBGGR10_1X10 },
+	};
+
+	if (!gc5035->hflip || !gc5035->vflip)
+		return GC5035_MBUS_CODE;
+
+	return codes[gc5035->vflip->val][gc5035->hflip->val];
+}
+
 static int gc5035_enum_mbus_code(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_mbus_code_enum *code)
@@ -618,7 +639,7 @@ static int gc5035_enum_mbus_code(struct v4l2_subdev *sd,
 	if (code->index > 0)
 		return -EINVAL;
 
-	code->code = GC5035_MBUS_CODE;
+	code->code = gc5035_mbus_code(to_gc5035(sd));
 
 	return 0;
 }
@@ -636,7 +657,7 @@ static int gc5035_enum_frame_size(struct v4l2_subdev *sd,
 	struct gc5035 *gc5035 = to_gc5035(sd);
 	unsigned int i, n = 0;
 
-	if (fse->code != GC5035_MBUS_CODE)
+	if (fse->code != gc5035_mbus_code(gc5035))
 		return -EINVAL;
 
 	for (i = 0; i < ARRAY_SIZE(gc5035_modes); i++) {
@@ -719,12 +740,13 @@ static int gc5035_update_mode_controls(struct gc5035 *gc5035,
 	return __v4l2_ctrl_s_ctrl(gc5035->vblank, mode->vts - mode->height);
 }
 
-static void gc5035_update_pad_format(const struct gc5035_mode *mode,
+static void gc5035_update_pad_format(const struct gc5035 *gc5035,
+				     const struct gc5035_mode *mode,
 				     struct v4l2_mbus_framefmt *fmt)
 {
 	fmt->width = mode->width;
 	fmt->height = mode->height;
-	fmt->code = GC5035_MBUS_CODE;
+	fmt->code = gc5035_mbus_code(gc5035);
 	fmt->field = V4L2_FIELD_NONE;
 	fmt->colorspace = V4L2_COLORSPACE_RAW;
 	fmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
@@ -743,7 +765,7 @@ static int gc5035_set_format(struct v4l2_subdev *sd,
 	if (!mode)
 		return -EINVAL;
 
-	gc5035_update_pad_format(mode, &fmt->format);
+	gc5035_update_pad_format(gc5035, mode, &fmt->format);
 	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
@@ -877,6 +899,15 @@ static int gc5035_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		ret = gc5035_set_test_pattern(gc5035, ctrl->val);
+		break;
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_VFLIP:
+		cci_write(gc5035->regmap, GC5035_REG_PAGE, 0, &ret);
+		cci_write(gc5035->regmap, GC5035_REG_ORIENTATION,
+			  GC5035_ORIENTATION_BASE |
+			  (gc5035->hflip->val ? GC5035_ORIENTATION_HFLIP : 0) |
+			  (gc5035->vflip->val ? GC5035_ORIENTATION_VFLIP : 0),
+			  &ret);
 		break;
 	default:
 		break;
@@ -1029,7 +1060,7 @@ static int gc5035_init_controls(struct gc5035 *gc5035)
 	s64 exposure_max = mode->vts - GC5035_EXPOSURE_MARGIN;
 	int ret;
 
-	v4l2_ctrl_handler_init(hdlr, 9);
+	v4l2_ctrl_handler_init(hdlr, 11);
 
 	gc5035->link_freq = v4l2_ctrl_new_int_menu(hdlr, &gc5035_ctrl_ops,
 			V4L2_CID_LINK_FREQ,
@@ -1060,6 +1091,16 @@ static int gc5035_init_controls(struct gc5035 *gc5035)
 
 	v4l2_ctrl_new_std(hdlr, &gc5035_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
 			  GC5035_GAIN_MIN, GC5035_GAIN_MAX, 1, GC5035_GAIN_MIN);
+
+	gc5035->hflip = v4l2_ctrl_new_std(hdlr, &gc5035_ctrl_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	gc5035->vflip = v4l2_ctrl_new_std(hdlr, &gc5035_ctrl_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (gc5035->hflip && gc5035->vflip) {
+		gc5035->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+		gc5035->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+		v4l2_ctrl_cluster(2, &gc5035->hflip);
+	}
 
 	v4l2_ctrl_new_std_menu_items(hdlr, &gc5035_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,

@@ -255,6 +255,31 @@ static int mtk_camsv_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *
 	return 0;
 }
 
+static int mtk_camsv_enum_framesizes(struct file *file, void *fh,
+				     struct v4l2_frmsizeenum *fsize)
+{
+	unsigned int i;
+
+	if (fsize->index)
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(mtk_camsv_formats); i++)
+		if (mtk_camsv_formats[i].fourcc == fsize->pixel_format)
+			break;
+	if (i == ARRAY_SIZE(mtk_camsv_formats))
+		return -EINVAL;
+
+	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
+	fsize->stepwise.min_width = 1;
+	fsize->stepwise.max_width = CAMSV_MAX_WIDTH;
+	fsize->stepwise.step_width = 1;
+	fsize->stepwise.min_height = 1;
+	fsize->stepwise.max_height = CAMSV_MAX_HEIGHT;
+	fsize->stepwise.step_height = 1;
+
+	return 0;
+}
+
 static int mtk_camsv_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 {
 	struct mtk_camsv *priv = video_drvdata(file);
@@ -269,6 +294,7 @@ static int mtk_camsv_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 static const struct v4l2_ioctl_ops mtk_camsv_ioctl_ops = {
 	.vidioc_querycap = mtk_camsv_querycap,
 	.vidioc_enum_fmt_vid_cap = mtk_camsv_enum_fmt,
+	.vidioc_enum_framesizes = mtk_camsv_enum_framesizes,
 	.vidioc_g_fmt_vid_cap = mtk_camsv_g_fmt,
 	.vidioc_s_fmt_vid_cap = mtk_camsv_g_fmt,
 	.vidioc_try_fmt_vid_cap = mtk_camsv_g_fmt,

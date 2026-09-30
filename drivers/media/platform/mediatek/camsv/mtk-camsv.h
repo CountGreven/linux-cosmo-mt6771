@@ -125,6 +125,9 @@ static inline void camsv_update(struct mtk_camsv *priv, u32 reg, u32 mask, u32 v
 	camsv_write(priv, reg, tmp);
 }
 
+#define CAMSV_MAX_WIDTH		8191
+#define CAMSV_MAX_HEIGHT	8191
+
 extern const struct mtk_camsv_format mtk_camsv_formats[4];
 
 const struct mtk_camsv_format *mtk_camsv_format_by_code(u32 code);

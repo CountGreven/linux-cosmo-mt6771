@@ -27,8 +27,6 @@
 
 #define CAMSV_DEFAULT_WIDTH		1600
 #define CAMSV_DEFAULT_HEIGHT		1200
-#define CAMSV_MAX_WIDTH			8191
-#define CAMSV_MAX_HEIGHT		8191
 
 /* One error bit that keeps firing is masked after this many interrupts */
 #define CAMSV_ERR_STORM			100

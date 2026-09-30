@@ -55,10 +55,28 @@
 #define S5K2X7_REG_VTS			CCI_REG16(0x0340)
 #define S5K2X7_VTS_MAX			(0xffff - S5K2X7_EXPOSURE_MARGIN)
 
+#define S5K2X7_REG_ORIENTATION		CCI_REG8(0x0101)
+#define S5K2X7_ORIENTATION_HFLIP	BIT(0)
+#define S5K2X7_ORIENTATION_VFLIP	BIT(1)
+
+/* Analogue crop window of the array, inclusive end coordinates, and the output size after binning. */
+#define S5K2X7_REG_X_START		CCI_REG16(0x0344)
+#define S5K2X7_REG_Y_START		CCI_REG16(0x0346)
+#define S5K2X7_REG_X_END		CCI_REG16(0x0348)
+#define S5K2X7_REG_Y_END		CCI_REG16(0x034a)
+#define S5K2X7_REG_X_OUTPUT		CCI_REG16(0x034c)
+#define S5K2X7_REG_Y_OUTPUT		CCI_REG16(0x034e)
+
 #define S5K2X7_REG_TEST_PATTERN		CCI_REG16(0x0600)
 
 #define S5K2X7_NATIVE_WIDTH		5664
 #define S5K2X7_NATIVE_HEIGHT		4256
+
+/* The 2x2 binned mode halves the crop window; window edges and sizes are kept a multiple of 4. */
+#define S5K2X7_BINNING			2
+#define S5K2X7_CROP_ALIGN		4
+#define S5K2X7_CROP_MIN_WIDTH		640
+#define S5K2X7_CROP_MIN_HEIGHT		480
 
 #define S5K2X7_MCLK_FREQ		(24 * HZ_PER_MHZ)
 #define S5K2X7_DATA_LANES		4
@@ -1273,19 +1291,22 @@ struct s5k2x7 {
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *exposure;
+	struct v4l2_ctrl *hflip;
+	struct v4l2_ctrl *vflip;
 
 	const struct s5k2x7_mode *mode;
+	/* Output height of the active crop, the frame length is this plus VBLANK */
+	u32 height;
 };
 
 static int s5k2x7_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct s5k2x7 *s5k2x7 = container_of(ctrl->handler, struct s5k2x7,
 					     ctrl_handler);
-	const struct s5k2x7_mode *mode = s5k2x7->mode;
 	int ret;
 
 	if (ctrl->id == V4L2_CID_VBLANK) {
-		s64 exposure_max = mode->height + ctrl->val -
+		s64 exposure_max = s5k2x7->height + ctrl->val -
 				   S5K2X7_EXPOSURE_MARGIN;
 
 		__v4l2_ctrl_modify_range(s5k2x7->exposure,
@@ -1309,7 +1330,14 @@ static int s5k2x7_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_VBLANK:
 		ret = cci_write(s5k2x7->regmap, S5K2X7_REG_VTS,
-				ctrl->val + mode->height, NULL);
+				ctrl->val + s5k2x7->height, NULL);
+		break;
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_VFLIP:
+		ret = cci_write(s5k2x7->regmap, S5K2X7_REG_ORIENTATION,
+				(s5k2x7->hflip->val ? S5K2X7_ORIENTATION_HFLIP : 0) |
+				(s5k2x7->vflip->val ? S5K2X7_ORIENTATION_VFLIP : 0),
+				NULL);
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		ret = cci_write(s5k2x7->regmap, S5K2X7_REG_TEST_PATTERN,
@@ -1339,7 +1367,7 @@ static int s5k2x7_init_controls(struct s5k2x7 *s5k2x7)
 	s64 exposure_max = mode->vts - S5K2X7_EXPOSURE_MARGIN;
 	int ret;
 
-	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
+	v4l2_ctrl_handler_init(ctrl_hdlr, 11);
 
 	s5k2x7->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &s5k2x7_ctrl_ops,
 			V4L2_CID_LINK_FREQ,
@@ -1370,6 +1398,13 @@ static int s5k2x7_init_controls(struct s5k2x7 *s5k2x7)
 	v4l2_ctrl_new_std(ctrl_hdlr, &s5k2x7_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
 			  S5K2X7_AGAIN_MIN, S5K2X7_AGAIN_MAX, S5K2X7_AGAIN_STEP,
 			  S5K2X7_AGAIN_MIN);
+
+	s5k2x7->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &s5k2x7_ctrl_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	s5k2x7->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &s5k2x7_ctrl_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (s5k2x7->hflip && s5k2x7->vflip)
+		v4l2_ctrl_cluster(2, &s5k2x7->hflip);
 
 	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &s5k2x7_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -1422,6 +1457,7 @@ static int s5k2x7_enable_streams(struct v4l2_subdev *sd,
 {
 	struct s5k2x7 *s5k2x7 = to_s5k2x7(sd);
 	const struct s5k2x7_mode *mode = s5k2x7->mode;
+	const struct v4l2_rect *crop;
 	int ret;
 
 	ret = pm_runtime_resume_and_get(s5k2x7->dev);
@@ -1445,6 +1481,20 @@ static int s5k2x7_enable_streams(struct v4l2_subdev *sd,
 	s5k2x7_wait_stream_off(s5k2x7);
 
 	cci_multi_reg_write(s5k2x7->regmap, mode->regs, mode->num_regs, &ret);
+	if (ret)
+		goto error;
+
+	crop = v4l2_subdev_state_get_crop(state, 0);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_X_START, crop->left, &ret);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_Y_START, crop->top, &ret);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_X_END,
+		  crop->left + crop->width - 1, &ret);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_Y_END,
+		  crop->top + crop->height - 1, &ret);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_X_OUTPUT,
+		  crop->width / S5K2X7_BINNING, &ret);
+	cci_write(s5k2x7->regmap, S5K2X7_REG_Y_OUTPUT,
+		  crop->height / S5K2X7_BINNING, &ret);
 	if (ret)
 		goto error;
 
@@ -1484,12 +1534,12 @@ static int s5k2x7_disable_streams(struct v4l2_subdev *sd,
 	return ret;
 }
 
-static void s5k2x7_update_pad_format(const struct s5k2x7_mode *mode,
+static void s5k2x7_update_pad_format(const struct v4l2_rect *crop,
 				     struct v4l2_mbus_framefmt *fmt)
 {
 	fmt->code = S5K2X7_MBUS_CODE;
-	fmt->width = mode->width;
-	fmt->height = mode->height;
+	fmt->width = crop->width / S5K2X7_BINNING;
+	fmt->height = crop->height / S5K2X7_BINNING;
 	fmt->field = V4L2_FIELD_NONE;
 	fmt->colorspace = V4L2_COLORSPACE_RAW;
 	fmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
@@ -1497,48 +1547,47 @@ static void s5k2x7_update_pad_format(const struct s5k2x7_mode *mode,
 	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
 }
 
+/* The frame size changed: keep 30 fps, so the blanking follows the new size. */
+static int s5k2x7_update_blanking(struct s5k2x7 *s5k2x7, u32 width, u32 height)
+{
+	const struct s5k2x7_mode *mode = s5k2x7->mode;
+	s64 exposure_max = mode->vts - S5K2X7_EXPOSURE_MARGIN;
+
+	s5k2x7->height = height;
+
+	__v4l2_ctrl_modify_range(s5k2x7->hblank, mode->hts - width,
+				 mode->hts - width, 1, mode->hts - width);
+	__v4l2_ctrl_modify_range(s5k2x7->vblank, mode->vts - height,
+				 S5K2X7_VTS_MAX - height, 1,
+				 mode->vts - height);
+	__v4l2_ctrl_s_ctrl(s5k2x7->vblank, mode->vts - height);
+
+	__v4l2_ctrl_modify_range(s5k2x7->exposure, S5K2X7_EXPOSURE_MIN,
+				 exposure_max, S5K2X7_EXPOSURE_STEP,
+				 mode->exposure);
+	__v4l2_ctrl_s_ctrl(s5k2x7->exposure, mode->exposure);
+
+	return s5k2x7->sd.ctrl_handler->error;
+}
+
 static int s5k2x7_set_pad_format(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_format *fmt)
 {
 	struct s5k2x7 *s5k2x7 = to_s5k2x7(sd);
-	const struct s5k2x7_mode *mode;
-	s64 exposure_max;
+	const struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, 0);
 
-	mode = v4l2_find_nearest_size(s5k2x7_supported_modes,
-				      ARRAY_SIZE(s5k2x7_supported_modes),
-				      width, height,
-				      fmt->format.width, fmt->format.height);
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+	    v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
 
-	s5k2x7_update_pad_format(mode, &fmt->format);
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && s5k2x7->mode != mode) {
-		s5k2x7->mode = mode;
-
-		__v4l2_ctrl_modify_range(s5k2x7->pixel_rate, mode->pixel_rate,
-					 mode->pixel_rate, 1,
-					 mode->pixel_rate);
-		__v4l2_ctrl_modify_range(s5k2x7->hblank,
-					 mode->hts - mode->width,
-					 mode->hts - mode->width, 1,
-					 mode->hts - mode->width);
-		__v4l2_ctrl_modify_range(s5k2x7->vblank,
-					 mode->vts - mode->height,
-					 S5K2X7_VTS_MAX - mode->height, 1,
-					 mode->vts - mode->height);
-		__v4l2_ctrl_s_ctrl(s5k2x7->vblank, mode->vts - mode->height);
-
-		exposure_max = mode->vts - S5K2X7_EXPOSURE_MARGIN;
-		__v4l2_ctrl_modify_range(s5k2x7->exposure, S5K2X7_EXPOSURE_MIN,
-					 exposure_max, S5K2X7_EXPOSURE_STEP,
-					 mode->exposure);
-		__v4l2_ctrl_s_ctrl(s5k2x7->exposure, mode->exposure);
-
-		if (s5k2x7->sd.ctrl_handler->error)
-			return s5k2x7->sd.ctrl_handler->error;
-	}
-
+	/* There is no scaler: the size is the binned crop window. */
+	s5k2x7_update_pad_format(crop, &fmt->format);
 	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
+
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		return s5k2x7_update_blanking(s5k2x7, fmt->format.width,
+					      fmt->format.height);
 
 	return 0;
 }
@@ -1559,16 +1608,16 @@ static int s5k2x7_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
-	if (fse->index >= ARRAY_SIZE(s5k2x7_supported_modes))
+	const struct v4l2_mbus_framefmt *fmt;
+
+	if (fse->index || fse->code != S5K2X7_MBUS_CODE)
 		return -EINVAL;
 
-	if (fse->code != S5K2X7_MBUS_CODE)
-		return -EINVAL;
-
-	fse->min_width = s5k2x7_supported_modes[fse->index].width;
-	fse->max_width = fse->min_width;
-	fse->min_height = s5k2x7_supported_modes[fse->index].height;
-	fse->max_height = fse->min_height;
+	fmt = v4l2_subdev_state_get_format(state, 0);
+	fse->min_width = fmt->width;
+	fse->max_width = fmt->width;
+	fse->min_height = fmt->height;
+	fse->max_height = fmt->height;
 
 	return 0;
 }
@@ -1579,6 +1628,8 @@ static int s5k2x7_get_selection(struct v4l2_subdev *sd,
 {
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP:
+		sel->r = *v4l2_subdev_state_get_crop(state, 0);
+		return 0;
 	case V4L2_SEL_TGT_CROP_DEFAULT:
 	case V4L2_SEL_TGT_CROP_BOUNDS:
 	case V4L2_SEL_TGT_NATIVE_SIZE:
@@ -1592,19 +1643,53 @@ static int s5k2x7_get_selection(struct v4l2_subdev *sd,
 	return -EINVAL;
 }
 
+static int s5k2x7_set_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	struct s5k2x7 *s5k2x7 = to_s5k2x7(sd);
+	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, 0);
+	struct v4l2_mbus_framefmt *fmt = v4l2_subdev_state_get_format(state, 0);
+	struct v4l2_rect r = sel->r;
+
+	if (sel->target != V4L2_SEL_TGT_CROP)
+		return -EINVAL;
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+	    v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
+
+	r.width = clamp(round_down(r.width, S5K2X7_CROP_ALIGN),
+			S5K2X7_CROP_MIN_WIDTH, S5K2X7_NATIVE_WIDTH);
+	r.height = clamp(round_down(r.height, S5K2X7_CROP_ALIGN),
+			 S5K2X7_CROP_MIN_HEIGHT, S5K2X7_NATIVE_HEIGHT);
+	r.left = clamp_t(int, round_down(max(r.left, 0), S5K2X7_CROP_ALIGN), 0,
+			 S5K2X7_NATIVE_WIDTH - r.width);
+	r.top = clamp_t(int, round_down(max(r.top, 0), S5K2X7_CROP_ALIGN), 0,
+			S5K2X7_NATIVE_HEIGHT - r.height);
+
+	*crop = r;
+	sel->r = r;
+	s5k2x7_update_pad_format(crop, fmt);
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		return s5k2x7_update_blanking(s5k2x7, fmt->width, fmt->height);
+
+	return 0;
+}
+
 static int s5k2x7_init_state(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state)
 {
-	struct s5k2x7 *s5k2x7 = to_s5k2x7(sd);
-	struct v4l2_subdev_format fmt = {
-		.which = V4L2_SUBDEV_FORMAT_TRY,
-		.format = {
-			.width = s5k2x7->mode->width,
-			.height = s5k2x7->mode->height,
-		},
-	};
+	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, 0);
 
-	return s5k2x7_set_pad_format(sd, state, &fmt);
+	crop->left = 0;
+	crop->top = 0;
+	crop->width = S5K2X7_NATIVE_WIDTH;
+	crop->height = S5K2X7_NATIVE_HEIGHT;
+	s5k2x7_update_pad_format(crop, v4l2_subdev_state_get_format(state, 0));
+
+	return 0;
 }
 
 static const struct v4l2_subdev_video_ops s5k2x7_video_ops = {
@@ -1615,6 +1700,7 @@ static const struct v4l2_subdev_pad_ops s5k2x7_pad_ops = {
 	.set_fmt = s5k2x7_set_pad_format,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.get_selection = s5k2x7_get_selection,
+	.set_selection = s5k2x7_set_selection,
 	.enum_mbus_code = s5k2x7_enum_mbus_code,
 	.enum_frame_size = s5k2x7_enum_frame_size,
 	.enable_streams = s5k2x7_enable_streams,
@@ -1832,6 +1918,7 @@ static int s5k2x7_probe(struct i2c_client *client)
 		goto power_off;
 
 	s5k2x7->mode = &s5k2x7_supported_modes[0];
+	s5k2x7->height = s5k2x7->mode->height;
 	ret = s5k2x7_init_controls(s5k2x7);
 	if (ret) {
 		dev_err_probe(dev, ret, "failed to init controls\n");

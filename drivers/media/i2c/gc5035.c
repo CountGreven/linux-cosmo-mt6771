@@ -1211,16 +1211,22 @@ static int gc5035_probe(struct i2c_client *client)
 
 err_rpm:
 	pm_runtime_disable(dev);
+	/* pm_runtime_idle() may already have powered the sensor off. */
+	if (!pm_runtime_status_suspended(dev))
+		gc5035_power_off(dev);
 	pm_runtime_set_suspended(dev);
 	v4l2_subdev_cleanup(&gc5035->sd);
+	media_entity_cleanup(&gc5035->sd.entity);
+	v4l2_ctrl_handler_free(&gc5035->ctrls);
+
+	return ret;
+
 err_entity_cleanup:
 	media_entity_cleanup(&gc5035->sd.entity);
 err_ctrl_free:
 	v4l2_ctrl_handler_free(&gc5035->ctrls);
 err_power_off:
-	/* pm_runtime_idle() may already have powered the sensor off. */
-	if (!pm_runtime_status_suspended(dev))
-		gc5035_power_off(dev);
+	gc5035_power_off(dev);
 
 	return ret;
 }

@@ -62,6 +62,14 @@ class FakeSys:
     def rmdir(self, path):
         os.rmdir(os.path.join(self.root, path.lstrip("/")))
 
+    def device_link(self, port, marker):
+        """Create /sys/class/typec/portN/device -> symlink target containing 'marker'."""
+        link = self.root + "/sys/class/typec/port%d/device" % port
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        if os.path.lexists(link):
+            os.unlink(link)
+        os.symlink("/tmp/fake/path/%s" % marker, link)
+
     def port(self, n, partner, role):
         self.put("/sys/class/typec/port%d/power_role" % n,
                  "[source] sink" if role == "source" else "source [sink]")
@@ -78,6 +86,8 @@ class SysfsState(unittest.TestCase):
         self.fs.put("/sys/class/power_supply/battery/online", "1")
         self.fs.put("/sys/class/power_supply/mt6370-charger/type", "USB")
         self.fs.put("/sys/class/power_supply/mt6370-charger/online", "0")
+        self.fs.device_link(0, "mt6370-tcpc")
+        self.fs.device_link(1, "3-0025")
         self.fs.put("/sys/devices/platform/usb-role-mux/active", "left")
 
     def status(self):
@@ -140,6 +150,8 @@ class Protocol(unittest.TestCase):
         self.ctl = []
         self.status = "discharge"
         ImmediateTimer.calls = []
+        self.fs.device_link(0, "mt6370-tcpc")
+        self.fs.device_link(1, "3-0025")
         self.r = cu.RightUsb(self.sent.append, cu.Sysfs(self.fs.root), timer=ImmediateTimer,
                              status_name=lambda: self.status, usb_control=self.ctl.append)
 
@@ -227,6 +239,40 @@ class Patch(unittest.TestCase):
                 out = codi_patch.patch(name, f.read())
             compile(out, name, "exec")
             self.assertIn("cosmo_usb", out)
+
+
+
+class PortChipResolution(unittest.TestCase):
+    """Verify port resolution by chip type rather than hardcoded port numbers."""
+
+    def setUp(self):
+        self.fs = FakeSys()
+        self.addCleanup(self.fs.tmp.cleanup)
+        self.s = cu.Sysfs(self.fs.root)
+        self.fs.put("/sys/class/power_supply/battery/type", "Battery")
+        self.fs.put("/sys/class/power_supply/battery/online", "0")
+
+    def test_swapped_ports(self):
+        """port0=FUSB301 and port1=mt6370 (swapped) still identifies right port."""
+        self.fs.device_link(0, "3-0025")   # FUSB301 on port0 (swapped order)
+        self.fs.device_link(1, "mt6370-tcpc")  # mt6370 on port1
+        self.fs.port(0, True, "source")    # FUSB301 in source role
+        # new code finds it by chip even though it is on port0 not port1
+        self.assertTrue(self.s.right_sink_attached())
+
+    def test_normal_order(self):
+        """port0=mt6370, port1=FUSB301 (normal) identifies right port."""
+        self.fs.device_link(0, "mt6370-tcpc")
+        self.fs.device_link(1, "3-0025")
+        self.fs.port(1, True, "source")
+        self.assertTrue(self.s.right_sink_attached())
+
+    def test_fusb_missing(self):
+        """FUSB301 port missing -> no right partner."""
+        self.fs.device_link(0, "mt6370-tcpc")
+        # no device_link for port1 -- FUSB301 absent
+        self.assertFalse(self.s.right_sink_attached())
+
 
 
 class HookHandover(unittest.TestCase):

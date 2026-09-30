@@ -86,8 +86,25 @@ class Sysfs:
         return (os.path.isdir(self._p(base + "-partner")) and
                 "[source]" in _read(self._p(base + "/power_role")))
 
+    def _resolve_port_names(self):
+        ports = {}
+        for entry in sorted(glob.glob(self._p("/sys/class/typec/port*"))):
+            if os.path.basename(entry).endswith("-partner"):
+                continue
+            dev = entry + "/device"
+            real = os.path.realpath(dev) if os.path.lexists(dev) else ""
+            if os.path.basename(real) == "3-0025" or "/3-0025/" in real:
+                ports["right"] = os.path.basename(entry)
+            elif "mt6370-tcpc" in real:
+                ports["left"] = os.path.basename(entry)
+        return ports
+
     def right_sink_attached(self):
-        return self._source_partner("port1")
+        ports = self._resolve_port_names()
+        port = ports.get("right")
+        if not port:
+            return False
+        return self._source_partner(port)
 
     def charging(self):
         for d in glob.glob(self._p("/sys/class/power_supply/*")):
@@ -100,7 +117,8 @@ class Sysfs:
                    for s in glob.glob(self._p("/sys/class/drm/card*-HDMI-A-*/status")))
 
     def otg(self):
-        left = self._source_partner("port0")
+        ports = self._resolve_port_names()
+        left = self._source_partner(ports.get("left", ""))
         # the fusb301 driver gives an HDMI adapter no USB role; the vendor never sets 3 for one
         right = self.right_sink_attached() and not self.hdmi()
         if left and right:

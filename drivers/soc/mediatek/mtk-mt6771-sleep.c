@@ -70,6 +70,8 @@ struct mt6771_sleep {
 	u32 rgu_irq_set;
 	struct regmap *spm;
 	struct regmap *pmic;
+	struct notifier_block pm_nb;
+	struct cpumask offlined;
 	bool armed;
 	bool lp_applied;
 	struct slp_reg_op lp_undo[2 * ARRAY_SIZE(slp_lp_table)];
@@ -308,6 +310,49 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	return 0;
 }
 
+/* CPUs cannot be unplugged from noirq context, so the notifier does it before the freeze */
+static void slp_cpus_online(struct mt6771_sleep *s)
+{
+	unsigned int cpu;
+	int ret;
+
+	for_each_cpu(cpu, &s->offlined) {
+		ret = add_cpu(cpu);
+		if (ret)
+			dev_warn(s->dev, "CPU%u did not come back: %d\n", cpu, ret);
+	}
+	cpumask_clear(&s->offlined);
+}
+
+static int slp_pm_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+	struct mt6771_sleep *s = container_of(nb, struct mt6771_sleep, pm_nb);
+	unsigned int cpu;
+	int ret;
+
+	switch (action) {
+	case PM_SUSPEND_PREPARE:
+		if (!READ_ONCE(deep_enable) || !pm_suspend_default_s2idle())
+			return NOTIFY_DONE;
+		for_each_online_cpu(cpu) {
+			if (!cpu)
+				continue;
+			ret = remove_cpu(cpu);
+			if (ret) {
+				dev_err(s->dev, "cannot offline CPU%u: %d\n", cpu, ret);
+				slp_cpus_online(s);
+				return NOTIFY_BAD;
+			}
+			cpumask_set_cpu(cpu, &s->offlined);
+		}
+		return NOTIFY_OK;
+	case PM_POST_SUSPEND:
+		slp_cpus_online(s);
+		return NOTIFY_OK;
+	}
+	return NOTIFY_DONE;
+}
+
 static const struct dev_pm_ops mt6771_sleep_pm_ops = {
 	.suspend_noirq = pm_sleep_ptr(mt6771_sleep_suspend_noirq),
 	.resume_noirq = pm_sleep_ptr(mt6771_sleep_resume_noirq),
@@ -469,6 +514,7 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mt6771_sleep *s;
+	int ret;
 
 	s = devm_kzalloc(dev, sizeof(*s), GFP_KERNEL);
 	if (!s)
@@ -492,6 +538,10 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(s->pmic), "PMIC regmap\n");
 
 	s->fw_status = slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0);
+	s->pm_nb.notifier_call = slp_pm_notify;
+	ret = register_pm_notifier(&s->pm_nb);
+	if (ret)
+		return ret;
 	mutex_lock(&slp_lock);
 	slp = s;
 	mutex_unlock(&slp_lock);
@@ -509,6 +559,7 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 
 static void mt6771_sleep_remove(struct platform_device *pdev)
 {
+	unregister_pm_notifier(&slp->pm_nb);
 	debugfs_lookup_and_remove("mt6771-sleep", NULL);
 	mutex_lock(&slp_lock);
 	if (slp->lp_applied)

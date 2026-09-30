@@ -60,7 +60,7 @@ def main():
                         help="Sample interval in seconds (default: %(default)s)")
     parser.add_argument("--out", type=str, default=DEFAULT_OUT,
                         help="Output CSV file path (default: %(default)s)")
-    parser.add_argument("--summary", metavar="FILE", nargs="?", const=None,
+    parser.add_argument("--summary", metavar="FILE", nargs="?", const=DEFAULT_OUT,
                         help="Print summary statistics from an existing CSV log")
     args = parser.parse_args()
 
@@ -163,11 +163,11 @@ def print_summary(logfile):
         prev_uptime = up
 
     if currents:
-        avg_current = "%.1f" % (sum(currents) / len(currents))
+        avg_current = "%.1f" % (sum(currents) / len(currents) / 1000.0)
     else:
         avg_current = None
 
-    energy_est = "%.2f" % total_energy if total_energy > 0 else None
+    energy_est = "%.2f" % total_energy if currents else None
 
     charge_counter_change = None
     if has_charge_counter:

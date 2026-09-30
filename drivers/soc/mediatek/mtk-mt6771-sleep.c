@@ -2,11 +2,12 @@
 /*
  * MT6771 SPM deep sleep through s2idle and cpuidle.
  *
- * Replaces syscore ops with dev_pm_ops (.suspend_noirq/.resume_noirq):
- * on suspend_noirq checks deep_enable and PM_SUSPEND_TO_IDLE, arms the SPM (no SPM_ARGS_SUSPEND),
- * then calls mtk_mt6771_mcdi_suspend_state(true); resume does the reverse without SUSPEND_FINISH.
+ * The firmware arms and disarms the sleep controller itself when CPU0 enters the PSCI state
+ * 0x01010005, so noirq PM callbacks only set up the arguments and talk to the SSPM, then open
+ * that cpuidle state (mcdi driver) for CPU0 while CPUs 1-7 are offline. Resume undoes it.
  */
 #include <linux/arm-smccc.h>
+#include <linux/cpu.h>
 #include <linux/debugfs.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
@@ -22,7 +23,6 @@
 #include <linux/seq_file.h>
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
 #include <linux/suspend.h>
-#include <linux/cpu.h>
 
 #include <asm/arch_timer.h>
 
@@ -33,8 +33,6 @@
 #define MTK_SIP_SPM_ARGS		0xc2000228
 
 #define SPM_ARGS_SPMFW_IDX		0
-#define SPM_ARGS_SUSPEND		2
-#define SPM_ARGS_SUSPEND_FINISH		3
 #define SPM_ARGS_PCM_WDT		8
 #define SPM_PCM_WDT_SEC			30
 
@@ -88,11 +86,11 @@ static DEFINE_MUTEX(slp_lock);
 
 static bool deep_enable;
 static bool lp_table;
-/* stays under the 64 s SPM watchdog seen on the phone */
+/* bring-up value; the vendor uses 5401 */
 static unsigned int wake_sec = 30;
 static bool infra_pdn;
 static bool spm_big_buck;
-static bool spm_wdt_irq = true;
+static bool spm_wdt_irq;
 
 static unsigned long slp_smc(unsigned long id, unsigned long a1, unsigned long a2,
 			     unsigned long a3)
@@ -138,7 +136,7 @@ static int slp_sspm_send(u32 cmd)
 /*
  * Vendor: PCM watchdog 30 s plus the RGU SPM request in reset mode around sleep
  * (spm_v4/mtk_spm_sleep.c:332-338, 417-424). spm_wdt_irq turns an expiry into an
- * RGU interrupt instead, so a watchdog in the sleep program is logged, not a reset.
+ * RGU interrupt instead of a reset.
  */
 static void slp_rgu_spm_wdt(bool sleep)
 {
@@ -212,7 +210,6 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, SPM_PCM_WDT_SEC);
 	slp_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, flags1, timer);
-	/* no SPM_ARGS_SUSPEND: firmware arms via cpuidle PSCI param */
 	pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u\n", flags, flags1, timer);
 	mtk_mt6771_mcdi_suspend_state(true);
 	slp->armed = true;
@@ -228,12 +225,13 @@ out:
 	return ret;
 }
 
-static void mt6771_sleep_resume_noirq(struct device *dev)
+static int mt6771_sleep_resume_noirq(struct device *dev)
 {
 	int ret;
 
 	if (!slp->armed)
-		return;
+		return 0;
+	slp->armed = false;
 	mtk_mt6771_mcdi_suspend_state(false);
 
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
@@ -255,6 +253,7 @@ static void mt6771_sleep_resume_noirq(struct device *dev)
 
 	pr_info("mt6771-sleep: woke, r12 0x%x wakeup_sta 0x%x r13 0x%x r15 0x%x\n",
 		slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
+	return 0;
 }
 
 static const struct dev_pm_ops mt6771_sleep_pm_ops = {
@@ -336,7 +335,7 @@ static const struct kernel_param_ops slp_gate_ops = {
 };
 
 module_param_cb(deep_enable, &slp_gate_ops, &deep_enable, 0644);
-MODULE_PARM_DESC(deep_enable, "Arm the SPM for mem_sleep \"deep\" (default 0: no effect)");
+MODULE_PARM_DESC(deep_enable, "Enter the SPM suspend state during s2idle (default 0: no effect)");
 module_param_cb(lp_table, &slp_gate_ops, &lp_table, 0644);
 MODULE_PARM_DESC(lp_table, "With deep_enable, apply the MT6358 low-power rail table (default 0)");
 module_param(wake_sec, uint, 0644);
@@ -346,7 +345,7 @@ MODULE_PARM_DESC(infra_pdn, "Let the SPM power INFRA down (vendor 1, default 0)"
 module_param(spm_big_buck, bool, 0644);
 MODULE_PARM_DESC(spm_big_buck, "Let the SPM switch the big-cluster buck (default 0)");
 module_param(spm_wdt_irq, bool, 0644);
-MODULE_PARM_DESC(spm_wdt_irq, "SPM watchdog expiry in sleep raises an RGU IRQ instead of a reset (default on)");
+MODULE_PARM_DESC(spm_wdt_irq, "SPM watchdog expiry in sleep raises an RGU IRQ instead of a reset (default off: reset mode like Android)");
 
 static int slp_status_show(struct seq_file *s, void *unused)
 {

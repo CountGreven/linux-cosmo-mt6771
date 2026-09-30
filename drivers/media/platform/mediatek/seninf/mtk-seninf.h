@@ -71,8 +71,6 @@ struct mtk_seninf {
 	void __iomem *base;
 	struct clk_bulk_data clks[SENINF_NUM_CLKS];
 
-	struct media_device mdev;
-	struct v4l2_device v4l2_dev;
 	struct v4l2_subdev sd;
 	struct media_pad pads[SENINF_NUM_PADS];
 	struct v4l2_async_notifier notifier;

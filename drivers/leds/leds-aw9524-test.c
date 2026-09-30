@@ -15,8 +15,22 @@ static void aw9524_test_dim_reg(struct kunit *test)
 	KUNIT_EXPECT_LT(test, aw9524_dim_reg(16), 0);
 }
 
+/* The chip may only be held in reset while every LED is dark */
+static void aw9524_test_any_lit(struct kunit *test)
+{
+	u8 dim[16] = { };
+
+	KUNIT_EXPECT_FALSE(test, aw9524_any_lit(dim));
+	dim[0] = 1;
+	KUNIT_EXPECT_TRUE(test, aw9524_any_lit(dim));
+	dim[0] = 0;
+	dim[15] = 255;
+	KUNIT_EXPECT_TRUE(test, aw9524_any_lit(dim));
+}
+
 static struct kunit_case aw9524_test_cases[] = {
 	KUNIT_CASE(aw9524_test_dim_reg),
+	KUNIT_CASE(aw9524_test_any_lit),
 	{}
 };
 

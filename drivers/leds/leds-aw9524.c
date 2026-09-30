@@ -12,8 +12,11 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/leds.h>
+#include <linux/cleanup.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/pm.h>
 #include <linux/regmap.h>
 
 #include <kunit/visibility.h>
@@ -35,9 +38,20 @@
 /* ISEL selects the full-scale current: Imax, 3/4, 1/2 or 1/4 of 37 mA */
 static const u32 aw9524_imax_ua[] = { 37000, 27750, 18500, 9250 };
 
+struct aw9524 {
+	struct regmap *regmap;
+	struct gpio_desc *reset;
+	/* Serialises the dimming registers against reset in suspend */
+	struct mutex lock;
+	u16 led_pins;
+	u8 isel;
+	u8 dim[AW9524_NUM_PINS];
+	bool in_reset;
+};
+
 struct aw9524_led {
 	struct led_classdev cdev;
-	struct regmap *regmap;
+	struct aw9524 *chip;
 	unsigned int pin;
 };
 
@@ -53,11 +67,30 @@ VISIBLE_IF_KUNIT int aw9524_dim_reg(unsigned int pin)
 }
 EXPORT_SYMBOL_IF_KUNIT(aw9524_dim_reg);
 
+VISIBLE_IF_KUNIT bool aw9524_any_lit(const u8 *dim)
+{
+	int i;
+
+	for (i = 0; i < AW9524_NUM_PINS; i++)
+		if (dim[i])
+			return true;
+
+	return false;
+}
+EXPORT_SYMBOL_IF_KUNIT(aw9524_any_lit);
+
 static int aw9524_brightness_set(struct led_classdev *cdev, enum led_brightness brightness)
 {
 	struct aw9524_led *led = container_of(cdev, struct aw9524_led, cdev);
+	struct aw9524 *chip = led->chip;
 
-	return regmap_write(led->regmap, aw9524_dim_reg(led->pin), brightness);
+	guard(mutex)(&chip->lock);
+
+	chip->dim[led->pin] = brightness;
+	if (chip->in_reset)
+		return 0;
+
+	return regmap_write(chip->regmap, aw9524_dim_reg(led->pin), brightness);
 }
 
 static const struct regmap_config aw9524_regmap_config = {
@@ -66,36 +99,72 @@ static const struct regmap_config aw9524_regmap_config = {
 	.max_register = AW9524_REG_RESET,
 };
 
-static int aw9524_probe(struct i2c_client *client)
+/* LED mode (0) and output direction (0) for the described pins only */
+static int aw9524_setup(struct aw9524 *chip)
 {
-	struct device *dev = &client->dev;
-	struct gpio_desc *reset;
-	struct regmap *regmap;
-	unsigned int id, isel;
-	u16 led_pins = 0;
-	u32 imax;
-	int ret;
-
-	regmap = devm_regmap_init_i2c(client, &aw9524_regmap_config);
-	if (IS_ERR(regmap))
-		return PTR_ERR(regmap);
-
-	/* Released from reset here and kept released */
-	reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(reset))
-		return dev_err_probe(dev, PTR_ERR(reset), "failed to get reset GPIO\n");
-	if (reset)
-		usleep_range(1000, 2000);
+	struct regmap *regmap = chip->regmap;
+	unsigned int id;
+	int ret, pin;
 
 	ret = regmap_read(regmap, AW9524_REG_ID, &id);
 	if (ret)
-		return dev_err_probe(dev, ret, "failed to read ID\n");
+		return ret;
 	if (id != AW9524_ID)
-		return dev_err_probe(dev, -ENODEV, "unknown ID 0x%02x\n", id);
+		return -ENODEV;
 
 	ret = regmap_write(regmap, AW9524_REG_RESET, 0);
 	if (ret)
 		return ret;
+
+	ret = regmap_update_bits(regmap, AW9524_REG_CTL, AW9524_CTL_ISEL, chip->isel);
+	if (ret)
+		return ret;
+
+	for (pin = 0; pin < AW9524_NUM_PINS; pin++) {
+		if (!(chip->led_pins & BIT(pin)))
+			continue;
+		ret = regmap_write(regmap, aw9524_dim_reg(pin), chip->dim[pin]);
+		if (ret)
+			return ret;
+	}
+
+	ret = regmap_update_bits(regmap, AW9524_REG_MODE_P0, chip->led_pins & 0xff, 0);
+	if (!ret)
+		ret = regmap_update_bits(regmap, AW9524_REG_MODE_P1, chip->led_pins >> 8, 0);
+	if (!ret)
+		ret = regmap_update_bits(regmap, AW9524_REG_CONFIG_P0, chip->led_pins & 0xff, 0);
+	if (!ret)
+		ret = regmap_update_bits(regmap, AW9524_REG_CONFIG_P1, chip->led_pins >> 8, 0);
+
+	return ret;
+}
+
+static int aw9524_probe(struct i2c_client *client)
+{
+	struct device *dev = &client->dev;
+	struct aw9524 *chip;
+	unsigned int isel;
+	u32 imax;
+	int ret;
+
+	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
+	if (!chip)
+		return -ENOMEM;
+
+	chip->regmap = devm_regmap_init_i2c(client, &aw9524_regmap_config);
+	if (IS_ERR(chip->regmap))
+		return PTR_ERR(chip->regmap);
+
+	ret = devm_mutex_init(dev, &chip->lock);
+	if (ret)
+		return ret;
+
+	/* Released from reset here; held in reset across a suspend with every LED dark */
+	chip->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(chip->reset))
+		return dev_err_probe(dev, PTR_ERR(chip->reset), "failed to get reset GPIO\n");
+	if (chip->reset)
+		usleep_range(1000, 2000);
 
 	imax = aw9524_imax_ua[0];
 	of_property_read_u32(dev->of_node, "awinic,led-max-microamp", &imax);
@@ -104,51 +173,89 @@ static int aw9524_probe(struct i2c_client *client)
 			break;
 	if (isel == ARRAY_SIZE(aw9524_imax_ua))
 		return dev_err_probe(dev, -EINVAL, "unsupported current %u uA\n", imax);
-
-	ret = regmap_update_bits(regmap, AW9524_REG_CTL, AW9524_CTL_ISEL, isel);
-	if (ret)
-		return ret;
+	chip->isel = isel;
 
 	for_each_available_child_of_node_scoped(dev->of_node, child) {
-		struct led_init_data init_data = { .fwnode = of_fwnode_handle(child) };
-		struct aw9524_led *led;
 		u32 pin;
 
 		ret = of_property_read_u32(child, "reg", &pin);
 		if (ret || pin >= AW9524_NUM_PINS)
 			return dev_err_probe(dev, -EINVAL, "%pOF: bad reg\n", child);
 
+		chip->led_pins |= BIT(pin);
+	}
+
+	ret = aw9524_setup(chip);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to set up the chip\n");
+
+	i2c_set_clientdata(client, chip);
+
+	for_each_available_child_of_node_scoped(dev->of_node, child) {
+		struct led_init_data init_data = { .fwnode = of_fwnode_handle(child) };
+		struct aw9524_led *led;
+		u32 pin;
+
+		of_property_read_u32(child, "reg", &pin);
+
 		led = devm_kzalloc(dev, sizeof(*led), GFP_KERNEL);
 		if (!led)
 			return -ENOMEM;
 
-		led->regmap = regmap;
+		led->chip = chip;
 		led->pin = pin;
 		led->cdev.max_brightness = LED_FULL;
 		led->cdev.brightness_set_blocking = aw9524_brightness_set;
 
-		ret = regmap_write(regmap, aw9524_dim_reg(pin), 0);
-		if (ret)
-			return ret;
-
 		ret = devm_led_classdev_register_ext(dev, &led->cdev, &init_data);
 		if (ret)
 			return dev_err_probe(dev, ret, "%pOF: failed to register\n", child);
-
-		led_pins |= BIT(pin);
 	}
 
-	/* LED mode (0) and output direction (0) for the described pins only */
-	ret = regmap_update_bits(regmap, AW9524_REG_MODE_P0, led_pins & 0xff, 0);
-	if (!ret)
-		ret = regmap_update_bits(regmap, AW9524_REG_MODE_P1, led_pins >> 8, 0);
-	if (!ret)
-		ret = regmap_update_bits(regmap, AW9524_REG_CONFIG_P0, led_pins & 0xff, 0);
-	if (!ret)
-		ret = regmap_update_bits(regmap, AW9524_REG_CONFIG_P1, led_pins >> 8, 0);
+	return 0;
+}
+
+/*
+ * The vendor driver leaves the chip running across suspend. With every LED dark, RSTN low
+ * costs nothing and saves the chip's own supply current; a lit LED (caps lock) stays lit.
+ */
+static int aw9524_suspend(struct device *dev)
+{
+	struct aw9524 *chip = dev_get_drvdata(dev);
+
+	guard(mutex)(&chip->lock);
+
+	if (!chip->reset || aw9524_any_lit(chip->dim))
+		return 0;
+
+	gpiod_set_value_cansleep(chip->reset, 1);
+	chip->in_reset = true;
+
+	return 0;
+}
+
+static int aw9524_resume(struct device *dev)
+{
+	struct aw9524 *chip = dev_get_drvdata(dev);
+	int ret;
+
+	guard(mutex)(&chip->lock);
+
+	if (!chip->in_reset)
+		return 0;
+
+	gpiod_set_value_cansleep(chip->reset, 0);
+	usleep_range(1000, 2000);
+
+	ret = aw9524_setup(chip);
+	if (ret)
+		dev_err(dev, "failed to restore the chip: %d\n", ret);
+	chip->in_reset = false;
 
 	return ret;
 }
+
+static DEFINE_SIMPLE_DEV_PM_OPS(aw9524_pm_ops, aw9524_suspend, aw9524_resume);
 
 static const struct of_device_id aw9524_of_match[] = {
 	{ .compatible = "awinic,aw9524" },
@@ -160,6 +267,7 @@ static struct i2c_driver aw9524_driver = {
 	.driver = {
 		.name = "leds-aw9524",
 		.of_match_table = aw9524_of_match,
+		.pm = pm_sleep_ptr(&aw9524_pm_ops),
 	},
 	.probe = aw9524_probe,
 };

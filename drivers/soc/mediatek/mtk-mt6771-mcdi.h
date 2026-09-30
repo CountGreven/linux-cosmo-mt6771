@@ -3,7 +3,6 @@
 #define __MTK_MT6771_MCDI_H
 
 #include <linux/bits.h>
-#include <linux/bool.h>
 #include <linux/types.h>
 
 /* SSPM mailbox 3 slots, vendor mcdi_v1/mtk_mcdi_mbox.h */
@@ -48,7 +47,7 @@ static inline unsigned int mcdi_psci_level(u32 param)
 static inline bool mcdi_state_allowed(u32 param, unsigned int cpu, u32 idle_cpus, bool suspend_open)
 {
 	if (param == MCDI_PSCI_PARAM_SUSPEND)
-		return suspend_open && cpu < MCDI_NR_CPUS;
+		return suspend_open && cpu == 0;
 	return param != MCDI_PSCI_PARAM_NONE && cpu < MCDI_NR_CPUS && (idle_cpus & BIT(cpu)) &&
 	       mcdi_psci_level(param) == 0;
 }

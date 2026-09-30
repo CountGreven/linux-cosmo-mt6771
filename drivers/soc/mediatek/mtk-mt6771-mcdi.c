@@ -204,17 +204,15 @@ int mtk_mt6771_mcdi_task_hold(bool hold)
 		pr_err("mt6771-mcdi: SSPM did not ack %s\n", hold ? "pause" : "resume");
 	return ret;
 }
-/*
- * Gate the SPM suspend idle state (PSCI param 0x01010005) for CPU0.
- */
+EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_task_hold);
+
+/* Open or close the SPM suspend idle state (PSCI param 0x01010005) on CPU0; process context */
 void mtk_mt6771_mcdi_suspend_state(bool open)
 {
 	WRITE_ONCE(mcdi_suspend_open, open);
 	mcdi_apply_gate();
 }
 EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_suspend_state);
-
-EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_task_hold);
 
 /* Deep suspend only, like the vendor's slp_suspend_ops_enter; s2idle never reaches syscore */
 static int mcdi_syscore_suspend(void *data)

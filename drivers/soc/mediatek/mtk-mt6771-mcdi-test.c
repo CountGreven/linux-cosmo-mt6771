@@ -34,7 +34,6 @@ static void mcdi_test_psci_level(struct kunit *test)
 
 static void mcdi_test_state_allowed(struct kunit *test)
 {
-	/* normal states: open=0 works for level-0 */
 	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 7, 0, false));
 	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 7, 0x80, false));
 	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 6, 0x80, false));

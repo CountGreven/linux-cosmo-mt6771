@@ -48,7 +48,8 @@
 #define RGU_WDT_RESTART			0x8
 #define RGU_WDT_MODE_KEY		0x22000000
 #define RGU_WDT_MODE_EN			BIT(0)
-#define RGU_WDT_MODE_DUAL		BIT(6)
+/* interrupt, level interrupt and dual stage: any of them turns the expiry into an IRQ */
+#define RGU_WDT_MODE_NO_RESET		(BIT(3) | BIT(5) | BIT(6))
 #define RGU_WDT_LENGTH_31S		((0x7c0 << 5) | 0x08)
 #define RGU_WDT_RESTART_KEY		0x1971
 #define RGU_REQ_MODE			0x30
@@ -319,8 +320,9 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 		slp->wdt_mode = readl(slp->rgu + RGU_WDT_MODE);
 		writel(RGU_WDT_LENGTH_31S, slp->rgu + RGU_WDT_LENGTH);
 		writel(RGU_WDT_RESTART_KEY, slp->rgu + RGU_WDT_RESTART);
-		writel(RGU_WDT_MODE_KEY | (((slp->wdt_mode & ~RGU_WDT_MODE_DUAL) | RGU_WDT_MODE_EN) &
-					   0xffffff), slp->rgu + RGU_WDT_MODE);
+		writel(RGU_WDT_MODE_KEY |
+		       (((slp->wdt_mode & ~RGU_WDT_MODE_NO_RESET) | RGU_WDT_MODE_EN) & 0xffffff),
+		       slp->rgu + RGU_WDT_MODE);
 		slp->wdt_armed = true;
 		pr_emerg("mt6771-sleep: bc6b wdt net armed, mode 0x%x\n", slp->wdt_mode);
 	}

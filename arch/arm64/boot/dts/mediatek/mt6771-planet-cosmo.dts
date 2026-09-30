@@ -2691,14 +2691,15 @@
 
 &i2c2 {
 	/*
-	 * Rear AF motor. The 7-bit address 0x0c is the one answering with the sensor's rails up (and the
-	 * reference board's); the chip name is the vendor's AK7371AF list entry for 8-bit 0x18, not read back.
+	 * Rear AF motor, 7-bit address 0x0c (also the reference board's). Identified on the phone: it takes
+	 * two byte writes and reads them back, ignores a write whose bit 14 is set and accepts the power-down
+	 * bit, which is the DW9714 frame; the ROHM BU64xx frames need bits 15:14 set and the AK737x takes
+	 * three byte register writes, which time out.
 	 */
 	cam_main_vcm: camera-lens@c {
-		compatible = "asahi-kasei,ak7371";
+		compatible = "dongwoon,dw9714";
 		reg = <0x0c>;
-		vdd-supply = <&mt6358_vldo28_reg>;
-		vio-supply = <&mt6358_vcamio_reg>;
+		vcc-supply = <&mt6358_vldo28_reg>;
 	};
 
 	camera@10 {

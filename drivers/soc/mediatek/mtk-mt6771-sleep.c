@@ -38,10 +38,19 @@
 #define SPM_ARGS_PCM_WDT		8
 #define SPM_PCM_WDT_SEC			30
 
-/* RGU request registers; mtk_wdt owns the rest of the block */
-#define RGU_REQ_BASE			0x10007030
-#define RGU_REQ_MODE			0x0
-#define RGU_REQ_IRQ_EN			0x4
+/* RGU block; mtk_wdt owns it, we touch the SPM request registers and the debug net */
+#define RGU_BASE			0x10007000
+#define RGU_SIZE			0x40
+#define RGU_WDT_MODE			0x0
+#define RGU_WDT_LENGTH			0x4
+#define RGU_WDT_RESTART			0x8
+#define RGU_WDT_MODE_KEY		0x22000000
+#define RGU_WDT_MODE_EN			BIT(0)
+#define RGU_WDT_MODE_DUAL		BIT(6)
+#define RGU_WDT_LENGTH_31S		((0x7c0 << 5) | 0x08)
+#define RGU_WDT_RESTART_KEY		0x1971
+#define RGU_REQ_MODE			0x30
+#define RGU_REQ_IRQ_EN			0x34
 #define RGU_REQ_MODE_KEY		0x33000000
 #define RGU_REQ_IRQ_KEY			0x44000000
 #define RGU_REQ_SPM_WDT			BIT(1)
@@ -63,7 +72,7 @@ struct mt6771_sleep {
 	struct device *dev;
 	void __iomem *mbox;
 	void __iomem *mbox_ctrl;
-	void __iomem *rgu_req;
+	void __iomem *rgu;
 	u32 rgu_mode;
 	u32 rgu_irq;
 	u32 rgu_mode_set;
@@ -73,6 +82,8 @@ struct mt6771_sleep {
 	struct notifier_block pm_nb;
 	struct cpumask offlined;
 	bool armed;
+	bool wdt_armed;
+	u32 wdt_mode;
 	bool lp_applied;
 	struct slp_reg_op lp_undo[2 * ARRAY_SIZE(slp_lp_table)];
 	unsigned int lp_nundo;
@@ -96,6 +107,7 @@ static unsigned int wake_sec = 30;
 static bool infra_pdn;
 static bool spm_big_buck;
 static bool spm_wdt_irq;
+static bool wdt_net;
 static unsigned int skip;
 
 static unsigned long slp_smc(unsigned long id, unsigned long a1, unsigned long a2,
@@ -149,8 +161,8 @@ static void slp_rgu_spm_wdt(bool sleep)
 	u32 mode, irq;
 
 	if (sleep) {
-		slp->rgu_mode = readl(slp->rgu_req + RGU_REQ_MODE);
-		slp->rgu_irq = readl(slp->rgu_req + RGU_REQ_IRQ_EN);
+		slp->rgu_mode = readl(slp->rgu + RGU_REQ_MODE);
+		slp->rgu_irq = readl(slp->rgu + RGU_REQ_IRQ_EN);
 		mode = slp->rgu_mode | RGU_REQ_SPM_WDT;
 		irq = READ_ONCE(spm_wdt_irq) ? slp->rgu_irq | RGU_REQ_SPM_WDT :
 					      slp->rgu_irq & ~RGU_REQ_SPM_WDT;
@@ -158,11 +170,11 @@ static void slp_rgu_spm_wdt(bool sleep)
 		mode = slp->rgu_mode;
 		irq = slp->rgu_irq;
 	}
-	writel(RGU_REQ_IRQ_KEY | (irq & 0xffffff), slp->rgu_req + RGU_REQ_IRQ_EN);
-	writel(RGU_REQ_MODE_KEY | (mode & 0xffffff), slp->rgu_req + RGU_REQ_MODE);
+	writel(RGU_REQ_IRQ_KEY | (irq & 0xffffff), slp->rgu + RGU_REQ_IRQ_EN);
+	writel(RGU_REQ_MODE_KEY | (mode & 0xffffff), slp->rgu + RGU_REQ_MODE);
 	if (sleep) {
-		slp->rgu_mode_set = readl(slp->rgu_req + RGU_REQ_MODE);
-		slp->rgu_irq_set = readl(slp->rgu_req + RGU_REQ_IRQ_EN);
+		slp->rgu_mode_set = readl(slp->rgu + RGU_REQ_MODE);
+		slp->rgu_irq_set = readl(slp->rgu + RGU_REQ_IRQ_EN);
 	}
 }
 
@@ -254,6 +266,15 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 	pr_info("mt6771-sleep: SPM armed, flags 0x%x 0x%x timer %u r15 0x%x\n", flags, flags1,
 		timer, slp_spm_read(SPM_PCM_REG15_DATA));
 	slp->last_err = 0;
+	if (READ_ONCE(wdt_net)) {
+		slp->wdt_mode = readl(slp->rgu + RGU_WDT_MODE);
+		writel(RGU_WDT_LENGTH_31S, slp->rgu + RGU_WDT_LENGTH);
+		writel(RGU_WDT_RESTART_KEY, slp->rgu + RGU_WDT_RESTART);
+		writel(RGU_WDT_MODE_KEY | (((slp->wdt_mode & ~RGU_WDT_MODE_DUAL) | RGU_WDT_MODE_EN) &
+					   0xffffff), slp->rgu + RGU_WDT_MODE);
+		slp->wdt_armed = true;
+		pr_emerg("mt6771-sleep: bc6b wdt net armed, mode 0x%x\n", slp->wdt_mode);
+	}
 	return 0;
 
 release:
@@ -271,6 +292,10 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	if (!slp->armed)
 		return 0;
 	slp->armed = false;
+	if (slp->wdt_armed) {
+		writel(RGU_WDT_RESTART_KEY, slp->rgu + RGU_WDT_RESTART);
+		slp->wdt_armed = false;
+	}
 	if (!(slp->skipped & 8))
 		mtk_mt6771_mcdi_suspend_state(false);
 
@@ -468,6 +493,8 @@ module_param(spm_big_buck, bool, 0644);
 MODULE_PARM_DESC(spm_big_buck, "Let the SPM switch the big-cluster buck (default 0)");
 module_param(spm_wdt_irq, bool, 0644);
 MODULE_PARM_DESC(spm_wdt_irq, "SPM watchdog expiry in sleep raises an RGU IRQ instead of a reset (default off: reset mode like Android)");
+module_param(wdt_net, bool, 0644);
+MODULE_PARM_DESC(wdt_net, "debug: keep the RGU watchdog running (single stage, about 31 s) across a deep sleep");
 module_param(skip, uint, 0644);
 MODULE_PARM_DESC(skip, "debug: skip suspend steps: 1 MCDI hold, 2 SSPM messages, 4 SUSPEND_ARGS smc, 8 SPM idle state, 16 RGU request");
 
@@ -476,15 +503,15 @@ static int slp_status_show(struct seq_file *s, void *unused)
 	seq_printf(s, "deep_enable %d lp_table %d lp_applied %d\n", deep_enable, lp_table,
 		   slp->lp_applied);
 	seq_printf(s, "firmware_status %lu\n", slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0));
-	seq_printf(s, "rgu_req_mode 0x%08x rgu_req_irq_en 0x%08x\n", readl(slp->rgu_req + RGU_REQ_MODE),
-		   readl(slp->rgu_req + RGU_REQ_IRQ_EN));
+	seq_printf(s, "rgu_mode 0x%08x rgu_irq_en 0x%08x\n", readl(slp->rgu + RGU_REQ_MODE),
+		   readl(slp->rgu + RGU_REQ_IRQ_EN));
 	seq_printf(s, "rgu_mode_set 0x%08x rgu_irq_set 0x%08x\n", slp->rgu_mode_set, slp->rgu_irq_set);
 	seq_printf(s, "pcm_reg13 0x%08x pcm_reg15 0x%08x sw_rsv_0 0x%08x wakeup_sta 0x%08x\n",
 		   slp_spm_read(SPM_PCM_REG13_DATA), slp_spm_read(SPM_PCM_REG15_DATA),
 		   slp_spm_read(SPM_SW_RSV_0), slp_spm_read(SPM_WAKEUP_STA));
 	seq_printf(s, "sspm_out_irq 0x%08x\n", readl(slp->mbox_ctrl + SSPM_MBOX_OUT_IRQ));
 	seq_printf(s, "cycles %u last_err %d\n", slp->cycles, slp->last_err);
-	seq_printf(s, "skip 0x%x\n", skip);
+	seq_printf(s, "skip 0x%x wdt_net %d\n", skip, wdt_net);
 	seq_printf(s, "last_wake r12 0x%08x wakeup_sta 0x%08x r13 0x%08x r15 0x%08x\n",
 		   slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
 	return 0;
@@ -527,8 +554,8 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 	s->mbox_ctrl = devm_platform_ioremap_resource_byname(pdev, "mbox-ctrl");
 	if (IS_ERR(s->mbox_ctrl))
 		return PTR_ERR(s->mbox_ctrl);
-	s->rgu_req = devm_ioremap(dev, RGU_REQ_BASE, 8);
-	if (!s->rgu_req)
+	s->rgu = devm_ioremap(dev, RGU_BASE, RGU_SIZE);
+	if (!s->rgu)
 		return -ENOMEM;
 	s->spm = syscon_regmap_lookup_by_phandle(dev->of_node, "mediatek,spm");
 	if (IS_ERR(s->spm))

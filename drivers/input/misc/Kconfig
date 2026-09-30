@@ -1023,4 +1023,26 @@ config INPUT_STPMIC1_ONKEY
 	  To compile this driver as a module, choose M here: the
 	  module will be called stpmic1_onkey.
 
+config INPUT_FN_POWER_COMBINER
+	tristate "Fn + power-line key combiner"
+	depends on OF
+	help
+	  Say Y here on a keyboard whose power-key line is also a key of the
+	  keyboard (such as Esc): Fn plus that key is reported as KEY_POWER
+	  and the key alone stays as it is. The keyboard is also muted while
+	  a lid switch reports closed.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called fn-power-combiner.
+
+config FN_POWER_COMBINER_KUNIT_TEST
+	tristate "KUnit tests for the Fn + power-line key combiner" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Say Y here to build the KUnit tests of the decision logic of the
+	  Fn + power-line key combiner.
+
+	  If unsure, say N.
+
 endif

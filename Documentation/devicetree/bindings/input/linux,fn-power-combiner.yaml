@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/input/linux,fn-power-combiner.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Fn + power-line key combiner
+
+maintainers:
+  - Fredrik Lindlöf <fredrik.lindlof@gmail.com>
+
+description: |
+  Some keyboards wire the power-key line of the PMIC to a key of the keyboard
+  (Esc on the Planet Cosmo Communicator), so that the line key has to double as
+  Esc and as power. The combiner attaches to the keyboard input device and to
+  the input device that reports the line key. A press of the line key made
+  while the Fn key is held is reported as KEY_POWER on an input device of the
+  combiner and the line event is dropped; otherwise the line key event reaches
+  user space unchanged. Once a press is power, it stays power until its
+  release, whatever Fn does in between.
+
+  The devices are found by the node of the device that registered them, that
+  is the node of the platform device that owns the input device.
+
+  Wake-up from suspend is not handled here: the line key stays a wake source
+  of its own driver. The Fn state is tracked from keyboard events, so Fn must
+  have been pressed while the keyboard was being scanned.
+
+  If a lid switch is given, every event of the keyboard is dropped while the
+  switch reports closed, keys that were held are released, and the Fn state is
+  read again when the lid opens.
+
+properties:
+  compatible:
+    const: linux,fn-power-combiner
+
+  keyboard:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Node of the device that registers the keyboard input device.
+
+  power-key:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Node of the device that registers the input device of the line key.
+
+  lid-switch:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      Node of the device that registers an input device with SW_LID. The
+      keyboard is muted while it reports closed.
+
+  linux,fn-code:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 125
+    description: Key code of the Fn key on the keyboard (KEY_LEFTMETA).
+
+  linux,line-code:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    default: 1
+    description: Key code the line key reports on its input device (KEY_ESC).
+
+required:
+  - compatible
+  - keyboard
+  - power-key
+
+additionalProperties: false
+
+examples:
+  - |
+    kbd: keyboard {
+    };
+
+    pmic_keys: pmic-keys {
+    };
+
+    lid_keys: lid-keys {
+    };
+
+    fn-power {
+        compatible = "linux,fn-power-combiner";
+        keyboard = <&kbd>;
+        power-key = <&pmic_keys>;
+        lid-switch = <&lid_keys>;
+    };

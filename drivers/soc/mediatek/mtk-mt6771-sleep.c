@@ -82,7 +82,8 @@ struct mt6771_sleep {
 	u32 rgu_irq_set;
 	struct regmap *spm;
 	struct regmap *pmic;
-	struct notifier_block pm_nb;
+	struct notifier_block pm_nb_pre;
+	struct notifier_block pm_nb_post;
 	struct cpumask offlined;
 	bool infra_ok;
 	bool infra_last;
@@ -400,33 +401,42 @@ static void slp_cpus_online(struct mt6771_sleep *s)
 	cpumask_clear(&s->offlined);
 }
 
-static int slp_pm_notify(struct notifier_block *nb, unsigned long action, void *data)
+/*
+ * The CPU hotplug core closes hotplug in its own PM notifier (priority 0), so the offlining
+ * runs before it and the onlining after it: two blocks, one priority each.
+ */
+static int slp_pm_prepare(struct notifier_block *nb, unsigned long action, void *data)
 {
-	struct mt6771_sleep *s = container_of(nb, struct mt6771_sleep, pm_nb);
+	struct mt6771_sleep *s = container_of(nb, struct mt6771_sleep, pm_nb_pre);
 	unsigned int cpu;
 	int ret;
 
-	switch (action) {
-	case PM_SUSPEND_PREPARE:
-		if (!READ_ONCE(deep_enable) || !pm_suspend_default_s2idle())
-			return NOTIFY_DONE;
-		for_each_online_cpu(cpu) {
-			if (!cpu)
-				continue;
-			ret = remove_cpu(cpu);
-			if (ret) {
-				dev_err(s->dev, "cannot offline CPU%u: %d\n", cpu, ret);
-				slp_cpus_online(s);
-				return NOTIFY_BAD;
-			}
-			cpumask_set_cpu(cpu, &s->offlined);
+	if (action != PM_SUSPEND_PREPARE)
+		return NOTIFY_DONE;
+	if (!READ_ONCE(deep_enable) || !pm_suspend_default_s2idle())
+		return NOTIFY_DONE;
+	for_each_online_cpu(cpu) {
+		if (!cpu)
+			continue;
+		ret = remove_cpu(cpu);
+		if (ret) {
+			dev_err(s->dev, "cannot offline CPU%u: %d\n", cpu, ret);
+			slp_cpus_online(s);
+			return NOTIFY_BAD;
 		}
-		return NOTIFY_OK;
-	case PM_POST_SUSPEND:
-		slp_cpus_online(s);
-		return NOTIFY_OK;
+		cpumask_set_cpu(cpu, &s->offlined);
 	}
-	return NOTIFY_DONE;
+	return NOTIFY_OK;
+}
+
+static int slp_pm_post(struct notifier_block *nb, unsigned long action, void *data)
+{
+	struct mt6771_sleep *s = container_of(nb, struct mt6771_sleep, pm_nb_post);
+
+	if (action != PM_POST_SUSPEND)
+		return NOTIFY_DONE;
+	slp_cpus_online(s);
+	return NOTIFY_OK;
 }
 
 static const struct dev_pm_ops mt6771_sleep_pm_ops = {
@@ -619,10 +629,18 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(s->pmic), "PMIC regmap\n");
 
 	s->fw_status = slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0);
-	s->pm_nb.notifier_call = slp_pm_notify;
-	ret = register_pm_notifier(&s->pm_nb);
+	s->pm_nb_pre.notifier_call = slp_pm_prepare;
+	s->pm_nb_pre.priority = 1;
+	s->pm_nb_post.notifier_call = slp_pm_post;
+	s->pm_nb_post.priority = -1;
+	ret = register_pm_notifier(&s->pm_nb_pre);
 	if (ret)
 		return ret;
+	ret = register_pm_notifier(&s->pm_nb_post);
+	if (ret) {
+		unregister_pm_notifier(&s->pm_nb_pre);
+		return ret;
+	}
 	mutex_lock(&slp_lock);
 	slp = s;
 	mutex_unlock(&slp_lock);
@@ -640,7 +658,8 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 
 static void mt6771_sleep_remove(struct platform_device *pdev)
 {
-	unregister_pm_notifier(&slp->pm_nb);
+	unregister_pm_notifier(&slp->pm_nb_post);
+	unregister_pm_notifier(&slp->pm_nb_pre);
 	debugfs_lookup_and_remove("mt6771-sleep", NULL);
 	mutex_lock(&slp_lock);
 	if (slp->lp_applied)

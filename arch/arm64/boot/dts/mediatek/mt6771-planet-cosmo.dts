@@ -2252,9 +2252,9 @@
 
 &cpu0 {
 #if COSMO_DEEP_SLEEP
-	cpu-idle-states = <COSMO_IDLE_LL &SPM_SUSPEND>;
+	cpu-idle-states = COSMO_IDLE_LL, <&SPM_SUSPEND>;
 #else
-	cpu-idle-states = <COSMO_IDLE_LL>;
+	cpu-idle-states = COSMO_IDLE_LL;
 #endif
 };
 

@@ -19,6 +19,7 @@ properties:
           - enum:
               - allwinner,sun50i-h616-mali
               - amlogic,meson-g12a-mali
+              - mediatek,mt6771-mali
               - mediatek,mt8183-mali
               - mediatek,mt8183b-mali
               - mediatek,mt8186-mali
@@ -211,6 +212,7 @@ allOf:
         compatible:
           contains:
             enum:
+              - mediatek,mt6771-mali
               - mediatek,mt8183b-mali
               - mediatek,mt8188-mali
     then:

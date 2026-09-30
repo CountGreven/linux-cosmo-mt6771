@@ -433,6 +433,30 @@ static int panfrost_device_runtime_resume(struct device *dev)
 	struct panfrost_device *pfdev = dev_get_drvdata(dev);
 	int ret;
 
+	if (pfdev->comp->pm_features & BIT(GPU_PM_RT_PWR)) {
+		unsigned long freq = clk_get_rate(pfdev->clock);
+		struct dev_pm_opp *opp = dev_pm_opp_find_freq_ceil(dev, &freq);
+
+		if (IS_ERR(opp))
+			return PTR_ERR(opp);
+		ret = dev_pm_opp_set_opp(dev, opp);
+		dev_pm_opp_put(opp);
+		if (ret)
+			return ret;
+
+		ret = clk_prepare_enable(pfdev->clock);
+		if (ret)
+			goto err_pwr;
+
+		ret = clk_prepare_enable(pfdev->bus_clock);
+		if (ret)
+			goto err_pwr_bus;
+
+		ret = clk_prepare_enable(pfdev->bus_ace_clock);
+		if (ret)
+			goto err_pwr_ace;
+	}
+
 	if (pfdev->comp->pm_features & BIT(GPU_PM_RT)) {
 		ret = reset_control_deassert(pfdev->rstc);
 		if (ret)
@@ -455,6 +479,14 @@ static int panfrost_device_runtime_resume(struct device *dev)
 	panfrost_devfreq_resume(pfdev);
 
 	return 0;
+
+err_pwr_ace:
+	clk_disable_unprepare(pfdev->bus_clock);
+err_pwr_bus:
+	clk_disable_unprepare(pfdev->clock);
+err_pwr:
+	dev_pm_opp_set_opp(dev, NULL);
+	return ret;
 
 err_bus_ace_clk:
 	if (pfdev->comp->pm_features & BIT(GPU_PM_RT))
@@ -486,6 +518,13 @@ static int panfrost_device_runtime_suspend(struct device *dev)
 		clk_disable(pfdev->bus_clock);
 		clk_disable(pfdev->clock);
 		reset_control_assert(pfdev->rstc);
+	}
+
+	if (pfdev->comp->pm_features & BIT(GPU_PM_RT_PWR)) {
+		clk_disable_unprepare(pfdev->bus_ace_clock);
+		clk_disable_unprepare(pfdev->bus_clock);
+		clk_disable_unprepare(pfdev->clock);
+		dev_pm_opp_set_opp(dev, NULL);
 	}
 
 	return 0;

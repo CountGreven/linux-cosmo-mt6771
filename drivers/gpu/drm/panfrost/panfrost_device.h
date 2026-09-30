@@ -43,11 +43,14 @@ enum panfrost_drv_comp_bits {
  * @GPU_PM_VREG_OFF: Allow turning off regulators during system suspend
  * @GPU_PM_RT: Allow disabling clocks and asserting the reset control during
  *  system runtime suspend
+ * @GPU_PM_RT_PWR: Unprepare the clocks and drop the OPP supplies during
+ *  runtime suspend. Not to be combined with the other features.
  */
 enum panfrost_gpu_pm {
 	GPU_PM_CLK_DIS,
 	GPU_PM_VREG_OFF,
-	GPU_PM_RT
+	GPU_PM_RT,
+	GPU_PM_RT_PWR
 };
 
 /**

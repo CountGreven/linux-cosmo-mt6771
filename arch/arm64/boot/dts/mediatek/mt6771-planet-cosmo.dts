@@ -31,6 +31,7 @@
  * COSMO_DEEP_SLEEP: 1 = SPM deep sleep node for mtk-mt6771-sleep (still gated by its deep_enable).
  * COSMO_CAMERA: 1 = S5K2X7 (main, i2c2) and GC5035 (sub, i2c4) sensor nodes and the CSI-2 receiver they
  *   hang on (mtk-seninf, started from its debugfs until a capture driver exists).
+ * COSMO_FP_SPI: 1 = SPI0 with a spidev on chip select 0, for bus tests towards the fingerprint sensor.
  */
 #define COSMO_CPU_OPP_V5T	0
 #define COSMO_SENSOR_ZONES	0
@@ -40,6 +41,7 @@
 #define COSMO_RIGHT_USB		1
 #define COSMO_DEEP_SLEEP	1
 #define COSMO_CAMERA		0
+#define COSMO_FP_SPI		0
 
 #if COSMO_SVS && (!COSMO_SENSOR_ZONES || COSMO_CPU_OPP_V5T == 1)
 #error "COSMO_SVS needs the gpu-thermal zone and 16 OPPs per CPU bank"
@@ -324,6 +326,20 @@
 &uart0 {
 	status = "okay";
 };
+
+#if COSMO_FP_SPI
+/* Pins GPIO85-88 are left as the bootloader muxed them (SPI0). */
+&spi0 {
+	mediatek,pad-select = <0>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+	};
+};
+#endif
 
 /*
  * LK finds its SCP node by the vendor compatible "mediatek,scp" and reads the sram size from reg[0]

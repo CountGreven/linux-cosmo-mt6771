@@ -322,14 +322,20 @@
 };
 
 /*
- * LK finds the SCP node by the vendor compatible "mediatek,scp" and reads its sram size from reg[0].
- * Without it: "[SCP] platform_fdt_scp: getting node from dtb fails". mt8183.dtsi's node already carries
- * the right reg -- sram at 0x10500000 size 0x80000, identical to the vendor tree (live:7006) -- so all
- * it needs is the name the bootloader looks for. Without COSMO_VCODEC the node stays disabled.
+ * LK finds its SCP node by the vendor compatible "mediatek,scp" and reads the sram size from reg[0]
+ * (without one: "[SCP] platform_fdt_scp: getting node from dtb fails"). It then rewrites that node's
+ * status without the terminating NUL, which the kernel reads as "not available", so the node LK
+ * gets is a decoy and the real one keeps the mt8183 compatible only.
  */
-&scp {
-	compatible = "mediatek,mt8183-scp", "mediatek,scp";
+/ {
+	scp-bootloader@10500000 {
+		compatible = "mediatek,scp";
+		reg = <0 0x10500000 0 0x80000>;
+		status = "disabled";
+	};
+};
 
+&scp {
 #if COSMO_VCODEC
 	/*
 	 * Same CM4 SCP as MT8183: IPC, reset, clock-control and cache registers at the same offsets

@@ -2744,12 +2744,10 @@
 
 /*
  * The CSI-2 receiver. No source names the port a sensor is wired to (the vendor decides it in user
- * space), so these are guesses: main on CSI0 (4 lanes need a 4D1C port: CSI0, CSI1 or CSI2), sub on
- * CSI1. To try another port change the label of the sensor's block, one line each:
- *   main: &seninf_csi0, &seninf_csi1 or &seninf_csi2
- *   sub:  &seninf_csi1, &seninf_csi2, &seninf_csi0a or &seninf_csi0b (the halves of CSI0, not
- *         together with a main sensor on CSI0)
- * The debugfs port knob of mtk-seninf can also override the port without a rebuild.
+ * space); measured on the phone: main on CSI0 (4 lanes) and sub on CSI1 (2 lanes) deliver frames
+ * without decoder errors, the other ports see no packets from either sensor. Both work with the
+ * receiver defaults (lane map 0xc9, settle 0x15). The debugfs port knob of mtk-seninf can override
+ * the port without a rebuild.
  */
 &csi0_rx {
 	status = "okay";

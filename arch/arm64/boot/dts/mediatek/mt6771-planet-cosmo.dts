@@ -2785,22 +2785,6 @@
 	remote-endpoint = <&seninf_main_ep>;
 };
 
-/*
- * CAMSV0 writes the frames of SENINF mux 0 to physical memory: the port of its DMA in the IOMMU is
- * not known, so it has no iommus property (an IOVA on the wrong port would land in DRAM). The pool is
- * dynamic, below 4 GiB, so LK's reservation check has nothing to compare it with.
- */
-/ {
-	reserved-memory {
-		camsv_cma: camsv-cma {
-			compatible = "shared-dma-pool";
-			reusable;
-			alloc-ranges = <0 0x40000000 0 0xc0000000>;
-			size = <0 0x04000000>;
-		};
-	};
-};
-
 &seninf_mux0 {
 	seninf_mux0_ep: endpoint {
 		remote-endpoint = <&camsv0_in_ep>;
@@ -2808,8 +2792,6 @@
 };
 
 &camsv0 {
-	mediatek,larb = <&larb6>, <&larb3>;
-	memory-region = <&camsv_cma>;
 	status = "okay";
 };
 

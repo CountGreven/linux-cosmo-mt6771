@@ -139,8 +139,9 @@
  * described here. Which port a sensor uses is board specific: the board hangs its sensors on the
  * ports. Disabled: the driver has only been built, never run against the device.
  *
- * CAMSV0 (0x1a050000, SPI 258) takes the stream of SENINF mux 0. The DMA has no known IOMMU port
- * yet, so the board gives it a memory region and the larbs to keep powered.
+ * CAMSV0 (0x1a050000, SPI 258) takes the stream of SENINF mux 0. Its DMA is larb6 port 11 (SOCO in
+ * the port tables): measured, an unmapped frame buffer makes the IOMMU report "larb=6 port=11" for
+ * every write of the image.
  */
 / {
 	soc {
@@ -221,6 +222,7 @@
 				 <&camsys CLK_CAM_CAMTG>;
 			clock-names = "camsv", "cam", "camtg";
 			power-domains = <&spm MT8183_POWER_DOMAIN_CAM>;
+			iommus = <&iommu M4U_PORT_CAM_SOCO>;
 			status = "disabled";
 
 			ports {

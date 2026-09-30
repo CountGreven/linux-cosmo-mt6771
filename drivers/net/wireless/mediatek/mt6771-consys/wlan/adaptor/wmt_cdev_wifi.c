@@ -37,7 +37,8 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("MediaTek WMT wifi character device (mt6771-consys)");
 
 #define WIFI_DRIVER_NAME "mtk_wmt_wifi_chrdev"
-#define WIFI_DEV_MAJOR 153
+/* 0 = dynamic; the vendor's 153 is the major of spidev */
+#define WIFI_DEV_MAJOR 0
 
 #define PFX                         "[MTK-WIFI] "
 #define WIFI_LOG_DBG                  3
@@ -612,7 +613,12 @@ static int WIFI_init(void)
 	int32_t cdev_err = 0;
 
 	/* Allocate char device */
-	alloc_ret = register_chrdev_region(dev, WIFI_devs, WIFI_DRIVER_NAME);
+	if (WIFI_major) {
+		alloc_ret = register_chrdev_region(dev, WIFI_devs, WIFI_DRIVER_NAME);
+	} else {
+		alloc_ret = alloc_chrdev_region(&dev, 0, WIFI_devs, WIFI_DRIVER_NAME);
+		WIFI_major = MAJOR(dev);
+	}
 	if (alloc_ret) {
 		WIFI_ERR_FUNC("Fail to register device numbers\n");
 		return alloc_ret;

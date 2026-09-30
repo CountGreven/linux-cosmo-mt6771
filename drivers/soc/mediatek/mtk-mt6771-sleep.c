@@ -7,6 +7,7 @@
  * that cpuidle state (mcdi driver) for CPU0 while CPUs 1-7 are offline. Resume undoes it.
  */
 #include <linux/arm-smccc.h>
+#include <linux/console.h>
 #include <linux/cpu.h>
 #include <linux/debugfs.h>
 #include <linux/io.h>
@@ -25,6 +26,7 @@
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
 #include <linux/soc/mediatek/mtk-mt6771-spm-start.h>
 #include <linux/suspend.h>
+#include <linux/usb.h>
 
 #include <asm/arch_timer.h>
 
@@ -81,6 +83,9 @@ struct mt6771_sleep {
 	struct regmap *pmic;
 	struct notifier_block pm_nb;
 	struct cpumask offlined;
+	bool infra_ok;
+	bool infra_last;
+	const char *infra_why;
 	bool armed;
 	bool wdt_armed;
 	u32 wdt_mode;
@@ -104,7 +109,7 @@ static bool deep_enable;
 static bool lp_table;
 /* bring-up value; the vendor uses 5401 */
 static unsigned int wake_sec = 30;
-static bool infra_pdn;
+static int infra_pdn = 1;
 static bool spm_big_buck;
 static bool spm_wdt_irq;
 static bool wdt_net;
@@ -178,10 +183,47 @@ static void slp_rgu_spm_wdt(bool sleep)
 	}
 }
 
+#if IS_REACHABLE(CONFIG_USB)
+static int slp_count_usb_dev(struct usb_device *udev, void *data)
+{
+	if (udev->parent)
+		(*(unsigned int *)data)++;
+	return 0;
+}
+#endif
+
+/* A USB host loses its state when INFRA powers down, so any attached device blocks it */
+static bool mt6771_sleep_infra_pdn_ok(const char **why)
+{
+#if IS_REACHABLE(CONFIG_USB)
+	unsigned int count = 0;
+
+	usb_for_each_dev(&count, slp_count_usb_dev);
+	if (count) {
+		*why = "usb device attached";
+		return false;
+	}
+#endif
+	if (!console_suspend_enabled) {
+		*why = "console stays awake";
+		return false;
+	}
+	*why = "idle";
+	return true;
+}
+
+/* usb_for_each_dev() sleeps, so the decision is taken here and only read in noirq */
+static int mt6771_sleep_prepare(struct device *dev)
+{
+	if (READ_ONCE(infra_pdn) == 1)
+		slp->infra_ok = mt6771_sleep_infra_pdn_ok(&slp->infra_why);
+	return 0;
+}
+
 static int mt6771_sleep_suspend_noirq(struct device *dev)
 {
 	u32 flags, flags1, timer;
-	int ret;
+	int ret, mode;
 
 	if (!READ_ONCE(deep_enable))
 		return 0;
@@ -242,7 +284,14 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 		goto release;
 	}
 
-	flags = slp_pcm_flags(READ_ONCE(infra_pdn));
+	mode = READ_ONCE(infra_pdn);
+	if (mode == 1) {
+		slp->infra_last = slp->infra_ok;
+	} else {
+		slp->infra_last = mode == 2;
+		slp->infra_why = mode == 2 ? "forced" : "disabled";
+	}
+	flags = slp_pcm_flags(slp->infra_last);
 	flags1 = slp_pcm_flags1(READ_ONCE(spm_big_buck));
 	timer = slp_timer_val(READ_ONCE(wake_sec));
 	if (!(slp->skipped & 16)) {
@@ -379,6 +428,7 @@ static int slp_pm_notify(struct notifier_block *nb, unsigned long action, void *
 }
 
 static const struct dev_pm_ops mt6771_sleep_pm_ops = {
+	.prepare = pm_sleep_ptr(mt6771_sleep_prepare),
 	.suspend_noirq = pm_sleep_ptr(mt6771_sleep_suspend_noirq),
 	.resume_noirq = pm_sleep_ptr(mt6771_sleep_resume_noirq),
 };
@@ -487,8 +537,8 @@ module_param_cb(lp_table, &slp_gate_ops, &lp_table, 0644);
 MODULE_PARM_DESC(lp_table, "With deep_enable, apply the MT6358 low-power rail table (default 0)");
 module_param(wake_sec, uint, 0644);
 MODULE_PARM_DESC(wake_sec, "SPM PCM wake timer in seconds (vendor 5401)");
-module_param(infra_pdn, bool, 0644);
-MODULE_PARM_DESC(infra_pdn, "Let the SPM power INFRA down (vendor 1, default 0)");
+module_param(infra_pdn, int, 0644);
+MODULE_PARM_DESC(infra_pdn, "SPM INFRA power-down: 0 never, 1 auto (not with a USB device or an awake console), 2 force (default 1)");
 module_param(spm_big_buck, bool, 0644);
 MODULE_PARM_DESC(spm_big_buck, "Let the SPM switch the big-cluster buck (default 0)");
 module_param(spm_wdt_irq, bool, 0644);
@@ -511,6 +561,8 @@ static int slp_status_show(struct seq_file *s, void *unused)
 		   slp_spm_read(SPM_SW_RSV_0), slp_spm_read(SPM_WAKEUP_STA));
 	seq_printf(s, "sspm_out_irq 0x%08x\n", readl(slp->mbox_ctrl + SSPM_MBOX_OUT_IRQ));
 	seq_printf(s, "cycles %u last_err %d\n", slp->cycles, slp->last_err);
+	seq_printf(s, "infra_pdn mode %d last %d (%s)\n", infra_pdn, slp->infra_last,
+		   slp->infra_why ?: "none");
 	seq_printf(s, "skip 0x%x wdt_net %d\n", skip, wdt_net);
 	seq_printf(s, "last_wake r12 0x%08x wakeup_sta 0x%08x r13 0x%08x r15 0x%08x\n",
 		   slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);

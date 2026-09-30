@@ -750,7 +750,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			led@0 {
+			mt6370_flash0: led@0 {
 				reg = <0>;
 				led-sources = <0>;
 				function = LED_FUNCTION_FLASH;
@@ -761,7 +761,7 @@
 				flash-max-timeout-us = <1248000>;
 			};
 
-			led@1 {
+			mt6370_flash1: led@1 {
 				reg = <1>;
 				led-sources = <1>;
 				function = LED_FUNCTION_FLASH;
@@ -2690,6 +2690,17 @@
 };
 
 &i2c2 {
+	/*
+	 * Rear AF motor. The 7-bit address 0x0c is the one answering with the sensor's rails up (and the
+	 * reference board's); the chip name is the vendor's AK7371AF list entry for 8-bit 0x18, not read back.
+	 */
+	cam_main_vcm: camera-lens@c {
+		compatible = "asahi-kasei,ak7371";
+		reg = <0x0c>;
+		vdd-supply = <&mt6358_vldo28_reg>;
+		vio-supply = <&mt6358_vcamio_reg>;
+	};
+
 	camera@10 {
 		compatible = "samsung,s5k2x7";
 		reg = <0x10>;
@@ -2703,7 +2714,8 @@
 		avdd-supply = <&mt6358_vcama2_reg>;
 		dovdd-supply = <&mt6358_vcamio_reg>;
 		dvdd-supply = <&cam_main_dvdd>;
-		afvdd-supply = <&mt6358_vldo28_reg>;
+		lens-focus = <&cam_main_vcm>;
+		flash-leds = <&mt6370_flash0>, <&mt6370_flash1>;
 		orientation = <1>;
 
 		port {

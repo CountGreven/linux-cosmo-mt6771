@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VIDEO_MEDIATEK_SENINF
+	tristate "MediaTek SENINF CSI-2 receiver"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV && OF
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on PM
+	select GENERIC_PHY
+	select MEDIA_CONTROLLER
+	select V4L2_FWNODE
+	select VIDEO_V4L2_SUBDEV_API
+	help
+	  Support for the SENINF MIPI CSI-2 receiver of the MediaTek MT8183
+	  family (also MT6771). It decodes the D-PHY streams of the camera
+	  sensors; capturing the frames needs a further driver.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called mtk-seninf.

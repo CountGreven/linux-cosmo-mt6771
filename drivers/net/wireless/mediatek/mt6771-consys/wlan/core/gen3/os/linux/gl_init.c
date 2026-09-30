@@ -2960,6 +2960,40 @@ static void wlan_wait_fw_own(P_GLUE_INFO_T prGlueInfo)
 		DBGLOG(INIT, WARN, "firmware still not owning the chip before suspend\n");
 }
 
+/*
+ * A station kept in CAM (NetworkManager powersave off, setCAM) never hands the chip to the
+ * firmware, so the radio would stay awake through the whole sleep. Android runs in power save;
+ * do the same while suspended and put the callers' CAM request back afterwards.
+ */
+static UINT_32 u4WlanPmPsFlag;
+static UINT_8 ucWlanPmPsProfile;
+static bool fgWlanPmPsForced;
+
+static void wlan_pm_power_save(P_GLUE_INFO_T prGlueInfo, bool suspend)
+{
+	P_ADAPTER_T prAdapter = prGlueInfo->prAdapter;
+	UINT_8 ucBssIndex;
+
+	if (!prAdapter->prAisBssInfo || prAdapter->prAisBssInfo->ucBssIndex >= BSS_INFO_NUM)
+		return;
+	ucBssIndex = prAdapter->prAisBssInfo->ucBssIndex;
+
+	if (suspend) {
+		u4WlanPmPsFlag = prAdapter->rWlanInfo.u4PowerSaveFlag[ucBssIndex];
+		if (!(u4WlanPmPsFlag & ~PS_SYNC_WITH_FW))
+			return;
+		ucWlanPmPsProfile = prAdapter->rWlanInfo.arPowerSaveMode[ucBssIndex].ucPsProfile;
+		prAdapter->rWlanInfo.u4PowerSaveFlag[ucBssIndex] = PS_SYNC_WITH_FW;
+		nicConfigPowerSaveProfile(prAdapter, ucBssIndex, Param_PowerModeFast_PSP, FALSE);
+		fgWlanPmPsForced = true;
+	} else if (fgWlanPmPsForced) {
+		fgWlanPmPsForced = false;
+		prAdapter->rWlanInfo.u4PowerSaveFlag[ucBssIndex] = u4WlanPmPsFlag | PS_SYNC_WITH_FW;
+		nicConfigPowerSaveProfile(prAdapter, ucBssIndex, Param_PowerModeCAM, FALSE);
+		prAdapter->rWlanInfo.arPowerSaveMode[ucBssIndex].ucPsProfile = ucWlanPmPsProfile;
+	}
+}
+
 static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, void *data)
 {
 	P_GLUE_INFO_T prGlueInfo;
@@ -2984,6 +3018,7 @@ static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, voi
 		prGlueInfo->fgIsInSuspendMode = TRUE;
 		wlanSetSuspendMode(prGlueInfo, TRUE);
 		p2pSetSuspendMode(prGlueInfo, TRUE);
+		wlan_pm_power_save(prGlueInfo, true);
 		fgWlanPmSuspended = true;
 		wlan_wait_fw_own(prGlueInfo);
 		break;
@@ -2994,6 +3029,7 @@ static int wlan_pm_notifier(struct notifier_block *nb, unsigned long action, voi
 		prGlueInfo->fgIsInSuspendMode = FALSE;
 		wlanSetSuspendMode(prGlueInfo, FALSE);
 		p2pSetSuspendMode(prGlueInfo, FALSE);
+		wlan_pm_power_save(prGlueInfo, false);
 		break;
 	}
 

@@ -2208,6 +2208,17 @@
 				min-residency-us = <1500>;
 			};
 
+#if COSMO_DEEP_SLEEP
+			SPM_SUSPEND: spm-suspend {
+				compatible = "arm,idle-state";
+				local-timer-stop;
+				arm,psci-suspend-param = <0x01010005>;
+				entry-latency-us = <5000>;
+				exit-latency-us = <10000>;
+				min-residency-us = <1000000>;
+			};
+#endif
+
 #if COSMO_CPUIDLE == 3
 			MCDI_CLUSTER_LL: cluster-mcdi-ll {
 				compatible = "arm,idle-state";
@@ -2240,7 +2251,11 @@
 #endif
 
 &cpu0 {
-	cpu-idle-states = COSMO_IDLE_LL;
+#if COSMO_DEEP_SLEEP
+	cpu-idle-states = <COSMO_IDLE_LL &SPM_SUSPEND>;
+#else
+	cpu-idle-states = <COSMO_IDLE_LL>;
+#endif
 };
 
 &cpu1 {

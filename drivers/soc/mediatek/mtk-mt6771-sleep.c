@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * MT6771 SPM deep sleep around PSCI SYSTEM_SUSPEND.
+ * MT6771 SPM deep sleep through s2idle and cpuidle.
  *
- * The stock ATF implements SYSTEM_SUSPEND as a power-down state that does not run the SPM
- * suspend program, so the last CPU would wait in WFI for a power cut nobody makes. The same ATF
- * arms and disarms that program through SPM_ARGS SUSPEND / SUSPEND_FINISH. This driver does, from
- * syscore right before SYSTEM_SUSPEND, what the vendor kernel does before its own suspend entry
- * (hw-spec/power.org, System suspend): SSPM notification, MCDI task pause, pcm flags and wake
- * timer, then arms the SPM; syscore resume undoes it in reverse.
- *
- * Nothing happens unless deep_enable is set and the suspend is "deep" (mem_sleep).
+ * Replaces syscore ops with dev_pm_ops (.suspend_noirq/.resume_noirq):
+ * on suspend_noirq checks deep_enable and PM_SUSPEND_TO_IDLE, arms the SPM (no SPM_ARGS_SUSPEND),
+ * then calls mtk_mt6771_mcdi_suspend_state(true); resume does the reverse without SUSPEND_FINISH.
  */
 #include <linux/arm-smccc.h>
 #include <linux/debugfs.h>
@@ -27,7 +22,7 @@
 #include <linux/seq_file.h>
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
 #include <linux/suspend.h>
-#include <linux/syscore_ops.h>
+#include <linux/cpu.h>
 
 #include <asm/arch_timer.h>
 
@@ -93,7 +88,8 @@ static DEFINE_MUTEX(slp_lock);
 
 static bool deep_enable;
 static bool lp_table;
-static unsigned int wake_sec = 5401;
+/* stays under the 64 s SPM watchdog seen on the phone */
+static unsigned int wake_sec = 30;
 static bool infra_pdn;
 static bool spm_big_buck;
 static bool spm_wdt_irq = true;
@@ -166,13 +162,19 @@ static void slp_rgu_spm_wdt(bool sleep)
 	}
 }
 
-static int slp_syscore_suspend(void *data)
+static int mt6771_sleep_suspend_noirq(struct device *dev)
 {
 	u32 flags, flags1, timer;
 	int ret;
 
-	if (!READ_ONCE(deep_enable) || pm_suspend_target_state != PM_SUSPEND_MEM)
+	if (!READ_ONCE(deep_enable))
 		return 0;
+	if (pm_suspend_target_state != PM_SUSPEND_TO_IDLE)
+		return 0;
+	if (num_online_cpus() != 1) {
+		dev_err(dev, "deep sleep needs CPU1-7 offline\n");
+		return -EBUSY;
+	}
 
 	slp->cycles++;
 	slp->fw_status = slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0);
@@ -188,7 +190,6 @@ static int slp_syscore_suspend(void *data)
 	if (ret)
 		goto out;
 
-	/* Vendor PM notifier sends PREPARE; here it goes with SUSPEND, interrupts already off */
 	ret = slp_sspm_send(SLP_SSPM_SUSPEND_PREPARE);
 	pr_emerg("mt6771-sleep: bc3 sspm prepare %d\n", ret);
 	if (ret) {
@@ -211,8 +212,9 @@ static int slp_syscore_suspend(void *data)
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, SPM_PCM_WDT_SEC);
 	slp_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, flags1, timer);
-	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND, 0, 0);
+	/* no SPM_ARGS_SUSPEND: firmware arms via cpuidle PSCI param */
 	pr_emerg("mt6771-sleep: bc6 armed flags 0x%x 0x%x timer %u\n", flags, flags1, timer);
+	mtk_mt6771_mcdi_suspend_state(true);
 	slp->armed = true;
 	pr_info("mt6771-sleep: SPM armed, flags 0x%x 0x%x timer %u r15 0x%x\n", flags, flags1,
 		timer, slp_spm_read(SPM_PCM_REG15_DATA));
@@ -226,15 +228,14 @@ out:
 	return ret;
 }
 
-static void slp_syscore_resume(void *data)
+static void mt6771_sleep_resume_noirq(struct device *dev)
 {
 	int ret;
 
 	if (!slp->armed)
 		return;
-	slp->armed = false;
+	mtk_mt6771_mcdi_suspend_state(false);
 
-	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND_FINISH, 0, 0);
 	slp_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0);
 	slp_rgu_spm_wdt(false);
 	/* SW_RSV_0 is the firmware's copy of R12, the wake event bits */
@@ -256,13 +257,9 @@ static void slp_syscore_resume(void *data)
 		slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
 }
 
-static const struct syscore_ops slp_syscore_ops = {
-	.suspend = slp_syscore_suspend,
-	.resume = slp_syscore_resume,
-};
-
-static struct syscore slp_syscore = {
-	.ops = &slp_syscore_ops,
+static const struct dev_pm_ops mt6771_sleep_pm_ops = {
+	.suspend_noirq = pm_sleep_ptr(mt6771_sleep_suspend_noirq),
+	.resume_noirq = pm_sleep_ptr(mt6771_sleep_resume_noirq),
 };
 
 static void slp_lp_restore(void)
@@ -421,7 +418,6 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 	mutex_unlock(&slp_lock);
 
 	slp_lp_update();
-	register_syscore(&slp_syscore);
 	debugfs_create_file("mt6771-sleep", 0400, NULL, NULL, &slp_status_fops);
 	dev_info(dev, "SPM firmware status %u, r15 0x%x, deep %s\n", s->fw_status,
 		 slp_spm_read(SPM_PCM_REG15_DATA), deep_enable ? "enabled" : "gated");
@@ -431,7 +427,6 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 static void mt6771_sleep_remove(struct platform_device *pdev)
 {
 	debugfs_lookup_and_remove("mt6771-sleep", NULL);
-	unregister_syscore(&slp_syscore);
 	mutex_lock(&slp_lock);
 	if (slp->lp_applied)
 		slp_lp_restore();
@@ -452,6 +447,7 @@ static struct platform_driver mt6771_sleep_driver = {
 		.name = "mt6771-sleep",
 		.of_match_table = mt6771_sleep_of_match,
 		.suppress_bind_attrs = true,
+		.pm = &mt6771_sleep_pm_ops,
 	},
 };
 module_platform_driver(mt6771_sleep_driver);

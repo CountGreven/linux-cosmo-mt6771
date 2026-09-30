@@ -42,14 +42,16 @@ static inline unsigned int mcdi_psci_level(u32 param)
 
 /*
  * Only core-level states: a cluster-level entry also needs CLUSTER_n_CAN_POWER_OFF written
- * right before it, which cpuidle-psci gives no hook for.
+ * right before it, which cpuidle-psci gives no hook for. While the SSPM task is held a core
+ * that enters core-off is never powered back, so those states stay closed.
  */
-static inline bool mcdi_state_allowed(u32 param, unsigned int cpu, u32 idle_cpus, bool suspend_open)
+static inline bool mcdi_state_allowed(u32 param, unsigned int cpu, u32 idle_cpus, bool suspend_open,
+				      bool task_held)
 {
 	if (param == MCDI_PSCI_PARAM_SUSPEND)
 		return suspend_open && cpu == 0;
-	return param != MCDI_PSCI_PARAM_NONE && cpu < MCDI_NR_CPUS && (idle_cpus & BIT(cpu)) &&
-	       mcdi_psci_level(param) == 0;
+	return !task_held && param != MCDI_PSCI_PARAM_NONE && cpu < MCDI_NR_CPUS &&
+	       (idle_cpus & BIT(cpu)) && mcdi_psci_level(param) == 0;
 }
 
 #endif

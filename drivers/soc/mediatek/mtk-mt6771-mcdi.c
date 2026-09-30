@@ -26,6 +26,7 @@
 #include <linux/spinlock.h>
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
+#include <linux/workqueue.h>
 
 #include "mtk-mt6771-mcdi.h"
 
@@ -47,6 +48,7 @@ static unsigned int idle_cpus;
 static DEFINE_RAW_SPINLOCK(mcdi_hold_lock);
 static unsigned int mcdi_holds;
 static bool mcdi_suspend_open;
+static bool mcdi_task_held;
 
 static u32 mcdi_read(unsigned int slot)
 {
@@ -92,7 +94,9 @@ static void mcdi_apply_gate(void)
 		if (!drv)
 			continue;
 		for (i = 1; i < drv->state_count; i++) {
-			if (mcdi_ready && mcdi_state_allowed(mcdi_state_param(cpu, i), cpu, idle_cpus, mcdi_suspend_open))
+			if (mcdi_ready &&
+			    mcdi_state_allowed(mcdi_state_param(cpu, i), cpu, idle_cpus,
+					       mcdi_suspend_open, READ_ONCE(mcdi_task_held)))
 				dev->states_usage[i].disable &= ~CPUIDLE_STATE_DISABLED_BY_DRIVER;
 			else
 				dev->states_usage[i].disable |= CPUIDLE_STATE_DISABLED_BY_DRIVER;
@@ -102,6 +106,12 @@ static void mcdi_apply_gate(void)
 out:
 	mutex_unlock(&mcdi_gate_lock);
 }
+
+static void mcdi_gate_work_fn(struct work_struct *work)
+{
+	mcdi_apply_gate();
+}
+static DECLARE_WORK(mcdi_gate_work, mcdi_gate_work_fn);
 
 static int idle_cpus_set(const char *val, const struct kernel_param *kp)
 {
@@ -181,6 +191,7 @@ static int mcdi_task_pause(u32 pause)
 int mtk_mt6771_mcdi_task_hold(bool hold)
 {
 	unsigned long flags;
+	bool changed;
 	int ret = 0;
 
 	if (!READ_ONCE(mcdi_ready))
@@ -198,7 +209,17 @@ int mtk_mt6771_mcdi_task_hold(bool hold)
 	} else if (mcdi_holds && !--mcdi_holds) {
 		ret = mcdi_task_pause(0);
 	}
+	changed = READ_ONCE(mcdi_task_held) != !!mcdi_holds;
+	WRITE_ONCE(mcdi_task_held, !!mcdi_holds);
 	raw_spin_unlock_irqrestore(&mcdi_hold_lock, flags);
+
+	/* Core-off states stay closed while the task is paused; syscore cannot sleep to apply it */
+	if (changed) {
+		if (irqs_disabled() || !preemptible())
+			schedule_work(&mcdi_gate_work);
+		else
+			mcdi_apply_gate();
+	}
 
 	if (ret)
 		pr_err("mt6771-mcdi: SSPM did not ack %s\n", hold ? "pause" : "resume");

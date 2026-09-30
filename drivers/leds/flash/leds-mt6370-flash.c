@@ -97,6 +97,12 @@ static int mt6370_torch_brightness_set(struct led_classdev *lcdev, enum led_brig
 
 	mutex_lock(&priv->lock);
 
+	/* Turning off a LED that is not on in this mode is a no-op, not a conflict. */
+	if (!level && !(priv->fled_torch_used & BIT(led->led_no))) {
+		ret = 0;
+		goto unlock;
+	}
+
 	/*
 	 * There is only one set of flash control logic, and this flag is used to check if 'strobe'
 	 * is currently being used.
@@ -206,6 +212,12 @@ static int mt6370_strobe_set(struct led_classdev_flash *fl_cdev, bool state)
 	int ret;
 
 	mutex_lock(&priv->lock);
+
+	/* V4L2 stops the strobe before it starts the torch; nothing to stop is not busy. */
+	if (!state && !(priv->fled_strobe_used & BIT(led->led_no))) {
+		ret = 0;
+		goto unlock;
+	}
 
 	/*
 	 * There is only one set of flash control logic, and this flag is used to check if 'torch'

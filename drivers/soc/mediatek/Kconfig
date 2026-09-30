@@ -111,9 +111,16 @@ config MTK_MT6771_MCDI_KUNIT_TEST
 	depends on KUNIT
 	default KUNIT_ALL_TESTS
 
+config MTK_MT6771_SPM_START
+	tristate
+	depends on ARM64 || COMPILE_TEST
+	help
+	  Starts the MT6771 SPM program through the secure firmware; selected by its users.
+
 config MTK_MT6771_SLEEP
 	tristate "MediaTek MT6771 SPM deep sleep"
 	depends on ARM64 && SUSPEND && MTK_MT6771_MCDI && MFD_SYSCON && OF
+	select MTK_MT6771_SPM_START
 	help
 	  Arms the MT6771 SPM suspend firmware around PSCI SYSTEM_SUSPEND, as the vendor kernel
 	  does around its own suspend entry: SSPM notification, SPM flags and wake timer, MCDI

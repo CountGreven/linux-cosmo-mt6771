@@ -13,7 +13,6 @@
  * everything after it need the CCIF ring queues.
  */
 
-#include <linux/arm-smccc.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
@@ -47,6 +46,7 @@
 #include <linux/timekeeping.h>
 #include <linux/workqueue.h>
 #include <linux/unaligned.h>
+#include <linux/soc/mediatek/mtk-mt6771-spm-start.h>
 
 #include "mtk_md_proto.h"
 #include "mtk_md_regs.h"
@@ -1085,30 +1085,13 @@ static const struct {
  */
 static int mtk_md_vcorefs(struct mtk_md *md)
 {
-	struct arm_smccc_res res;
 	unsigned int i;
 	u32 v;
+	int ret;
 
-	regmap_read(md->scpsys, SPM_PCM_REG15_DATA, &v);
-	if (!v) {
-		arm_smccc_smc(MTK_SIP_KERNEL_SPM_ARGS, SPM_ARGS_SPMFW_IDX, SPMFW_LP4X_2CH_3733, 0,
-			      0, 0, 0, 0, &res);
-		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_PWRAP, 0,
-			      VCOREFS_PMIC_VSEL_0725, 0, 0, 0, 0, &res);
-		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_PWRAP, 1,
-			      VCOREFS_PMIC_VSEL_0800, 0, 0, 0, 0, &res);
-		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_INIT, 0, 0,
-			      0, 0, 0, 0, &res);
-		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, VCOREFS_SMC_CMD_GO,
-			      SPM_FLAG_RUN_COMMON_SCENARIO | SPM_FLAG_DISABLE_MMSYS_DVFS, 0,
-			      0, 0, 0, 0, &res);
-		if (regmap_read_poll_timeout(md->scpsys, SPM_PCM_REG15_DATA, v, v, MTK_MD_POLL_US,
-					     MTK_MD_POLL_TIMEOUT_US)) {
-			dev_err(md->dev, "spm: the firmware did not start\n");
-			return -ETIMEDOUT;
-		}
-		dev_info(md->dev, "spm: firmware started (r15 %#x)\n", v);
-	}
+	ret = mtk_mt6771_spm_start(md->scpsys);
+	if (ret)
+		return ret;
 
 	if (readl(md->dvfsrc + DVFSRC_BASIC_CONTROL) == DVFSRC_BASIC_CONTROL_RUN)
 		return 0;

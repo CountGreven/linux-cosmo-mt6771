@@ -6,6 +6,7 @@ config MTK_MD
 	depends on OF && HAS_IOMEM && COMMON_CLK
 	depends on MTK_CONN_MD || !MTK_CONN_MD
 	select MTK_MD_PROTO
+	select MTK_MT6771_SPM_START
 	help
 	  Host side of the modem built into the MediaTek MT6771 (Helio P60/P70),
 	  MD generation 6293. The bootloader loads the modem firmware; this

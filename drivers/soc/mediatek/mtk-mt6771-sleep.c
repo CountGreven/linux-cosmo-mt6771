@@ -22,6 +22,7 @@
 #include <linux/sched/clock.h>
 #include <linux/seq_file.h>
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
+#include <linux/soc/mediatek/mtk-mt6771-spm-start.h>
 #include <linux/suspend.h>
 
 #include <asm/arch_timer.h>
@@ -381,7 +382,32 @@ static const struct kernel_param_ops slp_gate_ops = {
 	.get = param_get_bool,
 };
 
-module_param_cb(deep_enable, &slp_gate_ops, &deep_enable, 0644);
+/* Enabling starts the SPM program first; a failure leaves deep sleep off */
+static int slp_deep_set(const char *val, const struct kernel_param *kp)
+{
+	bool on;
+	int ret = kstrtobool(val, &on);
+
+	if (ret)
+		return ret;
+	if (on && READ_ONCE(slp)) {
+		mutex_lock(&slp_lock);
+		ret = slp ? mtk_mt6771_spm_start(slp->spm) : 0;
+		mutex_unlock(&slp_lock);
+		if (ret)
+			return ret;
+	}
+	WRITE_ONCE(deep_enable, on);
+	slp_lp_update();
+	return 0;
+}
+
+static const struct kernel_param_ops slp_deep_ops = {
+	.set = slp_deep_set,
+	.get = param_get_bool,
+};
+
+module_param_cb(deep_enable, &slp_deep_ops, &deep_enable, 0644);
 MODULE_PARM_DESC(deep_enable, "Enter the SPM suspend state during s2idle (default 0: no effect)");
 module_param_cb(lp_table, &slp_gate_ops, &lp_table, 0644);
 MODULE_PARM_DESC(lp_table, "With deep_enable, apply the MT6358 low-power rail table (default 0)");
@@ -466,6 +492,10 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 	slp = s;
 	mutex_unlock(&slp_lock);
 
+	if (deep_enable && mtk_mt6771_spm_start(s->spm)) {
+		dev_err(dev, "SPM program did not start, deep sleep stays off\n");
+		WRITE_ONCE(deep_enable, false);
+	}
 	slp_lp_update();
 	debugfs_create_file("mt6771-sleep", 0400, NULL, NULL, &slp_status_fops);
 	dev_info(dev, "SPM firmware status %u, r15 0x%x, deep %s\n", s->fw_status,

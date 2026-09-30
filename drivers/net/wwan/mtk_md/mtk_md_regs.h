@@ -149,22 +149,6 @@ struct cldma_rgpd {
 
 #define SPM_PCM_REG15_DATA		0x013c	/* non-zero while the SPM firmware runs */
 
-/*
- * The SPM firmware lives in the secure firmware, which starts it on request
- * (spm_v4/mtk_spm.c and mtk_spm_vcorefs_mt6771.c in the 4.4 BSP).
- */
-#define MTK_SIP_KERNEL_SPM_VCOREFS_ARGS	0xc2000220
-#define MTK_SIP_KERNEL_SPM_ARGS		0xc2000228
-#define SPM_ARGS_SPMFW_IDX		0
-#define SPMFW_LP4X_2CH_3733		0
-#define VCOREFS_SMC_CMD_INIT		0	/* argument: the current operating point */
-#define VCOREFS_SMC_CMD_GO		1	/* argument: the flags below */
-#define VCOREFS_SMC_CMD_PWRAP		3	/* arguments: slot, PMIC vcore selector */
-#define SPM_FLAG_RUN_COMMON_SCENARIO	BIT(10)
-#define SPM_FLAG_DISABLE_MMSYS_DVFS	BIT(15)
-/* spm_vcorefs_pwarp_cmd(): (uV - 500000 + 6249) / 6250 for opp 3 (725 mV) and opp 0 (800 mV) */
-#define VCOREFS_PMIC_VSEL_0725		0x24
-#define VCOREFS_PMIC_VSEL_0800		0x30
 #define SPM_SW_RSV_5			0x061c	/* [15:0]: the operating point the SPM settled on */
 #define SPM_SW_RSV_5_OPP		GENMASK(15, 0)
 

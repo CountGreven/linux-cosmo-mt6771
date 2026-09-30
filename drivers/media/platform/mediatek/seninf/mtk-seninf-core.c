@@ -2,10 +2,10 @@
 /*
  * MediaTek SENINF CSI-2 receiver (MT8183 family, used on MT6771)
  *
- * The register sequences follow the public MT8183 ISP driver. The driver
- * owns the media and V4L2 devices until a capture driver exists that can
- * take the receiver as a sub-device; the sensors bind to it through the
- * async notifier and are started from the receiver.
+ * The register sequences follow the public MT8183 ISP driver. The receiver
+ * is a plain async sub-device of the capture driver; the sensors bind to it
+ * through a sub-notifier and are started from the receiver when the capture
+ * driver enables its source pad.
  */
 
 #include <linux/bitfield.h>
@@ -348,15 +348,15 @@ static int mtk_seninf_set_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int mtk_seninf_s_stream(struct v4l2_subdev *sd, int enable)
+static int mtk_seninf_enable_streams(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_state *state, u32 pad,
+				     u64 streams_mask)
 {
 	struct mtk_seninf *priv = sd_to_seninf(sd);
 	unsigned int port;
 
-	if (!enable) {
-		mtk_seninf_stop(priv);
-		return 0;
-	}
+	if (pad != SENINF_PAD_MUX0)
+		return -EINVAL;
 
 	for (port = 0; port < SENINF_NUM_PORTS; port++)
 		if (media_pad_remote_pad_first(&priv->pads[port]))
@@ -365,19 +365,25 @@ static int mtk_seninf_s_stream(struct v4l2_subdev *sd, int enable)
 	return -ENOLINK;
 }
 
-static const struct v4l2_subdev_video_ops mtk_seninf_video_ops = {
-	.s_stream = mtk_seninf_s_stream,
-};
+static int mtk_seninf_disable_streams(struct v4l2_subdev *sd,
+				      struct v4l2_subdev_state *state, u32 pad,
+				      u64 streams_mask)
+{
+	mtk_seninf_stop(sd_to_seninf(sd));
+
+	return 0;
+}
 
 static const struct v4l2_subdev_pad_ops mtk_seninf_pad_ops = {
 	.enum_mbus_code = mtk_seninf_enum_mbus_code,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = mtk_seninf_set_fmt,
 	.link_validate = v4l2_subdev_link_validate_default,
+	.enable_streams = mtk_seninf_enable_streams,
+	.disable_streams = mtk_seninf_disable_streams,
 };
 
 static const struct v4l2_subdev_ops mtk_seninf_subdev_ops = {
-	.video = &mtk_seninf_video_ops,
 	.pad = &mtk_seninf_pad_ops,
 };
 
@@ -390,8 +396,20 @@ static int mtk_seninf_link_setup(struct media_entity *entity,
 				 const struct media_pad *remote, u32 flags)
 {
 	struct mtk_seninf *priv = sd_to_seninf(media_entity_to_v4l2_subdev(entity));
+	unsigned int i;
 
-	return priv->streaming ? -EBUSY : 0;
+	if (priv->streaming)
+		return -EBUSY;
+
+	/* One sensor at a time: the receiver has a single source pad */
+	if (!(flags & MEDIA_LNK_FL_ENABLED) || local->index >= SENINF_NUM_PORTS)
+		return 0;
+
+	for (i = 0; i < SENINF_NUM_PORTS; i++)
+		if (i != local->index && media_pad_remote_pad_first(&priv->pads[i]))
+			return -EBUSY;
+
+	return 0;
 }
 
 static const struct media_entity_operations mtk_seninf_entity_ops = {
@@ -409,25 +427,12 @@ static int mtk_seninf_notify_bound(struct v4l2_async_notifier *notifier,
 	struct mtk_seninf *priv = container_of(notifier, struct mtk_seninf, notifier);
 	struct mtk_seninf_asc *sasc = container_of(asc, struct mtk_seninf_asc, asc);
 
-	return v4l2_create_fwnode_links_to_pad(sd, &priv->pads[sasc->port],
-					       MEDIA_LNK_FL_ENABLED);
-}
-
-static int mtk_seninf_notify_complete(struct v4l2_async_notifier *notifier)
-{
-	struct mtk_seninf *priv = container_of(notifier, struct mtk_seninf, notifier);
-	int ret;
-
-	ret = v4l2_device_register_subdev_nodes(&priv->v4l2_dev);
-	if (ret)
-		return ret;
-
-	return media_device_register(&priv->mdev);
+	/* Disabled: the capture side enables the one sensor it wants */
+	return v4l2_create_fwnode_links_to_pad(sd, &priv->pads[sasc->port], 0);
 }
 
 static const struct v4l2_async_notifier_operations mtk_seninf_notify_ops = {
 	.bound = mtk_seninf_notify_bound,
-	.complete = mtk_seninf_notify_complete,
 };
 
 static int mtk_seninf_parse_endpoints(struct mtk_seninf *priv)
@@ -551,14 +556,8 @@ static int mtk_seninf_register_subdev(struct mtk_seninf *priv)
 	if (ret)
 		goto err_entity;
 
-	ret = v4l2_device_register_subdev(&priv->v4l2_dev, sd);
-	if (ret)
-		goto err_cleanup;
-
 	return 0;
 
-err_cleanup:
-	v4l2_subdev_cleanup(sd);
 err_entity:
 	media_entity_cleanup(&sd->entity);
 	return ret;
@@ -601,20 +600,11 @@ static int mtk_seninf_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	priv->mdev.dev = dev;
-	strscpy(priv->mdev.model, "mtk-seninf", sizeof(priv->mdev.model));
-	media_device_init(&priv->mdev);
-	priv->v4l2_dev.mdev = &priv->mdev;
-
-	ret = v4l2_device_register(dev, &priv->v4l2_dev);
-	if (ret)
-		goto err_mdev;
-
 	ret = mtk_seninf_register_subdev(priv);
 	if (ret)
-		goto err_v4l2;
+		return ret;
 
-	v4l2_async_nf_init(&priv->notifier, &priv->v4l2_dev);
+	v4l2_async_subdev_nf_init(&priv->notifier, &priv->sd);
 	priv->notifier.ops = &mtk_seninf_notify_ops;
 
 	ret = mtk_seninf_parse_endpoints(priv);
@@ -625,19 +615,20 @@ static int mtk_seninf_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_nf;
 
+	ret = v4l2_async_register_subdev(&priv->sd);
+	if (ret)
+		goto err_unreg_nf;
+
 	mtk_seninf_debugfs_init(priv);
 
 	return 0;
 
+err_unreg_nf:
+	v4l2_async_nf_unregister(&priv->notifier);
 err_nf:
 	v4l2_async_nf_cleanup(&priv->notifier);
-	v4l2_device_unregister_subdev(&priv->sd);
 	v4l2_subdev_cleanup(&priv->sd);
 	media_entity_cleanup(&priv->sd.entity);
-err_v4l2:
-	v4l2_device_unregister(&priv->v4l2_dev);
-err_mdev:
-	media_device_cleanup(&priv->mdev);
 	return ret;
 }
 
@@ -648,14 +639,11 @@ static void mtk_seninf_remove(struct platform_device *pdev)
 	mtk_seninf_debugfs_exit(priv);
 	mtk_seninf_stop(priv);
 
+	v4l2_async_unregister_subdev(&priv->sd);
 	v4l2_async_nf_unregister(&priv->notifier);
 	v4l2_async_nf_cleanup(&priv->notifier);
-	media_device_unregister(&priv->mdev);
-	v4l2_device_unregister_subdev(&priv->sd);
 	v4l2_subdev_cleanup(&priv->sd);
 	media_entity_cleanup(&priv->sd.entity);
-	v4l2_device_unregister(&priv->v4l2_dev);
-	media_device_cleanup(&priv->mdev);
 }
 
 static const struct of_device_id mtk_seninf_of_match[] = {

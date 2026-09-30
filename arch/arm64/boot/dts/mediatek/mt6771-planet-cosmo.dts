@@ -2785,6 +2785,22 @@
 	remote-endpoint = <&seninf_main_ep>;
 };
 
+&seninf_mux0 {
+	seninf_mux0_ep: endpoint {
+		remote-endpoint = <&camsv0_in_ep>;
+	};
+};
+
+&camsv0 {
+	status = "okay";
+};
+
+&camsv0_in {
+	camsv0_in_ep: endpoint {
+		remote-endpoint = <&seninf_mux0_ep>;
+	};
+};
+
 &cam_sub_ep {
 	remote-endpoint = <&seninf_sub_ep>;
 };

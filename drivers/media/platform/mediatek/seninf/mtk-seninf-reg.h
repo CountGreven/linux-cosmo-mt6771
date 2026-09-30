@@ -68,6 +68,11 @@
 #define SENINF_CSI2_DPCM_NONE		BIT(7)
 #define SENINF_CSI2_INT_EN		0x0a10
 #define SENINF_CSI2_INT_STATUS		0x0a14
+/*
+ * Bits 4, 5 and 7 are the errors the vendor HAL tests. While frames flow
+ * bits 2, 6, 12 and 15 are also set all the time and are events, not errors.
+ */
+#define SENINF_CSI2_INT_ERR_MASK	(BIT(4) | BIT(5) | BIT(7))
 #define SENINF_CSI2_DGB_SEL		0x0a18
 #define SENINF_CSI2_DGB_SEL_PKT		0x8000001a
 #define SENINF_CSI2_DBG_PORT		0x0a1c
@@ -102,7 +107,9 @@
 #define SENINF_MUX_CTRL_MODE_MASK	(GENMASK(10, 8) | GENMASK(1, 0))
 #define SENINF_MUX_INTEN		0x0d04
 #define SENINF_MUX_INTSTA		0x0d08
+/* Reads back what is written, reset 0: not the measured size */
 #define SENINF_MUX_SIZE			0x0d0c
+/* Measured frame size, width in [31:16] and height in [15:0] */
 #define SENINF_MUX_DEBUG_2		0x0d14
 #define SENINF_MUX_DEBUG_3		0x0d18
 #define SENINF_MUX_SPARE		0x0d2c

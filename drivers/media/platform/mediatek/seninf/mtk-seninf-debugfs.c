@@ -17,7 +17,7 @@
 
 #include "mtk-seninf.h"
 
-#define SENINF_DBG_SAMPLE_MS	100
+#define SENINF_DBG_PKT_SAMPLES	4
 
 static const struct {
 	unsigned int page;
@@ -40,11 +40,32 @@ static void mtk_seninf_dbg_put(struct mtk_seninf *priv)
 	pm_runtime_put(priv->dev);
 }
 
-static void mtk_seninf_dbg_status_page(struct seq_file *s, struct mtk_seninf *priv,
-				       unsigned int page, const char *ports,
-				       u32 pkt0)
+/*
+ * The packet counter is narrow and wraps many times per frame, so only
+ * whether it moves between samples a millisecond apart says something.
+ */
+static const char *mtk_seninf_dbg_counting(struct mtk_seninf *priv,
+					   unsigned int page)
 {
-	u32 pkt1 = seninf_read(priv, page, SENINF_CSI2_DBG_PORT);
+	u32 first = seninf_read(priv, page, SENINF_CSI2_DBG_PORT);
+	unsigned int i;
+
+	if (seninf_read(priv, page, SENINF_CSI2_DGB_SEL) != SENINF_CSI2_DGB_SEL_PKT)
+		return "n/a";
+
+	for (i = 1; i < SENINF_DBG_PKT_SAMPLES; i++) {
+		usleep_range(900, 1100);
+		if (seninf_read(priv, page, SENINF_CSI2_DBG_PORT) != first)
+			return "yes";
+	}
+
+	return "no";
+}
+
+static void mtk_seninf_dbg_status_page(struct seq_file *s, struct mtk_seninf *priv,
+				       unsigned int page, const char *ports)
+{
+	const char *counting = mtk_seninf_dbg_counting(priv, page);
 	u32 intr = seninf_read(priv, page, SENINF_CSI2_INT_STATUS);
 	u32 intr_ext = seninf_read(priv, page, SENINF_CSI2_INT_STATUS_EXT);
 
@@ -53,16 +74,16 @@ static void mtk_seninf_dbg_status_page(struct seq_file *s, struct mtk_seninf *pr
 		   seninf_read(priv, page, SENINF_CSI2_CTL),
 		   seninf_read(priv, page, SENINF_CSI2_LNRD_TIMING),
 		   seninf_read(priv, page, SENINF_MIPI_RX_CON24));
-	seq_printf(s, "  packets: DGB_SEL %08x DBG_PORT %08x -> %08x (delta %u in %d ms)\n",
-		   seninf_read(priv, page, SENINF_CSI2_DGB_SEL), pkt0, pkt1,
-		   pkt1 - pkt0, SENINF_DBG_SAMPLE_MS);
+	seq_printf(s, "  packets: DGB_SEL %08x DBG_PORT %08x counting %s\n",
+		   seninf_read(priv, page, SENINF_CSI2_DGB_SEL),
+		   seninf_read(priv, page, SENINF_CSI2_DBG_PORT), counting);
 	seq_printf(s, "  state: LNRC_FSM %08x LNRD_FSM %08x HSRX_DBG %08x FRAME_LINE_NUM %08x\n",
 		   seninf_read(priv, page, SENINF_CSI2_LNRC_FSM),
 		   seninf_read(priv, page, SENINF_CSI2_LNRD_FSM),
 		   seninf_read(priv, page, SENINF_CSI2_HSRX_DBG),
 		   seninf_read(priv, page, SENINF_CSI2_FRAME_LINE_NUM));
-	seq_printf(s, "  errors: INT_STATUS %08x INT_STATUS_EXT %08x (cleared by this read)\n",
-		   intr, intr_ext);
+	seq_printf(s, "  errors: INT_STATUS %08x INT_STATUS_EXT %08x fatal %02lx (cleared by this read)\n",
+		   intr, intr_ext, intr & SENINF_CSI2_INT_ERR_MASK);
 
 	seninf_write(priv, page, SENINF_CSI2_INT_STATUS, intr);
 	seninf_write(priv, page, SENINF_CSI2_INT_STATUS_EXT, intr_ext);
@@ -71,7 +92,6 @@ static void mtk_seninf_dbg_status_page(struct seq_file *s, struct mtk_seninf *pr
 static int mtk_seninf_dbg_status_show(struct seq_file *s, void *unused)
 {
 	struct mtk_seninf *priv = s->private;
-	u32 pkt0[ARRAY_SIZE(mtk_seninf_dbg_pages)];
 	u32 size, mux_int;
 	unsigned int i;
 
@@ -100,21 +120,16 @@ static int mtk_seninf_dbg_status_show(struct seq_file *s, void *unused)
 		   seninf_read(priv, 0, SENINF_TOP_PHY_CTL_CSI(2)));
 
 	for (i = 0; i < ARRAY_SIZE(mtk_seninf_dbg_pages); i++)
-		pkt0[i] = seninf_read(priv, mtk_seninf_dbg_pages[i].page,
-				      SENINF_CSI2_DBG_PORT);
-	msleep(SENINF_DBG_SAMPLE_MS);
-	for (i = 0; i < ARRAY_SIZE(mtk_seninf_dbg_pages); i++)
 		mtk_seninf_dbg_status_page(s, priv, mtk_seninf_dbg_pages[i].page,
-					   mtk_seninf_dbg_pages[i].ports, pkt0[i]);
+					   mtk_seninf_dbg_pages[i].ports);
 
-	/* The size layout, height in the upper half, is assumed from the test model */
-	size = seninf_read(priv, SENINF_MUX, SENINF_MUX_SIZE);
+	/* MUX_SIZE is a plain register that nothing writes, the measurement is DEBUG_2 */
+	size = seninf_read(priv, SENINF_MUX, SENINF_MUX_DEBUG_2);
 	mux_int = seninf_read(priv, SENINF_MUX, SENINF_MUX_INTSTA);
-	seq_printf(s, "mux0: CTRL %08x SIZE %08x (%u x %u) INTSTA %08x DEBUG_2 %08x DEBUG_3 %08x\n",
-		   seninf_read(priv, SENINF_MUX, SENINF_MUX_CTRL), size,
-		   size & 0xffff, size >> 16, mux_int,
-		   seninf_read(priv, SENINF_MUX, SENINF_MUX_DEBUG_2),
-		   seninf_read(priv, SENINF_MUX, SENINF_MUX_DEBUG_3));
+	seq_printf(s, "mux0: CTRL %08x measured %u x %u (DEBUG_2 %08x) DEBUG_3 %08x INTSTA %08x\n",
+		   seninf_read(priv, SENINF_MUX, SENINF_MUX_CTRL),
+		   size >> 16, size & 0xffff, size,
+		   seninf_read(priv, SENINF_MUX, SENINF_MUX_DEBUG_3), mux_int);
 	seninf_write(priv, SENINF_MUX, SENINF_MUX_INTSTA, mux_int);
 
 	mtk_seninf_dbg_put(priv);

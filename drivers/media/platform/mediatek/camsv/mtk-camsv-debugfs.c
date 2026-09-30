@@ -81,12 +81,19 @@ static int mtk_camsv_dbg_status_show(struct seq_file *s, void *unused)
 		   camsv_read(priv, CAMSV_FBC_IMGO_CTL2));
 
 	spin_lock_irqsave(&priv->qlock, flags);
-	seq_printf(s, "irq: total %u frames %u drops %u sequence %u last sof-to-done %llu us\n",
-		   st->irqs, st->frames, st->drops, st->sequence, st->sof_to_done_ns / 1000);
-	for (i = 0; i < ARRAY_SIZE(mtk_camsv_dbg_int_names); i++)
-		if (st->bits[__ffs(mtk_camsv_dbg_int_names[i].bit)])
-			seq_printf(s, "  %s: %u\n", mtk_camsv_dbg_int_names[i].name,
-				   st->bits[__ffs(mtk_camsv_dbg_int_names[i].bit)]);
+	seq_printf(s, "irq: total %u frames %u drops %u sequence %u\n",
+		   st->irqs, st->frames, st->drops, st->sequence);
+	for (i = 0; i < 32; i++) {
+		const char *name = "?";
+		unsigned int j;
+
+		if (!st->bits[i])
+			continue;
+		for (j = 0; j < ARRAY_SIZE(mtk_camsv_dbg_int_names); j++)
+			if (mtk_camsv_dbg_int_names[j].bit == BIT(i))
+				name = mtk_camsv_dbg_int_names[j].name;
+		seq_printf(s, "  bit %u %s: %u\n", i, name, st->bits[i]);
+	}
 	spin_unlock_irqrestore(&priv->qlock, flags);
 
 	mtk_camsv_dbg_put(priv);
@@ -287,6 +294,9 @@ void mtk_camsv_debugfs_init(struct mtk_camsv *priv)
 	debugfs_create_file("extra", 0644, dir, priv, &mtk_camsv_dbg_extra_fops);
 	/* Applied by the next stream on */
 	debugfs_create_bool("dma", 0644, dir, &priv->dbg_dma);
+	debugfs_create_x32("int_en", 0644, dir, &priv->dbg_int_en);
+	/* Byte the buffers are filled with when they are queued, 0 = leave them */
+	debugfs_create_x32("poison", 0644, dir, &priv->dbg_poison);
 }
 
 void mtk_camsv_debugfs_exit(struct mtk_camsv *priv)

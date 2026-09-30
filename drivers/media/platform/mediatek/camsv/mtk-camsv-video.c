@@ -2,9 +2,9 @@
 /*
  * MediaTek CAMSV capture video node
  *
- * The format size follows the pad format of the sub-device (the node is
- * configured through the media graph); the video node chooses the pixel
- * layout of the Bayer code: 16 bit container or MIPI CSI-2 packed.
+ * The format follows the pad format of the sub-device: the node is configured
+ * through the media graph. The hardware writes the 10 bit value in bits 13:4
+ * of a 16 bit word, which is a 14 bit sample.
  */
 
 #include <linux/dma-mapping.h>
@@ -21,11 +21,6 @@
 
 /* Layout */
 
-static u32 mtk_camsv_bytesperline(u32 width, bool packed)
-{
-	return packed ? DIV_ROUND_UP(ALIGN(width, 4) * 5, 4) : width * 2;
-}
-
 static void mtk_camsv_get_mbus_fmt(struct mtk_camsv *priv, struct v4l2_mbus_framefmt *fmt)
 {
 	struct v4l2_subdev_state *state = v4l2_subdev_lock_and_get_active_state(&priv->sd);
@@ -34,8 +29,7 @@ static void mtk_camsv_get_mbus_fmt(struct mtk_camsv *priv, struct v4l2_mbus_fram
 	v4l2_subdev_unlock_state(state);
 }
 
-static void mtk_camsv_fill_pix(struct v4l2_pix_format *pix, const struct v4l2_mbus_framefmt *fmt,
-			       bool packed)
+static void mtk_camsv_fill_pix(struct v4l2_pix_format *pix, const struct v4l2_mbus_framefmt *fmt)
 {
 	const struct mtk_camsv_format *f = mtk_camsv_format_by_code(fmt->code);
 
@@ -45,26 +39,11 @@ static void mtk_camsv_fill_pix(struct v4l2_pix_format *pix, const struct v4l2_mb
 	memset(pix, 0, sizeof(*pix));
 	pix->width = fmt->width;
 	pix->height = fmt->height;
-	pix->pixelformat = packed ? f->fourcc_packed : f->fourcc;
+	pix->pixelformat = f->fourcc;
 	pix->field = V4L2_FIELD_NONE;
 	pix->colorspace = V4L2_COLORSPACE_RAW;
-	pix->bytesperline = mtk_camsv_bytesperline(pix->width, packed);
+	pix->bytesperline = pix->width * 2;
 	pix->sizeimage = pix->bytesperline * pix->height;
-}
-
-/* Returns 1 for a packed fourcc, 0 for a container fourcc, -1 for others */
-static int mtk_camsv_fourcc_packed(u32 fourcc)
-{
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_SIZE(mtk_camsv_formats); i++) {
-		if (mtk_camsv_formats[i].fourcc == fourcc)
-			return 0;
-		if (mtk_camsv_formats[i].fourcc_packed == fourcc)
-			return 1;
-	}
-
-	return -1;
 }
 
 /* vb2 */
@@ -78,7 +57,7 @@ static int mtk_camsv_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
 	struct v4l2_pix_format pix;
 
 	mtk_camsv_get_mbus_fmt(priv, &fmt);
-	mtk_camsv_fill_pix(&pix, &fmt, priv->packed);
+	mtk_camsv_fill_pix(&pix, &fmt);
 
 	if (*nplanes)
 		return sizes[0] < pix.sizeimage ? -EINVAL : 0;
@@ -98,7 +77,7 @@ static int mtk_camsv_buf_prepare(struct vb2_buffer *vb)
 	struct v4l2_pix_format pix;
 
 	mtk_camsv_get_mbus_fmt(priv, &fmt);
-	mtk_camsv_fill_pix(&pix, &fmt, priv->packed);
+	mtk_camsv_fill_pix(&pix, &fmt);
 
 	if (vb2_plane_size(vb, 0) < pix.sizeimage)
 		return -EINVAL;
@@ -109,6 +88,9 @@ static int mtk_camsv_buf_prepare(struct vb2_buffer *vb)
 		return -EINVAL;
 
 	vb2_set_plane_payload(vb, 0, pix.sizeimage);
+
+	if (priv->dbg_poison)
+		memset(vb2_plane_vaddr(vb, 0), priv->dbg_poison, pix.sizeimage);
 
 	return 0;
 }
@@ -131,9 +113,13 @@ static void mtk_camsv_return_buffers(struct mtk_camsv *priv, enum vb2_buffer_sta
 	unsigned long flags;
 
 	spin_lock_irqsave(&priv->qlock, flags);
-	if (priv->cur) {
-		vb2_buffer_done(&priv->cur->vb.vb2_buf, state);
-		priv->cur = NULL;
+	if (priv->active) {
+		vb2_buffer_done(&priv->active->vb.vb2_buf, state);
+		priv->active = NULL;
+	}
+	if (priv->next) {
+		vb2_buffer_done(&priv->next->vb.vb2_buf, state);
+		priv->next = NULL;
 	}
 	list_for_each_entry_safe(buf, tmp, &priv->buffers, list) {
 		list_del(&buf->list);
@@ -152,7 +138,7 @@ static int mtk_camsv_start_streaming(struct vb2_queue *q, unsigned int count)
 	int ret;
 
 	mtk_camsv_get_mbus_fmt(priv, &fmt);
-	mtk_camsv_fill_pix(&pix, &fmt, priv->packed);
+	mtk_camsv_fill_pix(&pix, &fmt);
 
 	ret = video_device_pipeline_alloc_start(&priv->vdev);
 	if (ret)
@@ -179,9 +165,9 @@ static int mtk_camsv_start_streaming(struct vb2_queue *q, unsigned int count)
 		goto err_dummy;
 
 	spin_lock_irqsave(&priv->qlock, flags);
-	priv->cur = list_first_entry_or_null(&priv->buffers, struct mtk_camsv_buffer, list);
-	if (priv->cur)
-		list_del(&priv->cur->list);
+	priv->active = list_first_entry_or_null(&priv->buffers, struct mtk_camsv_buffer, list);
+	if (priv->active)
+		list_del(&priv->active->list);
 	spin_unlock_irqrestore(&priv->qlock, flags);
 
 	ret = mtk_camsv_hw_start(priv, &fmt, pix.bytesperline);
@@ -214,7 +200,8 @@ static void mtk_camsv_stop_streaming(struct vb2_queue *q)
 	struct mtk_camsv *priv = vb2_get_drv_priv(q);
 	struct media_pad *remote = media_pad_remote_pad_first(&priv->pads[CAMSV_PAD_SINK]);
 
-	/* Sensor first, then the capture side */
+	/* Frame flow first, at a frame boundary, then the sensor, then the rest */
+	mtk_camsv_hw_vf_off(priv);
 	if (remote)
 		v4l2_subdev_disable_streams(media_entity_to_v4l2_subdev(remote->entity),
 					    remote->index, BIT_ULL(0));
@@ -251,33 +238,19 @@ static int mtk_camsv_querycap(struct file *file, void *fh, struct v4l2_capabilit
 static int mtk_camsv_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 {
 	const struct mtk_camsv_format *fmt;
-	unsigned int index = f->index;
 
 	if (f->mbus_code) {
 		fmt = mtk_camsv_format_by_code(f->mbus_code);
-		if (!fmt || index > 1)
+		if (!fmt || f->index)
 			return -EINVAL;
 	} else {
-		if (index >= 2 * ARRAY_SIZE(mtk_camsv_formats))
+		if (f->index >= ARRAY_SIZE(mtk_camsv_formats))
 			return -EINVAL;
-		fmt = &mtk_camsv_formats[index / 2];
-		index %= 2;
+		fmt = &mtk_camsv_formats[f->index];
 	}
 
-	f->pixelformat = index ? fmt->fourcc_packed : fmt->fourcc;
+	f->pixelformat = fmt->fourcc;
 	f->flags = 0;
-
-	return 0;
-}
-
-static int mtk_camsv_try_fmt(struct mtk_camsv *priv, struct v4l2_pix_format *pix, bool *packed)
-{
-	struct v4l2_mbus_framefmt fmt;
-	int req = mtk_camsv_fourcc_packed(pix->pixelformat);
-
-	mtk_camsv_get_mbus_fmt(priv, &fmt);
-	*packed = req < 0 ? priv->packed : req;
-	mtk_camsv_fill_pix(pix, &fmt, *packed);
 
 	return 0;
 }
@@ -288,28 +261,7 @@ static int mtk_camsv_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 	struct v4l2_mbus_framefmt fmt;
 
 	mtk_camsv_get_mbus_fmt(priv, &fmt);
-	mtk_camsv_fill_pix(&f->fmt.pix, &fmt, priv->packed);
-
-	return 0;
-}
-
-static int mtk_camsv_try_fmt_vid_cap(struct file *file, void *fh, struct v4l2_format *f)
-{
-	bool packed;
-
-	return mtk_camsv_try_fmt(video_drvdata(file), &f->fmt.pix, &packed);
-}
-
-static int mtk_camsv_s_fmt(struct file *file, void *fh, struct v4l2_format *f)
-{
-	struct mtk_camsv *priv = video_drvdata(file);
-	bool packed;
-
-	if (vb2_is_busy(&priv->queue))
-		return -EBUSY;
-
-	mtk_camsv_try_fmt(priv, &f->fmt.pix, &packed);
-	priv->packed = packed;
+	mtk_camsv_fill_pix(&f->fmt.pix, &fmt);
 
 	return 0;
 }
@@ -318,8 +270,8 @@ static const struct v4l2_ioctl_ops mtk_camsv_ioctl_ops = {
 	.vidioc_querycap = mtk_camsv_querycap,
 	.vidioc_enum_fmt_vid_cap = mtk_camsv_enum_fmt,
 	.vidioc_g_fmt_vid_cap = mtk_camsv_g_fmt,
-	.vidioc_s_fmt_vid_cap = mtk_camsv_s_fmt,
-	.vidioc_try_fmt_vid_cap = mtk_camsv_try_fmt_vid_cap,
+	.vidioc_s_fmt_vid_cap = mtk_camsv_g_fmt,
+	.vidioc_try_fmt_vid_cap = mtk_camsv_g_fmt,
 	.vidioc_reqbufs = vb2_ioctl_reqbufs,
 	.vidioc_querybuf = vb2_ioctl_querybuf,
 	.vidioc_qbuf = vb2_ioctl_qbuf,

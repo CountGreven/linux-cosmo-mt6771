@@ -30,8 +30,7 @@ struct device_link;
 
 struct mtk_camsv_format {
 	u32 code;
-	u32 fourcc;		/* 16 bit container */
-	u32 fourcc_packed;	/* MIPI CSI-2 packing */
+	u32 fourcc;		/* 10 bit value in bits 13:4 of a 16 bit word */
 };
 
 struct mtk_camsv_buffer {
@@ -47,7 +46,6 @@ struct mtk_camsv_stats {
 	u32 drops;
 	u32 sequence;
 	u64 sof_ts;
-	u64 sof_to_done_ns;
 };
 
 /* Register writes applied before the timing generator starts, see debugfs */
@@ -79,18 +77,20 @@ struct mtk_camsv {
 	struct vb2_queue queue;
 	/* Serializes the ioctls and the vb2 queue */
 	struct mutex lock;
-	bool packed;
 
-	/* Buffers: the list, the buffer the DMA targets, and a dummy for drops */
+	/*
+	 * Buffers: the queued list, the buffer the frame in flight lands in
+	 * (active), the one programmed for the next frame (next), and a dummy
+	 * for frames that find no buffer.
+	 */
 	spinlock_t qlock;
 	struct list_head buffers;
-	struct mtk_camsv_buffer *cur;
+	struct mtk_camsv_buffer *active;
+	struct mtk_camsv_buffer *next;
 	void *dummy_cpu;
 	dma_addr_t dummy_dma;
 	size_t dummy_size;
 	bool streaming;
-	u64 cur_sof_ts;
-	u32 cur_seq;
 	u32 err_storm[32];
 
 	struct mtk_camsv_stats stats;
@@ -99,6 +99,8 @@ struct mtk_camsv {
 	struct dentry *debugfs;
 	bool dbg_power;
 	bool dbg_dma;
+	u32 dbg_int_en;
+	u32 dbg_poison;
 	u32 dbg_reg_val;
 	struct mtk_camsv_extra extra[CAMSV_MAX_EXTRA];
 	unsigned int num_extra;
@@ -129,6 +131,7 @@ const struct mtk_camsv_format *mtk_camsv_format_by_code(u32 code);
 int mtk_camsv_hw_reset(struct mtk_camsv *priv);
 int mtk_camsv_hw_start(struct mtk_camsv *priv, const struct v4l2_mbus_framefmt *fmt,
 		       u32 bytesperline);
+void mtk_camsv_hw_vf_off(struct mtk_camsv *priv);
 void mtk_camsv_hw_stop(struct mtk_camsv *priv);
 
 int mtk_camsv_video_register(struct mtk_camsv *priv);

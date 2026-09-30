@@ -33,13 +33,14 @@
 /* One error bit that keeps firing is masked after this many interrupts */
 #define CAMSV_ERR_STORM			100
 #define CAMSV_RESET_TIMEOUT_US		1000
-#define CAMSV_IDLE_TIMEOUT_US		100000
+/* One frame at 30 fps, the state stays at 2 until the reset on this unit */
+#define CAMSV_IDLE_TIMEOUT_US		40000
 
 const struct mtk_camsv_format mtk_camsv_formats[4] = {
-	{ MEDIA_BUS_FMT_SBGGR10_1X10, V4L2_PIX_FMT_SBGGR10, V4L2_PIX_FMT_SBGGR10P },
-	{ MEDIA_BUS_FMT_SGBRG10_1X10, V4L2_PIX_FMT_SGBRG10, V4L2_PIX_FMT_SGBRG10P },
-	{ MEDIA_BUS_FMT_SGRBG10_1X10, V4L2_PIX_FMT_SGRBG10, V4L2_PIX_FMT_SGRBG10P },
-	{ MEDIA_BUS_FMT_SRGGB10_1X10, V4L2_PIX_FMT_SRGGB10, V4L2_PIX_FMT_SRGGB10P },
+	{ MEDIA_BUS_FMT_SBGGR10_1X10, V4L2_PIX_FMT_SBGGR14 },
+	{ MEDIA_BUS_FMT_SGBRG10_1X10, V4L2_PIX_FMT_SGBRG14 },
+	{ MEDIA_BUS_FMT_SGRBG10_1X10, V4L2_PIX_FMT_SGRBG14 },
+	{ MEDIA_BUS_FMT_SRGGB10_1X10, V4L2_PIX_FMT_SRGGB14 },
 };
 
 const struct mtk_camsv_format *mtk_camsv_format_by_code(u32 code)
@@ -80,9 +81,9 @@ int mtk_camsv_hw_reset(struct mtk_camsv *priv)
 	return ret;
 }
 
-static dma_addr_t mtk_camsv_target_addr(struct mtk_camsv *priv)
+static dma_addr_t mtk_camsv_buf_addr(struct mtk_camsv *priv, struct mtk_camsv_buffer *buf)
 {
-	return priv->cur ? priv->cur->addr : priv->dummy_dma;
+	return buf ? buf->addr : priv->dummy_dma;
 }
 
 static void mtk_camsv_apply_extra(struct mtk_camsv *priv)
@@ -98,7 +99,7 @@ static void mtk_camsv_apply_extra(struct mtk_camsv *priv)
 
 /*
  * Called with the block powered and its interrupt disabled. The buffer the
- * first frame lands in is priv->cur, or the dummy buffer.
+ * first frame lands in is priv->active, or the dummy buffer.
  */
 int mtk_camsv_hw_start(struct mtk_camsv *priv, const struct v4l2_mbus_framefmt *fmt,
 		       u32 bytesperline)
@@ -114,6 +115,9 @@ int mtk_camsv_hw_start(struct mtk_camsv *priv, const struct v4l2_mbus_framefmt *
 
 	camsv_write(priv, CAMSV_TG_SEN_GRAB_PXL, FIELD_PREP(CAMSV_TG_GRAB_END, fmt->width));
 	camsv_write(priv, CAMSV_TG_SEN_GRAB_LIN, FIELD_PREP(CAMSV_TG_GRAB_END, fmt->height));
+	camsv_update(priv, CAMSV_CLK_EN, CAMSV_CLK_EN_TG, CAMSV_CLK_EN_TG);
+	camsv_update(priv, CAMSV_TG_PATH_CFG, CAMSV_TG_PATH_CFG_DB_LOAD_DIS,
+		     CAMSV_TG_PATH_CFG_DB_LOAD_DIS);
 	camsv_update(priv, CAMSV_TG_SEN_MODE, CAMSV_TG_SEN_MODE_CMOS_EN,
 		     CAMSV_TG_SEN_MODE_CMOS_EN);
 
@@ -121,18 +125,19 @@ int mtk_camsv_hw_start(struct mtk_camsv *priv, const struct v4l2_mbus_framefmt *
 		camsv_write(priv, CAMSV_IMGO_XSIZE, bytesperline - 1);
 		camsv_write(priv, CAMSV_IMGO_YSIZE, fmt->height - 1);
 		camsv_write(priv, CAMSV_IMGO_STRIDE, bytesperline);
-		camsv_write(priv, CAMSV_IMGO_BASE_ADDR, mtk_camsv_target_addr(priv));
-		camsv_update(priv, CAMSV_MODULE_EN, CAMSV_MODULE_EN_IMGO,
-			     CAMSV_MODULE_EN_IMGO);
+		camsv_write(priv, CAMSV_IMGO_BASE_ADDR,
+			    mtk_camsv_buf_addr(priv, priv->active));
+		camsv_update(priv, CAMSV_MODULE_EN,
+			     CAMSV_MODULE_EN_IMGO | CAMSV_MODULE_EN_DATA,
+			     CAMSV_MODULE_EN_IMGO | CAMSV_MODULE_EN_DATA);
 	}
 
 	mtk_camsv_apply_extra(priv);
 
 	/* Drop what the reset and the setup left pending, then arm */
 	camsv_read(priv, CAMSV_INT_STATUS);
-	priv->cur_seq = 0;
 	priv->stats.sequence = 0;
-	camsv_write(priv, CAMSV_INT_EN, CAMSV_INT_ENABLED);
+	camsv_write(priv, CAMSV_INT_EN, priv->dbg_int_en);
 	enable_irq(priv->irq);
 
 	priv->streaming = true;
@@ -143,8 +148,8 @@ int mtk_camsv_hw_start(struct mtk_camsv *priv, const struct v4l2_mbus_framefmt *
 	return 0;
 }
 
-/* Vendor stop protocol: VF off, wait for the TG to idle, reset, clear the enables */
-void mtk_camsv_hw_stop(struct mtk_camsv *priv)
+/* Stop the frame flow while the sensor still runs, so the TG ends on a frame boundary */
+void mtk_camsv_hw_vf_off(struct mtk_camsv *priv)
 {
 	u32 val;
 
@@ -152,41 +157,60 @@ void mtk_camsv_hw_stop(struct mtk_camsv *priv)
 	if (readl_poll_timeout(priv->base + CAMSV_TG_INTER_ST, val,
 			       FIELD_GET(CAMSV_TG_INTER_ST_STATE, val) ==
 			       CAMSV_TG_INTER_ST_IDLE, 1000, CAMSV_IDLE_TIMEOUT_US))
-		dev_warn(priv->dev, "timing generator not idle, TG_INTER_ST %#x\n", val);
+		dev_dbg(priv->dev, "timing generator not idle, TG_INTER_ST %#x\n", val);
+}
 
+/* Rest of the vendor stop protocol: reset, then clear the enables */
+void mtk_camsv_hw_stop(struct mtk_camsv *priv)
+{
 	camsv_write(priv, CAMSV_INT_EN, 0);
 	disable_irq(priv->irq);
 	priv->streaming = false;
 
 	mtk_camsv_hw_reset(priv);
-	camsv_update(priv, CAMSV_MODULE_EN, CAMSV_MODULE_EN_IMGO, 0);
+	camsv_update(priv, CAMSV_MODULE_EN, CAMSV_MODULE_EN_IMGO | CAMSV_MODULE_EN_DATA, 0);
 	camsv_update(priv, CAMSV_TG_SEN_MODE, CAMSV_TG_SEN_MODE_CMOS_EN, 0);
 }
 
 /* Interrupts */
 
-static void mtk_camsv_frame_done(struct mtk_camsv *priv)
+/*
+ * The base address is latched at the start of a frame: the one written while
+ * frame N runs is used by frame N + 1. So a buffer is complete at the start of
+ * the next frame, and the address for the frame after that is written now.
+ * Called with qlock held.
+ */
+static void mtk_camsv_frame_start(struct mtk_camsv *priv)
 {
-	struct mtk_camsv_buffer *buf = priv->cur;
 	struct mtk_camsv_stats *st = &priv->stats;
+	u64 now = ktime_get_ns();
 
-	if (buf) {
-		buf->vb.vb2_buf.timestamp = priv->cur_sof_ts;
-		buf->vb.sequence = priv->cur_seq;
-		buf->vb.field = V4L2_FIELD_NONE;
-		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
-		st->frames++;
-		st->sof_to_done_ns = ktime_get_ns() - priv->cur_sof_ts;
-	} else {
-		st->drops++;
+	if (st->sequence) {
+		struct mtk_camsv_buffer *buf = priv->active;
+
+		if (buf) {
+			buf->vb.field = V4L2_FIELD_NONE;
+			vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
+			st->frames++;
+		} else {
+			st->drops++;
+		}
+		priv->active = priv->next;
 	}
 
-	priv->cur = list_first_entry_or_null(&priv->buffers, struct mtk_camsv_buffer, list);
-	if (priv->cur)
-		list_del(&priv->cur->list);
+	if (priv->active) {
+		priv->active->vb.sequence = st->sequence;
+		priv->active->vb.vb2_buf.timestamp = now;
+	}
+	st->sequence++;
+	st->sof_ts = now;
+
+	priv->next = list_first_entry_or_null(&priv->buffers, struct mtk_camsv_buffer, list);
+	if (priv->next)
+		list_del(&priv->next->list);
 
 	if (priv->dbg_dma)
-		camsv_write(priv, CAMSV_IMGO_BASE_ADDR, mtk_camsv_target_addr(priv));
+		camsv_write(priv, CAMSV_IMGO_BASE_ADDR, mtk_camsv_buf_addr(priv, priv->next));
 }
 
 static irqreturn_t mtk_camsv_irq(int irq, void *data)
@@ -227,14 +251,8 @@ static irqreturn_t mtk_camsv_irq(int irq, void *data)
 		dev_warn_ratelimited(priv->dev, "error interrupt %#lx\n", errors);
 	}
 
-	if (status & CAMSV_INT_HW_PASS1_DON)
-		mtk_camsv_frame_done(priv);
-
-	if (status & CAMSV_INT_SOF) {
-		priv->cur_seq = priv->stats.sequence++;
-		priv->cur_sof_ts = ktime_get_ns();
-		priv->stats.sof_ts = priv->cur_sof_ts;
-	}
+	if (status & CAMSV_INT_SOF)
+		mtk_camsv_frame_start(priv);
 
 	spin_unlock_irqrestore(&priv->qlock, flags);
 
@@ -503,6 +521,7 @@ static int mtk_camsv_probe(struct platform_device *pdev)
 
 	priv->dev = dev;
 	priv->dbg_dma = true;
+	priv->dbg_int_en = CAMSV_INT_ENABLED;
 	mutex_init(&priv->lock);
 	spin_lock_init(&priv->qlock);
 	INIT_LIST_HEAD(&priv->buffers);

@@ -35,6 +35,7 @@
 #define  CAMSV_TG_GRAB_START		GENMASK(14, 0)
 #define  CAMSV_TG_GRAB_END		GENMASK(30, 16)
 #define CAMSV_TG_PATH_CFG		0x0240
+#define  CAMSV_TG_PATH_CFG_DB_LOAD_DIS	BIT(4)
 #define CAMSV_TG_FRMSIZE_ST		0x0268
 #define CAMSV_TG_INTER_ST		0x026c	/* vendor */
 #define  CAMSV_TG_INTER_ST_STATE	GENMASK(13, 8)
@@ -45,6 +46,8 @@
 /* Top */
 #define CAMSV_MODULE_EN			0x0510	/* vendor */
 #define  CAMSV_MODULE_EN_IMGO		BIT(4)
+#define  CAMSV_MODULE_EN_TG		BIT(0)
+#define  CAMSV_MODULE_EN_DATA		(CAMSV_MODULE_EN_TG | BIT(3))
 #define CAMSV_FMT_SEL			0x0514
 #define CAMSV_INT_EN			0x0518	/* vendor */
 #define CAMSV_INT_STATUS		0x051c	/* vendor, read to clear */
@@ -53,6 +56,7 @@
 #define  CAMSV_SW_CTL_IMGO_RST_ST	BIT(1)
 #define  CAMSV_SW_CTL_SW_RST		BIT(2)
 #define CAMSV_CLK_EN			0x0530
+#define  CAMSV_CLK_EN_TG		BIT(0)
 #define CAMSV_PAK			0x054c
 
 /* Interrupt bits of INT_EN and INT_STATUS (vendor) */
@@ -70,6 +74,6 @@
 
 #define CAMSV_INT_ERRORS	(CAMSV_INT_TG_ERR | CAMSV_INT_TG_GBERR | \
 				 CAMSV_INT_IMGO_ERR | CAMSV_INT_IMGO_OVERRUN)
-#define CAMSV_INT_ENABLED	(CAMSV_INT_SOF | CAMSV_INT_HW_PASS1_DON | CAMSV_INT_ERRORS)
+#define CAMSV_INT_ENABLED	(CAMSV_INT_SOF | CAMSV_INT_ERRORS)
 
 #endif

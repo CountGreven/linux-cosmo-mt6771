@@ -12,6 +12,7 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/pm.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/usb/role.h>
@@ -611,6 +612,34 @@ static void fusb301_remove(struct i2c_client *client)
 		regulator_disable(fusb301->vbus_supply);
 }
 
+/*
+ * The vendor leaves the chip untouched across suspend and the interrupt is no wake source; the
+ * chip keeps detecting on its own. VBUS stays as it is. Only the poll stops, and one update on
+ * resume picks up whatever happened meanwhile.
+ */
+static int fusb301_suspend(struct device *dev)
+{
+	struct fusb301 *fusb301 = dev_get_drvdata(dev);
+
+	cancel_delayed_work_sync(&fusb301->poll_work);
+
+	return 0;
+}
+
+static int fusb301_resume(struct device *dev)
+{
+	struct fusb301 *fusb301 = dev_get_drvdata(dev);
+
+	if (fusb301_needs_poll(fusb301))
+		queue_delayed_work(system_freezable_wq, &fusb301->poll_work, 0);
+	else
+		fusb301_hw_update(fusb301);
+
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(fusb301_pm_ops, fusb301_suspend, fusb301_resume);
+
 static const struct of_device_id fusb301_of_match[] = {
 	{ .compatible = "fcs,fusb301" },
 	{}
@@ -623,6 +652,7 @@ static struct i2c_driver fusb301_driver = {
 	.driver		= {
 		.name		= "fusb301",
 		.of_match_table	= fusb301_of_match,
+		.pm		= pm_sleep_ptr(&fusb301_pm_ops),
 	},
 };
 

@@ -10864,6 +10864,13 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/media/i2c/galaxycore,gc08a3.yaml
 F:	drivers/media/i2c/gc08a3.c
 
+GALAXYCORE GC5035 CAMERA SENSOR DRIVER
+M:	Fredrik Lindlöf <fredrik.lindlof@gmail.com>
+L:	linux-media@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/media/i2c/galaxycore,gc5035.yaml
+F:	drivers/media/i2c/gc5035.c
+
 GALAXYCORE GC2145 SENSOR DRIVER
 M:	Alain Volmat <alain.volmat@foss.st.com>
 L:	linux-media@vger.kernel.org

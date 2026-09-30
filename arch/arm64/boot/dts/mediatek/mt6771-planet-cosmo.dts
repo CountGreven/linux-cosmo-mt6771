@@ -2209,7 +2209,7 @@
 			};
 
 #if COSMO_DEEP_SLEEP
-			SPM_SUSPEND: spm-suspend {
+			SPM_SUSPEND: cpu-spm-suspend {
 				compatible = "arm,idle-state";
 				local-timer-stop;
 				arm,psci-suspend-param = <0x01010005>;

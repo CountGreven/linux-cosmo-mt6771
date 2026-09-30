@@ -51,7 +51,7 @@
 #define MT6370_ADC_CHAN_MAX		9
 
 enum mt6370_chg_reg_field {
-	/* MT6370_REG_CHG_CTRL1 -- bit 2 HZ_EN (vendor mt6370_pmu_charger.c:1587-1596) */
+	/* MT6370_REG_CHG_CTRL1 */
 	F_HZ,
 	/* MT6370_REG_CHG_CTRL2 */
 	F_TE_EN,
@@ -654,27 +654,18 @@ static int mt6370_chg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_USB_TYPE:
 		val->intval = priv->psy_usb_type;
 		return 0;
-	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR: {
-		unsigned int hz;
-		int ret2;
-
-		ret = mt6370_chg_field_get(priv, F_HZ, &hz);
+	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		ret = mt6370_chg_field_get(priv, F_HZ, &val->intval);
 		if (ret)
 			return ret;
-		if (hz)
+		if (val->intval) {
 			val->intval = POWER_SUPPLY_CHARGE_BEHAVIOUR_FORCE_DISCHARGE;
-		else {
-			unsigned int chg_en;
-
-			ret2 = mt6370_chg_field_get(priv, F_CHG_EN, &chg_en);
-			if (ret2)
-				return ret2;
-			val->intval = chg_en ?
-				POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
-				POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+			return 0;
 		}
-		return 0;
-	}
+		ret = mt6370_chg_field_get(priv, F_CHG_EN, &val->intval);
+		val->intval = val->intval ? POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO :
+					    POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+		return ret;
 	default:
 		return -EINVAL;
 	}
@@ -685,6 +676,7 @@ static int mt6370_chg_set_property(struct power_supply *psy,
 				   const union power_supply_propval *val)
 {
 	struct mt6370_priv *priv = power_supply_get_drvdata(psy);
+	int ret;
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -704,23 +696,17 @@ static int mt6370_chg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
 		return mt6370_chg_field_set(priv, F_IEOC, val->intval);
 	case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
+		/* HZ disconnects the input, so the battery carries the system */
 		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_FORCE_DISCHARGE)
 			return mt6370_chg_field_set(priv, F_HZ, 1);
-		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) {
-			int ret2 = mt6370_chg_field_set(priv, F_HZ, 0);
-
-			if (ret2)
-				return ret2;
-			return mt6370_chg_field_set(priv, F_CHG_EN, 1);
-		}
-		if (val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) {
-			int ret2 = mt6370_chg_field_set(priv, F_HZ, 0);
-
-			if (ret2)
-				return ret2;
-			return mt6370_chg_field_set(priv, F_CHG_EN, 0);
-		}
-		return -EINVAL;
+		if (val->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO &&
+		    val->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE)
+			return -EINVAL;
+		ret = mt6370_chg_field_set(priv, F_HZ, 0);
+		if (ret)
+			return ret;
+		return mt6370_chg_field_set(priv, F_CHG_EN,
+					    val->intval == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO);
 	default:
 		return -EINVAL;
 	}

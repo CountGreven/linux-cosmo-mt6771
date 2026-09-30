@@ -16,6 +16,7 @@ static enum scpsys_bus_prot_block scpsys_bus_prot_blocks_mt8183[] = {
 static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	[MT8183_POWER_DOMAIN_AUDIO] = {
 		.name = "audio",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = PWR_STATUS_AUDIO,
 		.ctl_offs = 0x0314,
 		.pwr_sta_offs = 0x0180,
@@ -130,6 +131,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_CAM] = {
 		.name = "cam",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = BIT(25),
 		.ctl_offs = 0x0344,
 		.pwr_sta_offs = 0x0180,
@@ -161,6 +163,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_ISP] = {
 		.name = "isp",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = PWR_STATUS_ISP,
 		.ctl_offs = 0x0308,
 		.pwr_sta_offs = 0x0180,
@@ -187,6 +190,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_VDEC] = {
 		.name = "vdec",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = BIT(31),
 		.ctl_offs = 0x0300,
 		.pwr_sta_offs = 0x0180,
@@ -203,6 +207,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_VENC] = {
 		.name = "venc",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = PWR_STATUS_VENC,
 		.ctl_offs = 0x0304,
 		.pwr_sta_offs = 0x0180,
@@ -219,6 +224,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 	},
 	[MT8183_POWER_DOMAIN_VPU_TOP] = {
 		.name = "vpu_top",
+		.caps = MTK_SCPD_NO_STAY_ON,
 		.sta_mask = BIT(26),
 		.ctl_offs = 0x0324,
 		.pwr_sta_offs = 0x0180,
@@ -268,7 +274,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 				    MT8183_TOP_AXI_PROT_EN_MCU_CLR,
 				    MT8183_TOP_AXI_PROT_EN_MCU_STA1),
 		},
-		.caps = MTK_SCPD_SRAM_ISO,
+		.caps = MTK_SCPD_SRAM_ISO | MTK_SCPD_NO_STAY_ON,
 	},
 	[MT8183_POWER_DOMAIN_VPU_CORE1] = {
 		.name = "vpu_core1",
@@ -290,7 +296,7 @@ static const struct scpsys_domain_data scpsys_domain_data_mt8183[] = {
 				    MT8183_TOP_AXI_PROT_EN_MCU_CLR,
 				    MT8183_TOP_AXI_PROT_EN_MCU_STA1),
 		},
-		.caps = MTK_SCPD_SRAM_ISO,
+		.caps = MTK_SCPD_SRAM_ISO | MTK_SCPD_NO_STAY_ON,
 	},
 };
 

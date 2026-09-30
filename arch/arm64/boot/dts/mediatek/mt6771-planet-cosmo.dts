@@ -394,6 +394,9 @@
 		reset-gpios = <&pio 156 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&touch_pins>;
+		/* Landscape like the vendor driver: x = raw y, y = 1079 - raw x (nt36xxx.c:1166-1172) */
+		touchscreen-inverted-x;
+		touchscreen-swapped-x-y;
 	};
 };
 &i2c1 {

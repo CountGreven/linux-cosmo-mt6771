@@ -34,14 +34,24 @@ static void mcdi_test_psci_level(struct kunit *test)
 
 static void mcdi_test_state_allowed(struct kunit *test)
 {
-	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 7, 0));
-	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 7, 0x80));
-	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 6, 0x80));
-	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 0, 0xff));
+	/* normal states: open=0 works for level-0 */
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 7, 0, false));
+	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 7, 0x80, false));
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 6, 0x80, false));
+	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 0, 0xff, false));
 	/* cluster level needs CLUSTER_n_CAN_POWER_OFF per entry, which is not written */
-	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x01010001, 7, 0xff));
-	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 8, 0x1ff));
-	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_NONE, 0, 0xff));
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x01010001, 7, 0xff, false));
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(0x00010001, 8, 0x1ff, false));
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_NONE, 0, 0xff, false));
+	/* suspend param: closed by default */
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_SUSPEND, 0, 0, false));
+	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_SUSPEND, 0, 0, true));
+	/* never for cpu 1..7 */
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_SUSPEND, 1, 0xff, true));
+	KUNIT_EXPECT_FALSE(test, mcdi_state_allowed(MCDI_PSCI_PARAM_SUSPEND, 7, 0x80, true));
+	/* level-0 states unaffected by suspend_open */
+	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 3, 0xff, false));
+	KUNIT_EXPECT_TRUE(test, mcdi_state_allowed(0x00010001, 3, 0xff, true));
 }
 
 static struct kunit_case mcdi_test_cases[] = {

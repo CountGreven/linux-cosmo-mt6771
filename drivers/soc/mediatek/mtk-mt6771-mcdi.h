@@ -3,6 +3,7 @@
 #define __MTK_MT6771_MCDI_H
 
 #include <linux/bits.h>
+#include <linux/bool.h>
 #include <linux/types.h>
 
 /* SSPM mailbox 3 slots, vendor mcdi_v1/mtk_mcdi_mbox.h */
@@ -21,6 +22,7 @@
 
 #define MCDI_NR_CPUS				8
 #define MCDI_PSCI_PARAM_NONE			U32_MAX
+#define MCDI_PSCI_PARAM_SUSPEND			0x01010005
 
 static inline u32 mcdi_avail_mask(unsigned long online)
 {
@@ -43,8 +45,10 @@ static inline unsigned int mcdi_psci_level(u32 param)
  * Only core-level states: a cluster-level entry also needs CLUSTER_n_CAN_POWER_OFF written
  * right before it, which cpuidle-psci gives no hook for.
  */
-static inline bool mcdi_state_allowed(u32 param, unsigned int cpu, u32 idle_cpus)
+static inline bool mcdi_state_allowed(u32 param, unsigned int cpu, u32 idle_cpus, bool suspend_open)
 {
+	if (param == MCDI_PSCI_PARAM_SUSPEND)
+		return suspend_open && cpu < MCDI_NR_CPUS;
 	return param != MCDI_PSCI_PARAM_NONE && cpu < MCDI_NR_CPUS && (idle_cpus & BIT(cpu)) &&
 	       mcdi_psci_level(param) == 0;
 }

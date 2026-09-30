@@ -46,6 +46,7 @@ static unsigned int idle_cpus;
 /* SSPM task pause holders: this driver's syscore and the deep sleep driver */
 static DEFINE_RAW_SPINLOCK(mcdi_hold_lock);
 static unsigned int mcdi_holds;
+static bool mcdi_suspend_open;
 
 static u32 mcdi_read(unsigned int slot)
 {
@@ -91,7 +92,7 @@ static void mcdi_apply_gate(void)
 		if (!drv)
 			continue;
 		for (i = 1; i < drv->state_count; i++) {
-			if (mcdi_ready && mcdi_state_allowed(mcdi_state_param(cpu, i), cpu, idle_cpus))
+			if (mcdi_ready && mcdi_state_allowed(mcdi_state_param(cpu, i), cpu, idle_cpus, mcdi_suspend_open))
 				dev->states_usage[i].disable &= ~CPUIDLE_STATE_DISABLED_BY_DRIVER;
 			else
 				dev->states_usage[i].disable |= CPUIDLE_STATE_DISABLED_BY_DRIVER;
@@ -203,6 +204,16 @@ int mtk_mt6771_mcdi_task_hold(bool hold)
 		pr_err("mt6771-mcdi: SSPM did not ack %s\n", hold ? "pause" : "resume");
 	return ret;
 }
+/*
+ * Gate the SPM suspend idle state (PSCI param 0x01010005) for CPU0.
+ */
+void mtk_mt6771_mcdi_suspend_state(bool open)
+{
+	WRITE_ONCE(mcdi_suspend_open, open);
+	mcdi_apply_gate();
+}
+EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_suspend_state);
+
 EXPORT_SYMBOL_GPL(mtk_mt6771_mcdi_task_hold);
 
 /* Deep suspend only, like the vendor's slp_suspend_ops_enter; s2idle never reaches syscore */

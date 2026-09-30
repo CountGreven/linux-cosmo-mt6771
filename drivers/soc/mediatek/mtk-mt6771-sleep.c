@@ -175,6 +175,12 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 		dev_err(dev, "deep sleep needs CPU1-7 offline\n");
 		return -EBUSY;
 	}
+	/* The firmware hook only re-parameterises a running PCM; without one CPU0 never wakes */
+	if (!slp_spm_read(SPM_PCM_REG15_DATA)) {
+		pr_warn_once("mt6771-sleep: SPM program not running (PCM_REG15 0), not arming\n");
+		slp->last_err = -ENXIO;
+		return 0;
+	}
 
 	slp->cycles++;
 	slp->fw_status = slp_smc(MTK_SIP_SPM_FIRMWARE_STATUS, 0, 0, 0);

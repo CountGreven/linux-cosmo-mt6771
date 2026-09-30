@@ -2496,7 +2496,8 @@
 		reg = <0x39>;
 		interrupts-extended = <&pio 78 IRQ_TYPE_LEVEL_LOW>;
 		reset-gpios = <&pio 159 GPIO_ACTIVE_LOW>;
-		iovcc-supply = <&hdmi_1v2>;
+		/* the DPI pads sit in the 1.8 V I/O domain; the binding wants 1.8 or 3.3 V here */
+		iovcc-supply = <&mt6358_vio18_reg>;
 		cvcc12-supply = <&hdmi_1v2>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&hdmi_bridge_pins>;

@@ -376,6 +376,12 @@ static const struct power_supply_desc mt6358_bat_desc = {
 	.properties = mt6358_bat_props,
 	.num_properties = ARRAY_SIZE(mt6358_bat_props),
 	.get_property = mt6358_bat_get_property,
+	/*
+	 * TEMP reads the battery-thermal zone. A zone of our own would do that
+	 * lookup under its zone lock and deadlock against a cooling device
+	 * registration, which takes the thermal list lock first.
+	 */
+	.no_thermal = true,
 };
 
 static int mt6358_bat_probe(struct platform_device *pdev)

@@ -988,8 +988,8 @@ static int gc5035_parse_fwnode(struct gc5035 *gc5035)
 	struct fwnode_handle *endpoint;
 	int ret;
 
-	endpoint = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0,
-						   FWNODE_GRAPH_ENDPOINT_NEXT);
+	/* by_id skips an endpoint without a remote; the sensor must probe before a receiver exists */
+	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
 	if (!endpoint)
 		return dev_err_probe(dev, -EINVAL, "endpoint node not found\n");
 

@@ -258,6 +258,15 @@ static int mt6771_mcdi_probe(struct platform_device *pdev)
 	if (IS_ERR(mcdi_mbox))
 		return PTR_ERR(mcdi_mbox);
 
+	/* A reset while the task was paused leaves PAUSE_ACTION set in the SSPM's mailbox */
+	if (mcdi_read(MCDI_SLOT_PAUSE_ACTION)) {
+		if (!mcdi_task_pause(0))
+			readl_poll_timeout_atomic(mcdi_mbox + MCDI_SLOT_ACTION_STAT * 4, stat,
+						  mcdi_task_ready(stat, 0), 1,
+						  MCDI_PAUSE_TIMEOUT_US);
+		dev_info(dev, "cleared a stale MCDI pause request, task %u\n",
+			 mcdi_read(MCDI_SLOT_ACTION_STAT));
+	}
 	stat = mcdi_read(MCDI_SLOT_ACTION_STAT);
 	ack = mcdi_read(MCDI_SLOT_PAUSE_ACK);
 	if (!mcdi_task_ready(stat, ack))

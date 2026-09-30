@@ -1647,6 +1647,15 @@
 	mediatek,long-press-mode = <1>;
 	power-off-time-sec = <0>;
 
+	/*
+	 * The power-key line is the Esc key of the keyboard. Only the keycode changes; the long-press
+	 * and reset behaviour is the PMIC's and stays as it is. Fn+Esc is turned back into KEY_POWER
+	 * by the fn-power-combiner.
+	 */
+	power {
+		linux,keycodes = <KEY_ESC>;
+	};
+
 	home {
 		linux,keycodes = <KEY_VOLUMEUP>;
 	};

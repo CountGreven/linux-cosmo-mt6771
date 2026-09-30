@@ -11393,6 +11393,8 @@ wlanoidNotifyFwSuspend(IN P_ADAPTER_T prAdapter,
 	if (!prAdapter || !pvSetBuffer)
 		return WLAN_STATUS_INVALID_DATA;
 
+	/* the vendor sent one uninitialised byte here, the enable flag is the second */
+	kalMemZero(&rSuspendCmd, sizeof(rSuspendCmd));
 	rSuspendCmd.fIsEnableSuspendMode = *(PBOOLEAN)pvSetBuffer;
 	return wlanSendSetQueryCmd(prAdapter,
 				   CMD_ID_SET_SUSPEND_MODE,
@@ -11401,7 +11403,7 @@ wlanoidNotifyFwSuspend(IN P_ADAPTER_T prAdapter,
 				   TRUE,
 				   nicCmdEventSetCommon,
 				   nicOidCmdTimeoutCommon,
-				   sizeof(BOOLEAN),
+				   sizeof(rSuspendCmd),
 				   (PUINT_8)&rSuspendCmd,
 				   NULL,
 				   0);

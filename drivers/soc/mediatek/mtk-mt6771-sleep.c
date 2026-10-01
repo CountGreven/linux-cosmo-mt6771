@@ -10,6 +10,7 @@
 #include <linux/console.h>
 #include <linux/cpu.h>
 #include <linux/debugfs.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/mfd/syscon.h>
@@ -26,6 +27,7 @@
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
 #include <linux/soc/mediatek/mtk-mt6771-spm-start.h>
 #include <linux/suspend.h>
+#include <linux/topology.h>
 #include <linux/uaccess.h>
 #include <linux/usb.h>
 
@@ -99,6 +101,7 @@ struct mt6771_sleep {
 	bool wdt_armed;
 	u32 wdt_mode;
 	bool lp_applied;
+	bool big_cluster_off;
 	struct slp_reg_op lp_undo[2 * ARRAY_SIZE(slp_lp_table)];
 	unsigned int lp_nundo;
 	u32 fw_status;
@@ -117,6 +120,7 @@ static DEFINE_MUTEX(slp_lock);
 
 static bool deep_enable;
 static bool lp_table;
+static bool big_cluster_off;
 /* bring-up value; the vendor uses 5401 */
 static unsigned int wake_sec = 30;
 static int infra_pdn = 1;
@@ -340,11 +344,14 @@ static int slp_snap_open(struct inode *inode, struct file *file)
 	return single_open(file, slp_snap_show, NULL);
 }
 
-/* one entry per write: "p <pmic reg>", "s <soc addr>" or "clear" */
+/*
+ * One entry per write: "p <pmic reg>", "s <soc addr>" or "clear". "w <pmic reg> <mask> <val>"
+ * writes PMIC bits at once, for trying a golden value by hand.
+ */
 static ssize_t slp_snap_write(struct file *file, const char __user *ubuf, size_t len, loff_t *ppos)
 {
-	char buf[32];
-	u32 addr;
+	char buf[48];
+	u32 addr, mask, val;
 	int ret;
 
 	if (len >= sizeof(buf))
@@ -358,6 +365,11 @@ static ssize_t slp_snap_write(struct file *file, const char __user *ubuf, size_t
 		ret = 0;
 	} else if ((buf[0] == 'p' || buf[0] == 's') && buf[1] == ' ' && !kstrtou32(buf + 2, 0, &addr)) {
 		ret = slp_snap_add(buf[0] == 'p', addr);
+	} else if (sscanf(buf, "w %i %i %i", &addr, &mask, &val) == 3 && addr <= 0xffff) {
+		ret = regmap_update_bits(slp->pmic, addr, mask, val);
+	} else if (sscanf(buf, "c %i", &val) == 1 && val <= 1) {
+		/* vendor hps CPU_DEAD: SiP POWER_DOWN_CLUSTER once a cluster has no core online */
+		ret = (int)slp_smc(0xc2000215, val, 0, 0);
 	} else {
 		ret = -EINVAL;
 	}
@@ -547,12 +559,51 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	return 0;
 }
 
+/*
+ * The vendor suspends with the big cluster powered down and its rails off (hps_v3
+ * mtk_hotplug_cb.c CPU_DEAD: SiP POWER_DOWN_CLUSTER, then VPROC11 and VSRAM_PROC11 off; the
+ * reverse order before the first core comes back). PSCI CPU_OFF alone leaves the cluster top
+ * powered, and a rail cut under a powered cluster resets the SoC (measured 2026-10-01). The
+ * rails are written over the PMIC regmap, as the vendor does, since cpufreq keeps its
+ * regulator references while its CPUs are offline.
+ */
+#define MTK_SIP_POWER_DOWN_CLUSTER	0xc2000215
+#define MT6358_BUCK_VPROC11_CON0	0x1388
+#define MT6358_LDO_VSRAM_PROC11_CON0	0x1b46
+#define MT6358_RAIL_EN			BIT(0)
+#define SLP_BIG_CLUSTER			1
+#define SLP_RAIL_SETTLE_US		3000
+
+static void slp_big_cluster_off(struct mt6771_sleep *s)
+{
+	unsigned int cpu;
+
+	for_each_online_cpu(cpu)
+		if (topology_physical_package_id(cpu) == SLP_BIG_CLUSTER)
+			return;
+	slp_smc(MTK_SIP_POWER_DOWN_CLUSTER, SLP_BIG_CLUSTER, 0, 0);
+	regmap_update_bits(s->pmic, MT6358_BUCK_VPROC11_CON0, MT6358_RAIL_EN, 0);
+	regmap_update_bits(s->pmic, MT6358_LDO_VSRAM_PROC11_CON0, MT6358_RAIL_EN, 0);
+	s->big_cluster_off = true;
+}
+
+static void slp_big_cluster_rails_on(struct mt6771_sleep *s)
+{
+	if (!s->big_cluster_off)
+		return;
+	regmap_update_bits(s->pmic, MT6358_LDO_VSRAM_PROC11_CON0, MT6358_RAIL_EN, MT6358_RAIL_EN);
+	regmap_update_bits(s->pmic, MT6358_BUCK_VPROC11_CON0, MT6358_RAIL_EN, MT6358_RAIL_EN);
+	usleep_range(SLP_RAIL_SETTLE_US, SLP_RAIL_SETTLE_US + 500);
+	s->big_cluster_off = false;
+}
+
 /* CPUs cannot be unplugged from noirq context, so the notifier does it before the freeze */
 static void slp_cpus_online(struct mt6771_sleep *s)
 {
 	unsigned int cpu;
 	int ret;
 
+	slp_big_cluster_rails_on(s);
 	for_each_cpu(cpu, &s->offlined) {
 		ret = add_cpu(cpu);
 		if (ret)
@@ -586,6 +637,8 @@ static int slp_pm_prepare(struct notifier_block *nb, unsigned long action, void 
 		}
 		cpumask_set_cpu(cpu, &s->offlined);
 	}
+	if (READ_ONCE(big_cluster_off))
+		slp_big_cluster_off(s);
 	return NOTIFY_OK;
 }
 
@@ -707,6 +760,8 @@ module_param_cb(deep_enable, &slp_deep_ops, &deep_enable, 0644);
 MODULE_PARM_DESC(deep_enable, "Enter the SPM suspend state during s2idle (default 0: no effect)");
 module_param_cb(lp_table, &slp_gate_ops, &lp_table, 0644);
 MODULE_PARM_DESC(lp_table, "With deep_enable, apply the MT6358 low-power rail table (default 0)");
+module_param(big_cluster_off, bool, 0644);
+MODULE_PARM_DESC(big_cluster_off, "Power the big cluster and its rails off across deep sleep, as the vendor does (default 0)");
 module_param(wake_sec, uint, 0644);
 MODULE_PARM_DESC(wake_sec, "SPM PCM wake timer in seconds (vendor 5401)");
 module_param(infra_pdn, int, 0644);

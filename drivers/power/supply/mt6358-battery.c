@@ -364,9 +364,8 @@ static int mt6358_bat_get_property(struct power_supply *psy, enum power_supply_p
 	case POWER_SUPPLY_PROP_SCOPE:
 		val->intval = POWER_SUPPLY_SCOPE_SYSTEM;
 		break;
-	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+	case POWER_SUPPLY_PROP_CHARGE_COUNTER: {
 		/* raw coulomb counter, unanchored */
-	{
 		s64 car;
 
 		mutex_lock(&bat->lock);

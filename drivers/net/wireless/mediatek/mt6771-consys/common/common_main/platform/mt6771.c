@@ -359,6 +359,8 @@ UINT32 mtk_wcn_consys_jtag_flag_ctrl(UINT32 en)
 
 static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
 {
+	struct clk *clk;
+
 	/*
 	 * Mainline: the vendor's "conn" clock is its scpsys power-domain wrapper. Here the CONN domain
 	 * comes from power-domains = <&spm MT8183_POWER_DOMAIN_CONN> on the node, attached by the
@@ -373,6 +375,13 @@ static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
 		WMT_PLAT_PR_INFO("[CCF]no conn clock in dts; CONN domain driven through SPM directly, PWR_STATUS=0x%x\n",
 				CONSYS_REG_READ(conn_reg.spm_base + CONSYS_PWR_CONN_ACK_OFFSET));
 	WMT_PLAT_PR_DBG("[CCF]clk_scp_conn_main=%p\n", clk_scp_conn_main);
+
+	/* Mainline gates unclaimed clocks at boot; the vendor keeps this one running for good. */
+	clk = devm_clk_get_optional_enabled(&pdev->dev, "pmic");
+	if (IS_ERR(clk)) {
+		WMT_PLAT_PR_ERR("[CCF]cannot enable the pmic clock (%ld)\n", PTR_ERR(clk));
+		return PTR_ERR(clk);
+	}
 
 	return 0;
 }

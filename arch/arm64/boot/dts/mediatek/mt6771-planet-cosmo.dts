@@ -1521,6 +1521,10 @@
 		interrupts = <GIC_SPI 289 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_SPI 291 IRQ_TYPE_LEVEL_LOW>;
 		power-domains = <&spm MT8183_POWER_DOMAIN_CONN>;
+		/* CONNSYS's PMIC wrapper port. The vendor never gates unused clocks on MT6771 and its golden
+		 * deep-idle table keeps this on (power_gs_v1/mt6771/mtk_cg_array.c:41). */
+		clocks = <&infracfg CLK_INFRA_PMIC_CONN>;
+		clock-names = "pmic";
 		/* The vendor driver asks for vcn18, vcn28, vcn33_bt and vcn33_wifi; the MT6358 has one
 		 * VCN33 LDO, which the vendor exposes as two enable bits, so both names map to ldo_vcn33. */
 		vcn18-supply = <&mt6358_vcn18_reg>;

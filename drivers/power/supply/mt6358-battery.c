@@ -318,6 +318,7 @@ static const enum power_supply_property mt6358_bat_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_NOW,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_SCOPE,
+	POWER_SUPPLY_PROP_CHARGE_COUNTER,
 };
 
 static int mt6358_bat_get_property(struct power_supply *psy, enum power_supply_property psp,
@@ -363,6 +364,18 @@ static int mt6358_bat_get_property(struct power_supply *psy, enum power_supply_p
 	case POWER_SUPPLY_PROP_SCOPE:
 		val->intval = POWER_SUPPLY_SCOPE_SYSTEM;
 		break;
+	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+		/* raw coulomb counter, unanchored */
+	{
+		s64 car;
+
+		mutex_lock(&bat->lock);
+		ret = mt6358_bat_read_car(bat, &car);
+		mutex_unlock(&bat->lock);
+		if (!ret)
+			val->intval = clamp_t(s64, car, INT_MIN, INT_MAX);
+		break;
+	}
 	default:
 		return -EINVAL;
 	}

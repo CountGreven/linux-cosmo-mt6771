@@ -62,6 +62,12 @@
 #define SPM_PCM_REG13_DATA		0x134
 #define SPM_PCM_REG15_DATA		0x13c
 #define SPM_WAKEUP_STA			0x15c
+/* the SPM program's own accounting of the sleep, as the vendor's wake-reason line prints it */
+#define SPM_PCM_TIMER_OUT_BACKUP	0x420
+#define SPM_SUBSYS_IDLE_STA		0x170
+#define SPM_SRC_REQ_STA			0x17c
+#define SPM_SW_DEBUG			0x604
+#define SPM_SW_DEBUG_1			0x780
 #define SPM_SW_RSV_0			0x608
 
 /* SSPM mailbox 1: IPI_ID_SPM_SUSPEND is pin 1 of that mailbox, slots 2..9, polled */
@@ -98,6 +104,7 @@ struct mt6771_sleep {
 	u32 cycles;
 	int last_err;
 	u32 wake_r12;
+	u32 wake_dbg, wake_dbg1, wake_timer, wake_req, wake_idle;
 	u32 wake_sta;
 	u32 wake_r13;
 	u32 wake_r15;
@@ -360,6 +367,11 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	slp->wake_sta = slp_spm_read(SPM_WAKEUP_STA);
 	slp->wake_r13 = slp_spm_read(SPM_PCM_REG13_DATA);
 	slp->wake_r15 = slp_spm_read(SPM_PCM_REG15_DATA);
+	slp->wake_dbg = slp_spm_read(SPM_SW_DEBUG);
+	slp->wake_dbg1 = slp_spm_read(SPM_SW_DEBUG_1);
+	slp->wake_timer = slp_spm_read(SPM_PCM_TIMER_OUT_BACKUP);
+	slp->wake_req = slp_spm_read(SPM_SRC_REQ_STA);
+	slp->wake_idle = slp_spm_read(SPM_SUBSYS_IDLE_STA);
 	pr_emerg("mt6771-sleep: bc7 resume r12 0x%x sta 0x%x\n", slp->wake_r12, slp->wake_sta);
 	/* The PCM timer has no Linux interrupt; without this s2idle would re-enter sleep */
 	if (slp->wake_r12)
@@ -382,6 +394,8 @@ static int mt6771_sleep_resume_noirq(struct device *dev)
 	if (!(slp->skipped & 1))
 		mtk_mt6771_mcdi_task_hold(false);
 
+	pr_info("mt6771-sleep: woke, debug_flag 0x%x 0x%x timer_out %u req_sta 0x%x idle_sta 0x%x\n",
+		slp->wake_dbg, slp->wake_dbg1, slp->wake_timer, slp->wake_req, slp->wake_idle);
 	pr_info("mt6771-sleep: woke, r12 0x%x wakeup_sta 0x%x r13 0x%x r15 0x%x\n",
 		slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
 	return 0;
@@ -578,6 +592,8 @@ static int slp_status_show(struct seq_file *s, void *unused)
 	seq_printf(s, "skip 0x%x wdt_net %d\n", skip, wdt_net);
 	seq_printf(s, "last_wake r12 0x%08x wakeup_sta 0x%08x r13 0x%08x r15 0x%08x\n",
 		   slp->wake_r12, slp->wake_sta, slp->wake_r13, slp->wake_r15);
+	seq_printf(s, "last_wake debug_flag 0x%08x 0x%08x timer_out %u req_sta 0x%08x idle_sta 0x%08x\n",
+		   slp->wake_dbg, slp->wake_dbg1, slp->wake_timer, slp->wake_req, slp->wake_idle);
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(slp_status);

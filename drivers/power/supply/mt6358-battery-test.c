@@ -30,6 +30,25 @@ static void mt6358_bat_test_soc(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mt6358_bat_soc_permille(10, 0, -427590, 4275900), 0);
 }
 
+/* RTC_AL_MTH: alarm month in bits 3:0, the vendor's saved percent in 14:8 and a valid flag in 15 */
+static void mt6358_bat_test_rtc_soc(struct kunit *test)
+{
+	/* the value left by the vendor gauge on the phone: 100 %, valid, alarm month 10 */
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(0xe40a), 100);
+	/* RTC lost power: flag clear */
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(0x640a), -1);
+	/* garbage above 100 % */
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(0xff0a), -1);
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(0x8000), 0);
+	/* encoding keeps the alarm month and round-trips */
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_encode(0xe40a, 73), 0xc90a);
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(mt6358_bat_rtc_soc_encode(0x000c, 57)), 57);
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_encode(0x000c, 57) & 0xff, 0x0c);
+	/* out of range is clamped */
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(mt6358_bat_rtc_soc_encode(0, 120)), 100);
+	KUNIT_EXPECT_EQ(test, mt6358_bat_rtc_soc_decode(mt6358_bat_rtc_soc_encode(0, -5)), 0);
+}
+
 /* vendor charger manager: stop at >= 55 C or < -10 C, resume below 50 C and at >= 0 C */
 static void mt6358_bat_test_temp(struct kunit *test)
 {
@@ -48,6 +67,7 @@ static struct kunit_case mt6358_bat_test_cases[] = {
 	KUNIT_CASE(mt6358_bat_test_current),
 	KUNIT_CASE(mt6358_bat_test_car),
 	KUNIT_CASE(mt6358_bat_test_soc),
+	KUNIT_CASE(mt6358_bat_test_rtc_soc),
 	{}
 };
 

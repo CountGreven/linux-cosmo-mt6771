@@ -10,6 +10,7 @@
  * closed fuel gauge daemon is not reproduced.
  */
 
+#include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/devm-helpers.h>
 #include <linux/iio/consumer.h>
@@ -50,6 +51,20 @@
 #define MT6358_BAT_LOW_COLD_UV		3200000
 #define MT6358_BAT_COLD_DECI_C		50
 
+/*
+ * The vendor gauge keeps the state of charge across reboots in the RTC, which runs off the battery:
+ * RTC_AL_MTH bits 15:8 (rtc_spare_reg RTC_FGSOC), percent in bits 6:0 and a valid flag in bit 7
+ * (mt6358_gauge.c fgauge_set_rtc_ui_soc, fgauge_read_RTC_boot_status). rtc-mt6397 only touches
+ * bits 3:0 of that register.
+ */
+#define MT6358_RTC_BBPU			0x0588
+#define MT6358_RTC_BBPU_CBUSY		BIT(6)
+#define MT6358_RTC_AL_MTH		0x05aa
+#define MT6358_RTC_WRTGR		0x05c2
+#define MT6358_RTC_FGSOC_MASK		GENMASK(15, 8)
+#define MT6358_RTC_FGSOC_VALID		BIT(15)
+#define MT6358_RTC_FGSOC_PERCENT	GENMASK(14, 8)
+
 /* Vendor charger manager (mtk_charger.c charger_check_status) temperature window, 0.1 C */
 #define MT6358_BAT_CHG_STOP_HOT		550
 #define MT6358_BAT_CHG_RESUME_HOT	500
@@ -70,6 +85,7 @@ struct mt6358_battery {
 	int soc0;		/* permille at the anchor */
 	s64 car0;		/* counter at the anchor, uAh */
 	int soc;		/* permille */
+	int rtc_pct;		/* percent last stored in the RTC, -1 if none */
 	unsigned int low_count;
 	bool temp_inhibit;
 };
@@ -113,6 +129,25 @@ VISIBLE_IF_KUNIT int mt6358_bat_soc_permille(int soc0_permille, s64 car0_uah, s6
 	return clamp_t(s64, soc, 0, 1000);
 }
 EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_soc_permille);
+
+/* The saved percent from an RTC_AL_MTH value, or -1 when the RTC lost it or holds garbage */
+VISIBLE_IF_KUNIT int mt6358_bat_rtc_soc_decode(u16 reg)
+{
+	unsigned int pct = FIELD_GET(MT6358_RTC_FGSOC_PERCENT, reg);
+
+	if (!(reg & MT6358_RTC_FGSOC_VALID) || pct > 100)
+		return -1;
+	return pct;
+}
+EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_rtc_soc_decode);
+
+/* RTC_AL_MTH with the percent stored and marked valid; the alarm month in the low bits is kept */
+VISIBLE_IF_KUNIT u16 mt6358_bat_rtc_soc_encode(u16 reg, int pct)
+{
+	return (reg & ~MT6358_RTC_FGSOC_MASK) | MT6358_RTC_FGSOC_VALID |
+	       FIELD_PREP(MT6358_RTC_FGSOC_PERCENT, clamp(pct, 0, 100));
+}
+EXPORT_SYMBOL_IF_KUNIT(mt6358_bat_rtc_soc_encode);
 
 VISIBLE_IF_KUNIT bool mt6358_bat_temp_inhibit(bool inhibited, int deci_c)
 {
@@ -209,6 +244,32 @@ static int mt6358_bat_charger_status(void)
 	return val.intval;
 }
 
+static int mt6358_bat_rtc_read(struct mt6358_battery *bat)
+{
+	unsigned int reg;
+
+	if (regmap_read(bat->regmap, MT6358_RTC_AL_MTH, &reg))
+		return -1;
+	return mt6358_bat_rtc_soc_decode(reg);
+}
+
+/* Store the percent and commit it with the RTC write trigger, as rtc-mt6397 does */
+static void mt6358_bat_rtc_write(struct mt6358_battery *bat, int pct)
+{
+	unsigned int reg, st;
+
+	if (pct == bat->rtc_pct || regmap_read(bat->regmap, MT6358_RTC_AL_MTH, &reg))
+		return;
+	if (regmap_write(bat->regmap, MT6358_RTC_AL_MTH, mt6358_bat_rtc_soc_encode(reg, pct)) ||
+	    regmap_write(bat->regmap, MT6358_RTC_WRTGR, 1) ||
+	    regmap_read_poll_timeout(bat->regmap, MT6358_RTC_BBPU, st,
+				     !(st & MT6358_RTC_BBPU_CBUSY), 10, USEC_PER_SEC)) {
+		dev_warn(bat->dev, "failed to store the charge in the RTC\n");
+		return;
+	}
+	bat->rtc_pct = pct;
+}
+
 /* OCV estimate: the terminal voltage corrected by the current through the cell resistance */
 static int mt6358_bat_ocv_soc(struct mt6358_battery *bat, int *ocv_uv)
 {
@@ -293,6 +354,7 @@ static void mt6358_bat_update(struct mt6358_battery *bat)
 	if (!mt6358_bat_read_voltage(bat, &uv) && !mt6358_bat_read_current(bat, &ua))
 		mt6358_bat_low_voltage_check(bat, uv, ua);
 	mt6358_bat_temp_check(bat);
+	mt6358_bat_rtc_write(bat, DIV_ROUND_CLOSEST(bat->soc, 10));
 	mutex_unlock(&bat->lock);
 
 	if (bat->soc / 10 != old / 10)
@@ -431,22 +493,44 @@ static int mt6358_bat_probe(struct platform_device *pdev)
 	bat->r_uohm = bat->info->factory_internal_resistance_uohm > 0 ?
 		      bat->info->factory_internal_resistance_uohm : 0;
 
-	soc = mt6358_bat_ocv_soc(bat, &ocv);
-	if (soc < 0)
-		return dev_err_probe(dev, soc, "failed to estimate the charge\n");
+	/*
+	 * Like the vendor, start from the charge saved in the RTC; a voltage taken now is under the
+	 * boot load or the charger and reads tens of percent off (73 % at CV, 2026-10-01).
+	 */
+	bat->rtc_pct = mt6358_bat_rtc_read(bat);
+	if (bat->rtc_pct >= 0) {
+		soc = bat->rtc_pct * 10;
+		dev_info(dev, "charge from the RTC: %d %%\n", bat->rtc_pct);
+	} else {
+		soc = mt6358_bat_ocv_soc(bat, &ocv);
+		if (soc < 0)
+			return dev_err_probe(dev, soc, "failed to estimate the charge\n");
+		dev_info(dev, "no charge in the RTC, OCV estimate %d uV, %d.%d %%\n", ocv,
+			 soc / 10, soc % 10);
+	}
 	ret = mt6358_bat_read_car(bat, &bat->car0);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read the coulomb counter\n");
 	bat->soc0 = soc;
 	bat->soc = soc;
-	dev_info(dev, "OCV estimate %d uV, %d.%d %%\n", ocv, soc / 10, soc % 10);
 
 	ret = devm_delayed_work_autocancel(dev, &bat->work, mt6358_bat_work);
 	if (ret)
 		return ret;
+	platform_set_drvdata(pdev, bat);
 	schedule_delayed_work(&bat->work, MT6358_BAT_POLL);
 
 	return 0;
+}
+
+static void mt6358_bat_shutdown(struct platform_device *pdev)
+{
+	struct mt6358_battery *bat = platform_get_drvdata(pdev);
+
+	if (!bat)
+		return;
+	cancel_delayed_work_sync(&bat->work);
+	mt6358_bat_update(bat);
 }
 
 static const struct of_device_id mt6358_bat_of_match[] = {
@@ -461,6 +545,7 @@ static struct platform_driver mt6358_bat_driver = {
 		.of_match_table = mt6358_bat_of_match,
 	},
 	.probe = mt6358_bat_probe,
+	.shutdown = mt6358_bat_shutdown,
 };
 module_platform_driver(mt6358_bat_driver);
 

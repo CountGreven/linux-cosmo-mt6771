@@ -1008,12 +1008,16 @@ static int aw9523_resume(struct device *dev)
 
 	regcache_cache_only(awi->regmap, false);
 	regcache_cache_bypass(awi->regmap, true);
-	ret = aw9523_chip_setup(awi);
+	ret = aw9523_hw_reset(awi);
 	regcache_cache_bypass(awi->regmap, false);
 	if (ret)
 		return ret;
 
-	/* The reset restored the defaults the cache was built on: write out what differs */
+	/*
+	 * The reset restored the defaults the cache was built on: write out what differs. No
+	 * chip_setup here: its writes are not in the cache, and the sync skips every register
+	 * whose cached value equals the default, so the row interrupts stayed disabled.
+	 */
 	regcache_mark_dirty(awi->regmap);
 	ret = regcache_sync(awi->regmap);
 	if (ret || !awi->irq)

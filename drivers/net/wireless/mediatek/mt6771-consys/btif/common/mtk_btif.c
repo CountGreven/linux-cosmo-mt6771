@@ -1522,7 +1522,6 @@ int _btif_init(p_mtk_btif p_btif)
 		BTIF_ERR_FUNC("_btif_controller_init failed, i_ret(%d)\n",
 			      i_ret);
 		_btif_dpidle_notify_ctrl(p_btif, BTIF_DPIDLE_ENABLE);
-		BTIF_STATE_RELEASE(p_btif);
 		return i_ret;
 	}
 
@@ -1532,7 +1531,6 @@ int _btif_init(p_mtk_btif p_btif)
 			      i_ret);
 		_btif_controller_free(p_btif);
 		_btif_dpidle_notify_ctrl(p_btif, BTIF_DPIDLE_ENABLE);
-		BTIF_STATE_RELEASE(p_btif);
 		return i_ret;
 	}
 
@@ -1543,7 +1541,6 @@ int _btif_init(p_mtk_btif p_btif)
 		_btif_controller_tx_free(p_btif);
 		_btif_controller_free(p_btif);
 		_btif_dpidle_notify_ctrl(p_btif, BTIF_DPIDLE_ENABLE);
-		BTIF_STATE_RELEASE(p_btif);
 		return i_ret;
 	}
 	return i_ret;

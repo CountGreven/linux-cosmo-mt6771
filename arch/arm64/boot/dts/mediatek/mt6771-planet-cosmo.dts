@@ -1388,6 +1388,24 @@
 	};
 };
 
+/*
+ * GPIO89 is the vendor aeon_mtk_id line to the cover MCU, a plain GPIO on Android (aeon_gpio.dtsi:732).
+ * The bootloader leaves it in mode 1, SRCLKENAI0, and the high level on the pin is then an external
+ * 26 MHz keep-on request to the SPM (r13 EXT_SRCCLKENI_0): the PCM never switched the crystal off in
+ * suspend. Hogged back to GPIO so the 26 MHz clock can sleep.
+ */
+&pio {
+	pinctrl-names = "default";
+	pinctrl-0 = <&cover_mcu_id_pins>;
+
+	cover_mcu_id_pins: cover-mcu-id-pins {
+		pins-mtk-id {
+			pinmux = <PINMUX_GPIO89__FUNC_GPIO89>;
+			input-enable;
+		};
+	};
+};
+
 #if COSMO_RIGHT_USB
 /*
  * GPIO178 enables the right connector's 5 V and the keyboard light supply (spec 8.8.7). On from boot;

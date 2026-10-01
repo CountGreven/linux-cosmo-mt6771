@@ -118,11 +118,11 @@
 		 *   reserved_memory_conflict_check fatal error keep while (1)
 		 *
 		 * then spun until the watchdog. Its own log says why: free memory resumes at 0x5e900000, and
-		 * 0x56900000-0x5e900000 is LK's scratch_addr_mb -- the buffer it decompresses the kernel into.
+		 * 0x56900000-0x5e900000 is LK's scratch_addr_mb, the buffer it decompresses the kernel into.
 		 * 0x5e605000 is inside it. That address is LK's workspace, not a framebuffer it hands over.
 		 *
 		 * The live device tree's real display reservation is mblock-7-framebuffer at 0x7df70000, which
-		 * is reserved below and is the address Otto Pflueger's tree uses -- commented out there too.
+		 * is reserved below and is the address Otto Pflueger's tree uses (commented out there too).
 		 * If a screen console is wanted later, that is where to start, and its geometry needs proving
 		 * against a boot rather than against an atag.
 		 */
@@ -213,8 +213,8 @@
 		/*
 		 * Only what LK does NOT reserve itself.
 		 *
-		 * The firmware regions this file used to declare -- atf, spm, sspm, tee, log_store, framebuffer,
-		 * three ccci, scp, vpu, the dramc ranks -- were transcribed from the live device tree of the
+		 * The firmware regions this file used to declare (atf, spm, sspm, tee, log_store, framebuffer,
+		 * three ccci, scp, vpu, the dramc ranks) were transcribed from the live device tree of the
 		 * running vendor kernel. That was a mistake in reasoning: the live tree is what the kernel
 		 * receives AFTER LK has injected its own reservations, not what the vendor's source declares.
 		 * Declaring them again collides with the originals, and LK refuses the tree outright:
@@ -224,7 +224,7 @@
 		 *   reserved_memory_conflict_check fatal error keep while (1)
 		 *
 		 * atf@54600000 is byte-identical to LK's own atf-reserved. The three nodes that passed the check
-		 * -- ramoops, ram-console, minirdump -- are precisely the ones LK does not inject.
+		 * (ramoops, ram-console, minirdump) are precisely the ones LK does not inject.
 		 *
 		 * So the firmware regions still reach the kernel; they arrive from the bootloader, which is how
 		 * the vendor kernel gets them too. Dynamic reservations (no fixed reg) are fine: they cannot
@@ -659,7 +659,7 @@
 	/*
 	 * The controller driver asks for an optional "vbus" (bus pull-up) regulator. With none on this node,
 	 * the regulator core's of_get_child_regulator() walks the bus's descendants and finds the Type-C
-	 * connector's vbus-supply -- the MT6370 OTG boost, provided by a chip on this very bus -- and the
+	 * connector's vbus-supply (the MT6370 OTG boost, provided by a chip on this very bus), and the
 	 * controller waits for it forever ("deferred probe pending: cannot get vbus regulator"). Name the
 	 * pull-up rail explicitly so the walk never runs. STAND-IN: VIO18 is the plausible 1.8 V I/O rail
 	 * for these pull-ups; the schematic is not available.
@@ -818,16 +818,14 @@
 			};
 
 			mt6370_dsvpos: dsvpos {
-				/* Panel bias; nothing consumes it until the panel driver does. */
-				regulator-always-on;
+				/* Panel bias; the panel driver switches it with the panel */
 				regulator-name = "mt6370-dsv-vpos";
 				regulator-min-microvolt = <5400000>;
 				regulator-max-microvolt = <5400000>;
 			};
 
 			mt6370_dsvneg: dsvneg {
-				/* Panel bias; nothing consumes it until the panel driver does. */
-				regulator-always-on;
+				/* Panel bias; the panel driver switches it with the panel */
 				regulator-name = "mt6370-dsv-vneg";
 				regulator-min-microvolt = <5400000>;
 				regulator-max-microvolt = <5400000>;
@@ -1005,8 +1003,8 @@
 		reg = <0>;
 
 		/*
-		 * STAND-IN: VDDI on VIO18. No vendor source names the panel's 1.8 V supply -- the
-		 * LCM driver only ever switches the bias rails -- and VIO18 is the always-on 1.8 V
+		 * STAND-IN: VDDI on VIO18. No vendor source names the panel's 1.8 V supply (the
+		 * LCM driver only ever switches the bias rails), and VIO18 is the always-on 1.8 V
 		 * I/O rail the vendor leaves enabled. Replace with the schematic's rail if one
 		 * turns up.
 		 */
@@ -1022,8 +1020,6 @@
 		 * landscape device
 		 */
 		rotation = <270>;
-		/* the panel owns the backlight, so blanking and suspend switch it off too */
-		backlight = <&mt6370_backlight>;
 
 		port {
 			panel_in: endpoint {
@@ -1330,7 +1326,7 @@
 /*
  * Rails the vendor keeps up that nothing in this tree consumes yet. Thirty seconds after boot the
  * regulator core switched them off (console log 2026-09-25: "vdram2: disabling" was the last line
- * before the reset) -- VDRAM2 feeds the DRAM. mt8183-kukui marks vdram2 always-on for the same reason.
+ * before the reset); VDRAM2 feeds the DRAM. mt8183-kukui marks vdram2 always-on for the same reason.
  */
 &mt6358_vdram2_reg {
 	regulator-always-on;

@@ -809,7 +809,7 @@ static const struct irq_chip aw9523_irq_chip = {
 	.irq_bus_sync_unlock = aw9523_irq_bus_sync_unlock,
 	.irq_set_type = aw9523_gpio_irq_type,
 	.flags = IRQCHIP_IMMUTABLE,
-        GPIOCHIP_IRQ_RESOURCE_HELPERS,
+	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
 static int aw9523_init_irq(struct aw9523 *awi, int irq)

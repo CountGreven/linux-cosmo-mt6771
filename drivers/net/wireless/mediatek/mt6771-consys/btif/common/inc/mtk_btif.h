@@ -213,6 +213,7 @@ typedef struct _mtk_btif_ {
 	unsigned int open_counter;	/*open counter */
 	bool enable;		/*BTIF module enable flag */
 	bool lpbk_flag;		/*BTIF module enable flag */
+	bool resume_on;		/*suspended from ON, resume back to ON */
 #if 0
 	unsigned long base;	/* BTIF controller base address */
 #endif

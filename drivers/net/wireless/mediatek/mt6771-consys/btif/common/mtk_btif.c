@@ -262,9 +262,25 @@ static void mtk_btif_remove(struct platform_device *pdev)
 	return;
 }
 
+/*
+ * ON is also the resting state when nothing moves BTIF to DPIDLE (PSM off,
+ * or never enabled after a failed first power-on), so ON alone does not mean
+ * data is in flight. Pending means TX not drained or RX not consumed.
+ */
+static bool _btif_has_data_in_flight(p_mtk_btif p_btif)
+{
+	if (!_btif_is_tx_complete(p_btif))
+		return true;
+	if (btif_rx_buf_has_pending_data(p_btif))
+		return true;
+	return p_btif->rx_mode == BTIF_MODE_DMA &&
+	       btif_rx_dma_has_pending_data(p_btif) > 0;
+}
+
 int _btif_suspend(p_mtk_btif p_btif)
 {
 	int i_ret;
+	bool was_on;
 
 	if (p_btif != NULL) {
 		if (_btif_state_hold(p_btif))
@@ -272,7 +288,8 @@ int _btif_suspend(p_mtk_btif p_btif)
 		if (!(p_btif->enable))
 			i_ret = 0;
 		else {
-			if (_btif_state_get(p_btif) == B_S_ON) {
+			was_on = _btif_state_get(p_btif) == B_S_ON;
+			if (was_on && _btif_has_data_in_flight(p_btif)) {
 				BTIF_ERR_FUNC("BTIF in ON state,",
 					"there are data need to be send or recev,suspend fail\n");
 				i_ret = -1;
@@ -292,6 +309,7 @@ int _btif_suspend(p_mtk_btif p_btif)
 					/*Chaozhong: what if failed*/
 				} else {
 					BTIF_INFO_FUNC("succeed\n");
+					p_btif->resume_on = was_on;
 					i_ret = _btif_state_set(p_btif, B_S_SUSPEND);
 					if (i_ret && _btif_init(p_btif)) {
 						/*Chaozhong:BTIF re-init failed? what to do*/
@@ -414,7 +432,11 @@ int _btif_resume(p_mtk_btif p_btif)
 		state = _btif_state_get(p_btif);
 		if (!(p_btif->enable))
 			i_ret = 0;
-		else if (state == B_S_SUSPEND)
+		else if (state == B_S_SUSPEND && p_btif->resume_on) {
+			/* chip was never put to sleep, keep clocks and RX alive */
+			p_btif->resume_on = false;
+			i_ret = _btif_exit_dpidle(p_btif);
+		} else if (state == B_S_SUSPEND)
 			i_ret = _btif_enter_dpidle(p_btif);
 		else
 			BTIF_INFO_FUNC
@@ -1572,6 +1594,7 @@ int btif_close(p_mtk_btif p_btif)
 	_btif_exit_dpidle(p_btif);
 /*set BTIF's state to disable state*/
 	p_btif->enable = false;
+	p_btif->resume_on = false;
 
 	_btif_controller_free(p_btif);
 	_btif_controller_tx_free(p_btif);

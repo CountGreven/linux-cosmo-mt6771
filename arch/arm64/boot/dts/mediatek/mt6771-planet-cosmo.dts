@@ -891,6 +891,8 @@
 		compatible = "planet,cosmocom-x800-datong-panel";
 		reg = <0>;
 		rotation = <270>;
+		/* the panel owns the backlight, so blanking and suspend switch it off too */
+		backlight = <&mt6370_backlight>;
 
 		port {
 			panel_in: endpoint {

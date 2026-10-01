@@ -435,6 +435,34 @@ static struct regmap *consys_pmic_regmap(void)
 	return map;
 }
 
+/*
+ * The vendor's PMIC writes at CONNSYS power-on (upmu_set_reg_value, pmic_set_register_value) are
+ * shim stubs on mainline; these do the same through the PMIC regmap. MT6358 *_OP_EN: bit 0 SW user,
+ * bit 1 HW0 (SRCLKEN0); *_OP_CFG = OP_EN + 6, HW0 bit 0 = off while SRCLKEN0 is low.
+ */
+#define MT6358_LDO_VCN28_OP_EN		0x1d8a
+#define MT6358_LDO_OP_CFG_OFS		6
+#define MT6358_LDO_HW0			BIT(1)
+
+static void consys_pmic_write(unsigned int reg, unsigned int val)
+{
+	struct regmap *map = consys_pmic_regmap();
+
+	if (!map || regmap_write(map, reg, val))
+		WMT_PLAT_PR_ERR("PMIC %#x <- %#x failed\n", reg, val);
+}
+
+/* Vendor consys_vcn28_hw_mode_ctrl: VCN28 follows SRCLKEN0 (HW0_OP_EN 1, HW0_OP_CFG 0 = off in sleep) */
+static void consys_pmic_vcn28_hw0(bool enable)
+{
+	struct regmap *map = consys_pmic_regmap();
+
+	if (!map)
+		return;
+	regmap_update_bits(map, MT6358_LDO_VCN28_OP_EN, MT6358_LDO_HW0, enable ? MT6358_LDO_HW0 : 0);
+	regmap_update_bits(map, MT6358_LDO_VCN28_OP_EN + MT6358_LDO_OP_CFG_OFS, MT6358_LDO_HW0, 0);
+}
+
 static INT32 consys_clock_buffer_ctrl(MTK_WCN_BOOL enable)
 {
 	struct regmap *map = consys_pmic_regmap();
@@ -860,7 +888,7 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 		/*need PMIC driver provide new API protocol */
 		/*1.AP power on VCN_1V8 LDO (with PMIC_WRAP API) VCN_1V8  */
 		/*set vcn18 SW mode*/
-		KERNEL_upmu_set_reg_value(MT6358_LDO_VCN18_OP_EN, 0x1);
+		consys_pmic_write(MT6358_LDO_VCN18_OP_EN, 0x1);
 
 		if (reg_VCN18) {
 			regulator_set_voltage(reg_VCN18, 1800000, 1800000);
@@ -871,7 +899,7 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 		}
 
 		/*set vcn33 SW mode*/
-		KERNEL_upmu_set_reg_value(MT6358_LDO_VCN33_OP_EN, 0x1);
+		consys_pmic_write(MT6358_LDO_VCN33_OP_EN, 0x1);
 
 		if (reg_VCN33_BT) {
 			regulator_set_voltage(reg_VCN33_BT, 3500000, 3500000);
@@ -898,13 +926,7 @@ static INT32 consys_hw_vcn18_ctrl(MTK_WCN_BOOL enable)
 static VOID consys_vcn28_hw_mode_ctrl(UINT32 enable)
 {
 #if CONSYS_PMIC_CTRL_ENABLE
-	if (enable) {
-		KERNEL_pmic_set_register_value(PMIC_RG_LDO_VCN28_HW0_OP_EN, 1);
-		KERNEL_pmic_set_register_value(PMIC_RG_LDO_VCN28_HW0_OP_CFG, 0);
-	} else {
-		KERNEL_pmic_set_register_value(PMIC_RG_LDO_VCN28_HW0_OP_EN, 0);
-		KERNEL_pmic_set_register_value(PMIC_RG_LDO_VCN28_HW0_OP_CFG, 0);
-	}
+	consys_pmic_vcn28_hw0(enable);
 #endif
 }
 

@@ -26,6 +26,7 @@
 #include <linux/soc/mediatek/mtk-mt6771-mcdi.h>
 #include <linux/soc/mediatek/mtk-mt6771-spm-start.h>
 #include <linux/suspend.h>
+#include <linux/uaccess.h>
 #include <linux/usb.h>
 
 #include <asm/arch_timer.h>
@@ -229,6 +230,150 @@ static int mt6771_sleep_prepare(struct device *dev)
 	return 0;
 }
 
+/*
+ * Pre-sleep register snapshot. The vendor compares its golden suspend tables (power_gs_v1)
+ * right before the PCM takes over; this reads a user-given list at the same point so the live
+ * values can be diffed against those tables after wake. SoC reads are limited to pages that
+ * stay powered and clocked in suspend, a read elsewhere is a bus hang.
+ */
+#define SLP_SNAP_MAX		512
+#define SLP_SNAP_PAGES		16
+
+struct slp_snap_entry {
+	bool pmic;
+	bool valid;
+	u32 addr;
+	u32 val;
+};
+
+struct slp_snap_page {
+	u32 base;
+	void __iomem *io;
+};
+
+static const u32 slp_snap_allowed[] = {
+	0x0c530000, 0x0c532000, 0x10000000, 0x10001000, 0x10003000, 0x10006000, 0x1000c000,
+	0x1000d000,
+};
+
+static struct slp_snap_entry slp_snap[SLP_SNAP_MAX];
+static struct slp_snap_page slp_snap_pages[SLP_SNAP_PAGES];
+static unsigned int slp_snap_n;
+static DEFINE_MUTEX(slp_snap_lock);
+
+static void __iomem *slp_snap_page(u32 addr)
+{
+	u32 base = addr & PAGE_MASK;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(slp_snap_pages) && slp_snap_pages[i].io; i++)
+		if (slp_snap_pages[i].base == base)
+			return slp_snap_pages[i].io;
+	if (i == ARRAY_SIZE(slp_snap_pages))
+		return NULL;
+	slp_snap_pages[i].io = ioremap(base, PAGE_SIZE);
+	slp_snap_pages[i].base = base;
+	return slp_snap_pages[i].io;
+}
+
+static int slp_snap_add(bool pmic, u32 addr)
+{
+	unsigned int i;
+
+	if (slp_snap_n == SLP_SNAP_MAX)
+		return -ENOSPC;
+	if (!pmic) {
+		for (i = 0; i < ARRAY_SIZE(slp_snap_allowed); i++)
+			if (slp_snap_allowed[i] == (addr & PAGE_MASK))
+				break;
+		if (i == ARRAY_SIZE(slp_snap_allowed) || (addr & 3))
+			return -EINVAL;
+		if (!slp_snap_page(addr))
+			return -ENOMEM;
+	} else if (addr > 0xffff || (addr & 1)) {
+		return -EINVAL;
+	}
+	slp_snap[slp_snap_n++] = (struct slp_snap_entry){ .pmic = pmic, .addr = addr };
+	return 0;
+}
+
+static void slp_snap_take(void)
+{
+	unsigned int i, val;
+	void __iomem *io;
+
+	for (i = 0; i < slp_snap_n; i++) {
+		struct slp_snap_entry *e = &slp_snap[i];
+
+		if (e->pmic) {
+			e->valid = !regmap_read(slp->pmic, e->addr, &val);
+		} else {
+			io = slp_snap_page(e->addr);
+			e->valid = io != NULL;
+			if (io)
+				val = readl(io + (e->addr & ~PAGE_MASK));
+		}
+		if (e->valid)
+			e->val = val;
+	}
+}
+
+static int slp_snap_show(struct seq_file *s, void *unused)
+{
+	unsigned int i;
+
+	mutex_lock(&slp_snap_lock);
+	for (i = 0; i < slp_snap_n; i++) {
+		const struct slp_snap_entry *e = &slp_snap[i];
+
+		if (e->valid)
+			seq_printf(s, "%c 0x%08x 0x%08x\n", e->pmic ? 'p' : 's', e->addr, e->val);
+		else
+			seq_printf(s, "%c 0x%08x -\n", e->pmic ? 'p' : 's', e->addr);
+	}
+	mutex_unlock(&slp_snap_lock);
+	return 0;
+}
+
+static int slp_snap_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, slp_snap_show, NULL);
+}
+
+/* one entry per write: "p <pmic reg>", "s <soc addr>" or "clear" */
+static ssize_t slp_snap_write(struct file *file, const char __user *ubuf, size_t len, loff_t *ppos)
+{
+	char buf[32];
+	u32 addr;
+	int ret;
+
+	if (len >= sizeof(buf))
+		return -EINVAL;
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = 0;
+	mutex_lock(&slp_snap_lock);
+	if (sysfs_streq(buf, "clear")) {
+		slp_snap_n = 0;
+		ret = 0;
+	} else if ((buf[0] == 'p' || buf[0] == 's') && buf[1] == ' ' && !kstrtou32(buf + 2, 0, &addr)) {
+		ret = slp_snap_add(buf[0] == 'p', addr);
+	} else {
+		ret = -EINVAL;
+	}
+	mutex_unlock(&slp_snap_lock);
+	return ret ?: len;
+}
+
+static const struct file_operations slp_snap_fops = {
+	.owner = THIS_MODULE,
+	.open = slp_snap_open,
+	.read = seq_read,
+	.write = slp_snap_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
 static int mt6771_sleep_suspend_noirq(struct device *dev)
 {
 	u32 flags, flags1, timer;
@@ -334,6 +479,7 @@ static int mt6771_sleep_suspend_noirq(struct device *dev)
 		slp->wdt_armed = true;
 		pr_emerg("mt6771-sleep: bc6b wdt net armed, mode 0x%x\n", slp->wdt_mode);
 	}
+	slp_snap_take();
 	return 0;
 
 release:
@@ -667,6 +813,7 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 	}
 	slp_lp_update();
 	debugfs_create_file("mt6771-sleep", 0400, NULL, NULL, &slp_status_fops);
+	debugfs_create_file("mt6771-sleep-snapshot", 0600, NULL, NULL, &slp_snap_fops);
 	dev_info(dev, "SPM firmware status %u, r15 0x%x, deep %s\n", s->fw_status,
 		 slp_spm_read(SPM_PCM_REG15_DATA), deep_enable ? "enabled" : "gated");
 	return 0;
@@ -674,9 +821,14 @@ static int mt6771_sleep_probe(struct platform_device *pdev)
 
 static void mt6771_sleep_remove(struct platform_device *pdev)
 {
+	unsigned int i;
+
 	unregister_pm_notifier(&slp->pm_nb_post);
 	unregister_pm_notifier(&slp->pm_nb_pre);
 	debugfs_lookup_and_remove("mt6771-sleep", NULL);
+	debugfs_lookup_and_remove("mt6771-sleep-snapshot", NULL);
+	for (i = 0; i < ARRAY_SIZE(slp_snap_pages) && slp_snap_pages[i].io; i++)
+		iounmap(slp_snap_pages[i].io);
 	mutex_lock(&slp_lock);
 	if (slp->lp_applied)
 		slp_lp_restore();

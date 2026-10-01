@@ -129,6 +129,7 @@ static MTK_WCN_BOOL mtk_wcn_wmt_func_ctrl(ENUM_WMTDRV_TYPE_T type, ENUM_WMT_OPID
 	P_OSAL_SIGNAL pSignal;
 	MTK_WCN_BOOL bOffload;
 	MTK_WCN_BOOL bExplicitPwrOn;
+	MTK_WCN_BOOL bPwrOnOk = MTK_WCN_BOOL_TRUE;
 
 	bOffload = (type == WMTDRV_TYPE_WIFI);
 	bExplicitPwrOn = (bOffload && opId == WMT_OPID_FUNC_ON &&
@@ -137,7 +138,7 @@ static MTK_WCN_BOOL mtk_wcn_wmt_func_ctrl(ENUM_WMTDRV_TYPE_T type, ENUM_WMT_OPID
 	/* WIFI on no need to disable psm and prevent WIFI on blocked by psm lock. */
 	/* So we power on connsys separately from function on flow. */
 	if (bExplicitPwrOn)
-		mtk_wcn_wmt_pwr_on();
+		bPwrOnOk = mtk_wcn_wmt_pwr_on();
 
 	pOp = wmt_lib_get_free_op();
 	if (!pOp) {
@@ -178,6 +179,13 @@ static MTK_WCN_BOOL mtk_wcn_wmt_func_ctrl(ENUM_WMTDRV_TYPE_T type, ENUM_WMT_OPID
 		WMT_WARN_FUNC("OPID(%d) type(%zu) fail\n", pOp->op.opId, pOp->op.au4OpData[0]);
 	} else {
 		WMT_INFO_FUNC("OPID(%d) type(%zu) ok\n", pOp->op.opId, pOp->op.au4OpData[0]);
+		/*
+		 * The explicit power-on failed and the op powered the chip itself:
+		 * its PSM enable ran while STP was down and the offloaded Wi-Fi path
+		 * has none, so without this the chip never sleeps and BTIF stays ON.
+		 */
+		if (bOffload && !bPwrOnOk)
+			wmt_lib_ps_enable();
 	}
 	return bRet;
 }

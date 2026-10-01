@@ -1133,6 +1133,11 @@ static INT32 opfunc_hif_conf(P_WMT_OP pWmtOp)
 
 }
 
+/* Debug: make the next N STP inits fail after a good HW power-on */
+static int fail_stp_init;
+module_param(fail_stp_init, int, 0644);
+MODULE_PARM_DESC(fail_stp_init, "debug: fail the next N STP inits of a WMT power-on");
+
 static INT32 opfunc_pwr_on(P_WMT_OP pWmtOp)
 {
 
@@ -1165,6 +1170,10 @@ pwr_on_rty:
 
 	/* init stp */
 	iRet = wmt_core_stp_init();
+	if (!iRet && fail_stp_init > 0) {
+		fail_stp_init--;
+		iRet = -EIO;
+	}
 	if (iRet) {
 		WMT_ERR_FUNC("WMT-CORE: wmt_core_stp_init fail (%d)\n", iRet);
 		osal_assert(0);

@@ -157,8 +157,8 @@ def main():
               "The MCU %s its screen state; it cannot sense the panel itself." %
               ("reported" if st else "did not report"))
     elif a.action == "sleep":
-        ln.send(145)
-        seen = ln.show(3)
+        ln.send(145, struct.pack(">H", 1))              # any u16 payload; the reply 143(1) comes with it
+        seen = ln.show(5)
         print("VERDICT: %s" % ("MCU announced sleep" if 143 in seen else "no sleep announcement seen"))
     else:
         if not a.args:

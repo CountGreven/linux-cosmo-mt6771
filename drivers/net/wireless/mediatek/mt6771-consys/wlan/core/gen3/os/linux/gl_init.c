@@ -2789,6 +2789,15 @@ static VOID wlanNetDestroy(struct wireless_dev *prWdev)
 
 }				/* end of wlanNetDestroy() */
 
+/*
+ * Every LAN broadcast passes the vendor's suspend filter and wakes the SoC through CONN2AP, every
+ * few seconds on a home network (2026-10-01 capture). Experiment: directed frames only in suspend,
+ * relying on the firmware's ARP offload to keep the address resolvable.
+ */
+static bool wlan_suspend_directed_only;
+module_param(wlan_suspend_directed_only, bool, 0644);
+MODULE_PARM_DESC(wlan_suspend_directed_only, "experimental: accept only directed frames while suspended (default off)");
+
 VOID wlanSetSuspendMode(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable)
 {
 	struct net_device *prDev = NULL;
@@ -2812,6 +2821,9 @@ VOID wlanSetSuspendMode(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable)
 
 	/* new filter should not include p2p mask */
 	u4PacketFilter = prGlueInfo->prAdapter->u4OsPacketFilter & (~PARAM_PACKET_FILTER_P2P_MASK);
+	if (fgEnable && READ_ONCE(wlan_suspend_directed_only))
+		u4PacketFilter &= ~(PARAM_PACKET_FILTER_BROADCAST | PARAM_PACKET_FILTER_MULTICAST |
+				    PARAM_PACKET_FILTER_ALL_MULTICAST);
 
 	if (kalIoctl(prGlueInfo,
 		wlanoidSetCurrentPacketFilter,

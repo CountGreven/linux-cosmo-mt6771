@@ -4514,10 +4514,21 @@ kalGetIPv6Address(IN struct net_device *prDev,
 	return TRUE;
 }
 
+/* Test knobs: skip the firmware suspend-mode command, or the IP/ARP-offload programming, at suspend. */
+static bool wlan_suspend_fw_cmd = true;
+module_param(wlan_suspend_fw_cmd, bool, 0644);
+MODULE_PARM_DESC(wlan_suspend_fw_cmd, "send CMD_ID_SET_SUSPEND_MODE to the firmware at suspend (default on)");
+static bool wlan_suspend_netaddr = true;
+module_param(wlan_suspend_netaddr, bool, 0644);
+MODULE_PARM_DESC(wlan_suspend_netaddr, "program the host IP addresses into the firmware at suspend (default on)");
+
 static void wlanNotifyFwSuspend(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgSuspend)
 {
 	WLAN_STATUS rStatus;
 	UINT_32 u4SetInfoLen;
+
+	if (!READ_ONCE(wlan_suspend_fw_cmd))
+		return;
 
 	rStatus = kalIoctl(prGlueInfo,
 			wlanoidNotifyFwSuspend,
@@ -4631,7 +4642,8 @@ VOID kalSetNetAddressFromInterface(IN P_GLUE_INFO_T prGlueInfo, IN struct net_de
 		}
 	}
 
-	kalSetNetAddress(prGlueInfo, prNetDevPrivate->ucBssIdx, pucIPv4Addr, u4NumIPv4, pucIPv6Addr, u4NumIPv6);
+	if (READ_ONCE(wlan_suspend_netaddr))
+		kalSetNetAddress(prGlueInfo, prNetDevPrivate->ucBssIdx, pucIPv4Addr, u4NumIPv4, pucIPv6Addr, u4NumIPv6);
 }
 
 #if CFG_MET_PACKET_TRACE_SUPPORT
